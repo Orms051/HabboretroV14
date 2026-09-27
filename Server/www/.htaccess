@@ -1,0 +1,11 @@
+# HabboretroV14 — service Apache (Laragon)
+# Types MIME Shockwave/Director : indispensables pour que le client se charge
+# et sauvegarde correctement (sinon Apache renvoie octet-stream et ça casse).
+AddType application/x-director .dcr .cct .cst .cxt .cxt
+AddType application/x-shockwave-flash .swf
+
+# Page par défaut = le site
+DirectoryIndex index.php index.html
+
+# Pas de listing de dossier
+Options -Indexes

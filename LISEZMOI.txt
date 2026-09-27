@@ -1,0 +1,25 @@
+HabboretroV14 — Kepler v14 (2007)
+=================================
+
+ARCHITECTURE (propre, sur Laragon) :
+- Site + client + admin : servis par APACHE (Laragon) — vhost 01-habboretrov14.conf
+- Base de donnees : MariaDB DEDIEE du pack (dossier MariaDB\), port 3306
+  -> Le MySQL de Laragon (3306) doit etre COUPE quand on joue (conflit de port).
+- Emulateur : Java 25, Server\www\run.bat (jeu 12321, MUS 12322, RCON 12309)
+
+DEMARRER :
+  START-HABBORETROV14.bat   (coupe MySQL Laragon, lance MariaDB + emulateur)
+  + verifier qu'APACHE est demarre dans Laragon.
+
+URLS :
+  Site   : http://localhost/            (bouton Jouer = login natif, qui SAUVEGARDE)
+  Client : http://localhost/client.php  (acces direct)
+  Admin  : http://localhost/admin/      (joaowars776 / Orms2026!)
+  Hamachi: http://TON-IP-HAMACHI/       (host dynamique automatique cote client)
+
+NOTES :
+- Le login SSO auto ne sauvegarde PAS la tenue sur ce client v14 -> on utilise le login natif.
+- external_variables.txt contient encore des URL http://localhost/dcr/ en dur
+  (OK en local ; a rendre dynamique pour que les assets marchent en Hamachi).
+- _archive\   : anciens lanceurs (php -S) et sauvegardes
+- _backups_HabboV14\ : backup SQL recupere avant suppression de HabboV14

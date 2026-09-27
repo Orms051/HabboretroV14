@@ -1,0 +1,805 @@
+<?php
+/**
+ * HabboretroV14 — Site public (accueil, inscription, connexion SSO, profil)
+ * Look « Habbo 2007 » d'origine. Servi par Apache/Laragon (PHP 8.3).
+ * Le jeu (client Shockwave) est chargé via /client.php?sso=<ticket>.
+ */
+declare(strict_types=1);
+session_start();
+mb_internal_encoding('UTF-8');
+
+const DB_HOST = '127.0.0.1', DB_PORT = 3306, DB_NAME = 'v14', DB_USER = 'root', DB_PASS = '';
+const HOTEL = 'HabboretroV14';
+const GAME_URL = '/client.php';               // loader du client (racine)
+const DEFAULT_FIGURE = '1000118001270012900121001';
+
+function db(): PDO {
+    static $p = null;
+    if ($p === null) $p = new PDO('mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . DB_NAME . ';charset=utf8mb4', DB_USER, DB_PASS, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_TIMEOUT => 2,          // échoue vite si la base est éteinte (plus de « ça rame »)
+    ]);
+    return $p;
+}
+function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+function csrf(): string { if (empty($_SESSION['scsrf'])) $_SESSION['scsrf'] = bin2hex(random_bytes(16)); return $_SESSION['scsrf']; }
+function csrf_ok(): bool { return ($_POST['csrf'] ?? '') === ($_SESSION['scsrf'] ?? ''); }
+function hash_pw(string $pw): string { return password_hash($pw, PASSWORD_ARGON2ID, ['memory_cost' => 65536, 'time_cost' => 2, 'threads' => 1]); }
+function me(): ?array { return $_SESSION['site_user'] ?? null; }
+function redirect(string $to) { header('Location: ' . $to); exit; }
+
+$p = $_GET['p'] ?? 'home';
+$err = null; $ok = null;
+
+/* ---- Déconnexion ---- */
+if ($p === 'logout') { unset($_SESSION['site_user']); redirect('?p=home'); }
+
+try { // ---- si la base est éteinte, on affiche une page « maintenance » propre (pas d'erreur fatale)
+
+/* ---- Inscription ---- */
+if ($p === 'register' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!csrf_ok()) { $err = 'Session expirée, réessaie.'; }
+    else {
+        $u = trim($_POST['username'] ?? ''); $pw = (string)($_POST['password'] ?? ''); $sex = ($_POST['sex'] ?? 'M') === 'F' ? 'F' : 'M';
+        $bd = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_POST['birthday'] ?? '')) ? (string)$_POST['birthday'] : '1990-01-01';
+        if ((int)($_POST['captcha'] ?? -1) !== (int)($_SESSION['reg_captcha'] ?? -2)) $err = 'Réponse au calcul anti-robot incorrecte.';
+        elseif (!preg_match('/^[A-Za-z0-9_\-=?!@:.,]{3,20}$/', $u)) $err = 'Nom invalide (3-20 caractères, lettres/chiffres).';
+        elseif (strlen($pw) < 4) $err = 'Mot de passe trop court (4 min).';
+        else {
+            $st = db()->prepare('SELECT id FROM users WHERE username=?'); $st->execute([$u]);
+            if ($st->fetch()) $err = 'Ce nom est déjà pris.';
+            else {
+                db()->prepare('INSERT INTO users (username,password,figure,sex,motto,credits,email,birthday) VALUES (?,?,?,?,?,?,?,?)')
+                    ->execute([$u, hash_pw($pw), DEFAULT_FIGURE, $sex, 'Nouveau sur ' . HOTEL . ' !', 100, $u . '@' . HOTEL . '.local', $bd]);
+                $id = (int)db()->lastInsertId();
+                $_SESSION['site_user'] = ['id' => $id, 'username' => $u];
+                redirect('?p=home&welcome=1');
+            }
+        }
+    }
+    $p = 'register';
+}
+
+/* ---- Connexion ---- */
+if ($p === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!csrf_ok()) { $err = 'Session expirée, réessaie.'; }
+    else {
+        $st = db()->prepare('SELECT id,username,password FROM users WHERE username=?'); $st->execute([trim($_POST['username'] ?? '')]);
+        $u = $st->fetch();
+        if ($u && password_verify((string)($_POST['password'] ?? ''), $u['password'])) {
+            $_SESSION['site_user'] = ['id' => (int)$u['id'], 'username' => $u['username']];
+            redirect('?p=home');
+        }
+        $err = 'Nom ou mot de passe incorrect.';
+    }
+    $p = 'home';
+}
+
+/* ---- Modifier son motto depuis sa page perso ---- */
+if ($p === 'profile' && $_SERVER['REQUEST_METHOD'] === 'POST' && me()) {
+    if (csrf_ok()) {
+        $m = mb_substr(trim((string)($_POST['motto'] ?? '')), 0, 100);
+        db()->prepare('UPDATE users SET motto=?, console_motto=? WHERE id=?')->execute([$m, $m, (int)me()['id']]);
+    }
+    redirect('?p=profile&u=' . rawurlencode((string)me()['username']) . '&saved=1');
+}
+
+/* ---- Entrer dans l'hôtel (ouvre le client — login natif) ----
+   NB : ce client Shockwave v14 ne sauvegarde PAS la tenue/mission quand il est
+   auto-connecté par ticket SSO. On ouvre donc le client avec son écran de login
+   natif (fiable, la sauvegarde fonctionne). Le SSO reste supporté par client.php
+   (?sso=) mais n'est plus utilisé par défaut. */
+if ($p === 'play') {
+    redirect(GAME_URL);
+}
+
+render($p, $err);
+
+} catch (PDOException $e) {
+    maintenance_page();
+}
+
+/* =========================== VUES =========================== */
+function csrf_f(): string { return '<input type="hidden" name="csrf" value="' . h(csrf()) . '">'; }
+function ranks_fr(): array { return [1 => 'Habbo', 2 => 'Community Manager', 3 => 'Guide', 4 => 'Hobba', 5 => 'Super Hobba', 6 => 'Modérateur', 7 => 'Administrateur']; }
+
+function maintenance_page(): void {
+    if (!headers_sent()) http_response_code(503);
+    head('home');
+    echo '<div class="cols one"><div class="panel">';
+    echo '  <div class="panel-h orange">L\'hôtel démarre…</div>';
+    echo '  <div class="panel-b center">';
+    echo '    <p>La base de données n\'est pas encore lancée.</p>';
+    echo '    <p class="tip">Lance <b>START-HABBOV14.bat</b> (dans le dossier HabboretroV14), attends « Base prête ! », puis <a href="?p=home">recharge la page</a>.</p>';
+    echo '  </div>';
+    echo '</div></div>';
+    foot();
+}
+
+function render(string $p, ?string $err): void {
+    head($p);
+    switch ($p) {
+        case 'register':  view_register($err); break;
+        case 'profile':   view_profile();      break;
+        case 'news':      view_news();         break;
+        case 'games':     view_games();        break;
+        case 'community': view_community();     break;
+        case 'help':      view_help();         break;
+        default:          view_home($err);
+    }
+    foot();
+}
+
+/* -------- Accueil -------- */
+function view_home(?string $err): void {
+    $u = me();
+    echo '<div class="cols">';
+
+    /* Colonne principale : l'hôtel */
+    echo '<div class="main">';
+    echo '<div class="panel hotel">';
+    echo '  <div class="panel-h orange">Bienvenue à l\'Hôtel ' . HOTEL . ' !</div>';
+    echo '  <div class="panel-b">';
+    echo '    <img class="hotelimg" src="/c_images/Frontpage_images/front_page_hotel_with_habbos.png" alt="Hôtel ' . HOTEL . '">';
+    echo '    <p class="pitch">Crée ton Habbo, décore ta chambre, retrouve tes amis et amuse-toi dans les salles publiques. Le vrai Habbo de 2007 !</p>';
+    if ($u) echo '    <a class="hbtn green big" href="?p=play">Entre dans l\'Hôtel &raquo;</a>';
+    else    echo '    <a class="hbtn green big" href="?p=register">Crée ton Habbo &raquo;</a>';
+    echo '  </div>';
+    echo '</div>';
+
+    /* Actus (depuis l'admin, repli sinon) */
+    echo '<div class="news">';
+    foreach (site_news_rows(3) as $n) news_card($n['color'], $n['category'], $n['title'], mb_strimwidth((string)$n['body'], 0, 130, '…'));
+    echo '</div>';
+    echo '</div>'; // .main
+
+    /* Colonne latérale : connexion / profil */
+    echo '<div class="side">';
+    if ($u) {
+        echo '<div class="panel">';
+        echo '  <div class="panel-h green">Salut ' . h($u['username']) . ' !</div>';
+        echo '  <div class="panel-b center">';
+        if (isset($_GET['welcome'])) echo '<div class="flash ok">Ton Habbo est créé, bienvenue !</div>';
+        echo '    <a class="hbtn green big" href="?p=play">Entre dans l\'Hôtel</a>';
+        echo '    <a class="hbtn" href="?p=profile&u=' . h(rawurlencode($u['username'])) . '">Ma page perso</a>';
+        echo '    <a class="hbtn grey" href="?p=logout">Déconnexion</a>';
+        echo '    <p class="tip">Ouvre le site dans <b>Basilisk</b> pour que « Entre dans l\'Hôtel » lance le jeu.</p>';
+        echo '  </div>';
+        echo '</div>';
+    } else {
+        echo '<div class="panel">';
+        echo '  <div class="panel-h blue">Connecte-toi</div>';
+        echo '  <div class="panel-b">';
+        if ($err) echo '<div class="flash err">' . h($err) . '</div>';
+        echo '    <form method="post" action="?p=login">' . csrf_f();
+        echo '      <label>Nom Habbo</label><input name="username" required autofocus>';
+        echo '      <label>Mot de passe</label><input name="password" type="password" required>';
+        echo '      <button class="hbtn green">C\'est parti !</button>';
+        echo '    </form>';
+        echo '  </div>';
+        echo '</div>';
+        echo '<div class="panel">';
+        echo '  <div class="panel-h orange">Nouveau ?</div>';
+        echo '  <div class="panel-b center">';
+        echo '    <p class="tip">Pas encore de Habbo ? C\'est gratuit et ça prend 10 secondes.</p>';
+        echo '    <a class="hbtn orange" href="?p=register">Crée ton Habbo</a>';
+        echo '  </div>';
+        echo '</div>';
+    }
+    stats_box();
+    latest_box();
+    echo '</div>'; // .side
+
+    echo '</div>'; // .cols
+}
+
+function latest_box(): void {
+    $rows = db()->query('SELECT username,sex FROM users ORDER BY id DESC LIMIT 9')->fetchAll();
+    if (!$rows) return;
+    echo '<div class="panel"><div class="panel-h purple">Derniers inscrits</div><div class="panel-b"><div class="friends">';
+    foreach ($rows as $r) echo av_mini((string)$r['username'], (string)$r['sex']);
+    echo '</div></div></div>';
+}
+
+function news_card(string $c, string $tag, string $title, string $txt): void {
+    $c = in_array($c, ['blue', 'green', 'purple', 'orange'], true) ? $c : 'blue';
+    echo '<div class="ncard"><span class="ntag ' . $c . '">' . h($tag) . '</span>';
+    echo '<h3>' . h($title) . '</h3><p>' . h($txt) . '</p></div>';
+}
+/* Actus : lues depuis l'admin (table site_news) ; repli sur des actus par défaut si vide/absente */
+function site_news_rows(int $limit = 0): array {
+    $def = [
+        ['color' => 'blue',   'category' => 'À la une',  'title' => 'Nouvel hôtel rétro !', 'body' => 'HabboretroV14 rouvre ses portes façon 2007 : mobis, salles publiques, Trax et jeux d\'origine.', 'date' => null],
+        ['color' => 'green',  'category' => 'Astuce',    'title' => 'Décore ta chambre',    'body' => 'File au Catalogue, achète des mobis et arrange ta chambre comme tu veux.', 'date' => null],
+        ['color' => 'purple', 'category' => 'Communauté','title' => 'Retrouve tes amis',    'body' => 'Ajoute des amis, discute par la console et donne-toi rendez-vous dans les salles.', 'date' => null],
+    ];
+    try {
+        $sql = 'SELECT title,category,color,body,created_at FROM site_news ORDER BY created_at DESC, id DESC';
+        if ($limit > 0) $sql .= ' LIMIT ' . (int)$limit;
+        $rows = db()->query($sql)->fetchAll();
+        if ($rows) return array_map(fn($r) => ['color' => $r['color'], 'category' => $r['category'], 'title' => $r['title'], 'body' => $r['body'], 'date' => $r['created_at']], $rows);
+    } catch (Throwable $e) {}
+    return $limit > 0 ? array_slice($def, 0, $limit) : $def;
+}
+
+function stats_box(): void {
+    $d = db();
+    $users  = (int)$d->query('SELECT COUNT(*) FROM users')->fetchColumn();
+    $online = $d->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn();
+    $rooms  = (int)$d->query("SELECT COUNT(*) FROM rooms WHERE owner_id='0'")->fetchColumn();
+    echo '<div class="panel"><div class="panel-h grey">L\'hôtel en chiffres</div><div class="panel-b">';
+    echo '<ul class="statl">';
+    echo '<li><b>' . $users . '</b> Habbos inscrits</li>';
+    echo '<li><b>' . ($online !== false ? (int)$online : 0) . '</b> en ligne</li>';
+    echo '<li><b>' . $rooms . '</b> salles publiques</li>';
+    echo '</ul></div></div>';
+}
+
+/* -------- Inscription -------- */
+function view_register(?string $err): void {
+    echo '<div class="cols one">';
+    echo '<div class="panel">';
+    echo '  <div class="panel-h orange">Crée ton Habbo</div>';
+    echo '  <div class="panel-b">';
+    if ($err) echo '<div class="flash err">' . h($err) . '</div>';
+    echo '<form method="post" action="?p=register" class="reg">' . csrf_f();
+    echo '  <label>Nom Habbo</label><input name="username" maxlength="20" placeholder="Ton pseudo" required autofocus>';
+    echo '  <label>Mot de passe</label><input name="password" type="password" placeholder="4 caractères minimum" required>';
+    echo '  <label>Ton avatar</label>';
+    echo '  <div class="sexpick">';
+    echo '    <label class="sx"><input type="radio" name="sex" value="M" checked><span>Garçon</span></label>';
+    echo '    <label class="sx"><input type="radio" name="sex" value="F"><span>Fille</span></label>';
+    echo '  </div>';
+    echo '  <label>Date de naissance</label><input name="birthday" type="date" value="1990-01-01" required>';
+    $a = random_int(1, 9); $b = random_int(1, 9); $_SESSION['reg_captcha'] = $a + $b;
+    echo '  <label>Anti-robot : combien font ' . $a . ' + ' . $b . ' ?</label><input name="captcha" type="number" inputmode="numeric" placeholder="Ta réponse" required>';
+    echo '  <button class="hbtn green big">Créer et jouer &raquo;</button>';
+    echo '</form>';
+    echo '<p class="tip"><a href="?p=home">&laquo; J\'ai déjà un Habbo</a></p>';
+    echo '  </div>';
+    echo '</div></div>';
+}
+
+/* -------- Actualités -------- */
+function view_news(): void {
+    $rows = site_news_rows();
+    echo '<div class="cols one2">';
+    echo '<div class="panel"><div class="panel-h orange">Actualités de l\'hôtel</div><div class="panel-b"><div class="newslist">';
+    foreach ($rows as $n) {
+        $col = in_array($n['color'], ['blue', 'green', 'purple', 'orange'], true) ? $n['color'] : 'blue';
+        echo '<div class="nrow"><span class="ntag ' . $col . '">' . h($n['category']) . '</span>';
+        if (!empty($n['date'])) echo '<span class="ndate">' . h(date('d/m/Y', strtotime((string)$n['date']))) . '</span>';
+        echo '<h3 class="nt">' . h($n['title']) . '</h3>';
+        echo '<p>' . nl2br(h((string)$n['body'])) . '</p></div>';
+    }
+    echo '</div></div></div>';
+    echo '</div>';
+}
+
+/* -------- Jeux -------- */
+function view_games(): void {
+    $bb = db()->query('SELECT username,battleball_points FROM users WHERE battleball_points>0 ORDER BY battleball_points DESC LIMIT 10')->fetchAll();
+    $sn = db()->query('SELECT username,snowstorm_points FROM users WHERE snowstorm_points>0 ORDER BY snowstorm_points DESC LIMIT 10')->fetchAll();
+    echo '<div class="cols">';
+    echo '<div class="main">';
+    echo '<div class="panel"><div class="panel-h purple">Les jeux de HabboretroV14</div><div class="panel-b">';
+    echo '<div class="gamelist">';
+    echo '<div class="grow"><span class="gi">🏐</span><div><b>BattleBall</b><p>En équipe, colore un maximum de cases en marchant dessus. Le plus rapide gagne !</p></div></div>';
+    echo '<div class="grow"><span class="gi">❄️</span><div><b>SnowStorm</b><p>Bataille de boules de neige : vise tes adversaires et esquive pour marquer des points.</p></div></div>';
+    echo '<div class="grow"><span class="gi">♟️</span><div><b>Jeux de salon</b><p>Échecs, dames, backgammon… disponibles via les plateaux de jeu dans les chambres.</p></div></div>';
+    echo '</div></div></div>';
+    echo '</div>';
+    echo '<div class="side">';
+    lead_board('🏐 Top BattleBall', $bb, 'battleball_points');
+    lead_board('❄️ Top SnowStorm', $sn, 'snowstorm_points');
+    echo '</div>';
+    echo '</div>';
+}
+function lead_board(string $title, array $rows, string $col): void {
+    echo '<div class="panel"><div class="panel-h blue">' . h($title) . '</div><div class="panel-b">';
+    if (!$rows) echo '<p class="tip">Aucun score pour le moment. À toi de jouer !</p>';
+    else {
+        echo '<ol class="lb">';
+        foreach ($rows as $i => $r) echo '<li><span class="rk">' . ($i + 1) . '</span><a href="?p=profile&u=' . h(rawurlencode((string)$r['username'])) . '">' . h($r['username']) . '</a><b>' . (int)$r[$col] . '</b></li>';
+        echo '</ol>';
+    }
+    echo '</div></div>';
+}
+
+/* -------- Communauté -------- */
+function view_community(): void {
+    $q = trim($_GET['q'] ?? '');
+    $staff  = db()->query('SELECT username,sex,`rank` FROM users WHERE `rank`>=5 ORDER BY `rank` DESC, username')->fetchAll();
+    $total  = (int)db()->query('SELECT COUNT(*) FROM users')->fetchColumn();
+    $online = db()->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn();
+    $recent = db()->query('SELECT username,sex FROM users WHERE last_online>0 ORDER BY last_online DESC LIMIT 12')->fetchAll();
+    // Hall of Fame
+    $topCred = db()->query('SELECT username,credits FROM users ORDER BY credits DESC LIMIT 5')->fetchAll();
+    $topFri  = db()->query('SELECT u.username,(SELECT COUNT(*) FROM messenger_friends f WHERE f.from_id=u.id OR f.to_id=u.id) c FROM users u ORDER BY c DESC LIMIT 5')->fetchAll();
+    $topBB   = db()->query('SELECT username,battleball_points FROM users WHERE battleball_points>0 ORDER BY battleball_points DESC LIMIT 5')->fetchAll();
+    $topSN   = db()->query('SELECT username,snowstorm_points FROM users WHERE snowstorm_points>0 ORDER BY snowstorm_points DESC LIMIT 5')->fetchAll();
+    // Salles publiques
+    $rooms = db()->query("SELECT name,description,visitors_now,visitors_max FROM rooms WHERE owner_id='0' AND is_hidden=0 ORDER BY visitors_now DESC, name")->fetchAll();
+
+    // Barre de recherche
+    echo '<div class="panel"><div class="panel-h blue">Trouver un Habbo</div><div class="panel-b">';
+    echo '<form method="get" class="hsearch"><input type="hidden" name="p" value="community"><input name="q" value="' . h($q) . '" placeholder="Nom d\'un Habbo…" autofocus><button class="hbtn green sm2">Rechercher</button></form>';
+    if ($q !== '') {
+        $st = db()->prepare('SELECT username,sex FROM users WHERE username LIKE ? ORDER BY username LIMIT 30');
+        $st->execute(['%' . $q . '%']);
+        $res = $st->fetchAll();
+        if (!$res) echo '<p class="tip">Aucun Habbo trouvé pour « ' . h($q) . ' ».</p>';
+        else { echo '<div class="friends" style="margin-top:12px">'; foreach ($res as $r) echo av_mini((string)$r['username'], (string)$r['sex']); echo '</div>'; }
+    }
+    echo '</div></div>';
+
+    echo '<div class="cols">';
+
+    // Colonne principale : Hall of Fame + salles
+    echo '<div class="main">';
+    echo '<div class="panel"><div class="panel-h orange">🏆 Hall of Fame</div><div class="panel-b"><div class="hof">';
+    lead_board('💰 Plus riches', $topCred, 'credits');
+    lead_board('💬 Plus d\'amis', $topFri, 'c');
+    lead_board('🏐 BattleBall', $topBB, 'battleball_points');
+    lead_board('❄️ SnowStorm', $topSN, 'snowstorm_points');
+    echo '</div></div></div>';
+
+    echo '<div class="panel"><div class="panel-h green">Salles publiques (' . count($rooms) . ')</div><div class="panel-b">';
+    if (!$rooms) echo '<p class="tip">Aucune salle publique visible.</p>';
+    else {
+        echo '<div class="rooms">';
+        foreach ($rooms as $r) {
+            echo '<div class="rcard"><div class="ricon">🏛️</div><div class="rinfo"><b>' . h($r['name']) . '</b>';
+            if (trim((string)$r['description']) !== '') echo '<span class="rd">' . h($r['description']) . '</span>';
+            echo '<span class="rm">👤 ' . (int)$r['visitors_now'] . ' / ' . (int)$r['visitors_max'] . '</span></div></div>';
+        }
+        echo '</div>';
+    }
+    echo '</div></div>';
+    echo '</div>';
+
+    // Colonne latérale : staff, récemment vus, règles
+    echo '<div class="side">';
+    echo '<div class="panel"><div class="panel-h blue">Équipe de l\'hôtel</div><div class="panel-b">';
+    if (!$staff) echo '<p class="tip">Aucun staff.</p>';
+    else { echo '<div class="friends">'; foreach ($staff as $s) echo av_mini((string)$s['username'], (string)$s['sex']); echo '</div>'; }
+    echo '</div></div>';
+
+    echo '<div class="panel"><div class="panel-h purple">Récemment vus</div><div class="panel-b">';
+    echo '<p class="tip" style="margin:0 0 8px"><b>' . $total . '</b> Habbos inscrits · <b>' . ($online !== false ? (int)$online : 0) . '</b> en ligne</p>';
+    if ($recent) { echo '<div class="friends">'; foreach ($recent as $r) echo av_mini((string)$r['username'], (string)$r['sex']); echo '</div>'; }
+    echo '</div></div>';
+
+    echo '<div class="panel"><div class="panel-h orange">Bien vivre ensemble</div><div class="panel-b"><ul class="rules">';
+    echo '<li>Respecte les autres Habbos.</li><li>Pas d\'insultes ni de spam.</li><li>Ne partage jamais ton mot de passe.</li><li>Amuse-toi et fais-toi des amis !</li>';
+    echo '</ul></div></div>';
+    echo '</div>';
+
+    echo '</div>';
+}
+
+/* -------- Aide : centre d'aide type Habbo -------- */
+function help_cats(): array {
+    return [
+        ['debut', '🚀', 'Premiers pas', [
+            ['Comment créer mon Habbo ?', "Clique sur <b>« Crée ton Habbo »</b>, choisis un pseudo, un mot de passe et l'apparence (garçon ou fille). C'est gratuit et immédiat : tu reçois même 100 crédits de bienvenue pour démarrer."],
+            ['Comment entrer dans l\'hôtel ?', "Connecte-toi sur le site puis clique sur <b>« Entre dans l'Hôtel »</b>. Le jeu s'ouvre dans le navigateur <b>Basilisk</b>, qui prend en charge le client de l'époque. Pense à ouvrir le site en <b>http://</b>."],
+            ['Je débute, par où commencer ?', "Fais un tour dans les <b>salles publiques</b> pour rencontrer du monde, ajoute des amis, puis crée ta première chambre et décore-la avec des meubles achetés au Catalogue."],
+        ]],
+        ['compte', '👤', 'Mon compte', [
+            ['Comment changer mon motto ?', "Va sur ta <b>page perso</b> (menu en haut) : tu peux modifier ton motto directement dans l'encart « Ma mission », puis clique sur Enregistrer."],
+            ['Où voir ma page perso ?', "Clique sur <b>« Ma page »</b> en haut à droite quand tu es connecté. Tu y retrouves ton avatar, ton rang, tes badges, tes amis, tes chambres et tes scores."],
+            ['J\'ai oublié mon mot de passe', "Sur cet hôtel privé, la récupération se fait à la main : contacte un <b>membre du staff</b> (rang Modérateur ou Administrateur) qui pourra réinitialiser ton mot de passe."],
+        ]],
+        ['credits', '💰', 'Crédits & Catalogue', [
+            ['À quoi servent les crédits ?', "Les crédits sont la monnaie de l'hôtel. Ils te permettent d'acheter des <b>meubles (mobis)</b>, des animaux, des vêtements et l'abonnement au Habbo Club dans le Catalogue."],
+            ['Comment acheter des meubles ?', "Ouvre le <b>Catalogue</b> en jeu, parcours les rubriques, clique sur un article puis sur « Acheter ». Le meuble arrive dans ton inventaire (la « main »), prêt à être posé dans ta chambre."],
+            ['Qu\'est-ce que le Habbo Club ?', "Le <b>Habbo Club</b> est un abonnement qui donne accès à des meubles et vêtements exclusifs, des commandes bonus et un badge spécial affiché sur ta page perso."],
+        ]],
+        ['chambres', '🏠', 'Chambres & mobis', [
+            ['Comment créer ma chambre ?', "Ouvre le <b>Navigateur</b>, va dans « Mes chambres » et crée une nouvelle chambre : choisis un nom, un modèle et c'est parti. Elle apparaît ensuite sur ta page perso."],
+            ['Comment déplacer ou tourner un meuble ?', "Prends un meuble depuis ton inventaire et pose-le. Clique dessus pour le sélectionner : tu peux le <b>déplacer</b> puis le <b>tourner</b> avec le bouton prévu à cet effet."],
+            ['Comment inviter des amis chez moi ?', "Depuis la console, sélectionne un ami connecté et invite-le, ou donne-lui le nom de ta chambre pour qu'il te rejoigne via le Navigateur."],
+        ]],
+        ['amis', '💬', 'Amis & messagerie', [
+            ['Comment ajouter un ami ?', "Clique sur l'avatar d'un autre Habbo puis sur <b>« Ajouter comme ami »</b>. Une fois qu'il accepte, il apparaît dans ta console et sur ta page perso."],
+            ['Comment envoyer un message ?', "Ouvre la <b>console</b> (l'icône messagerie), choisis un ami et écris-lui : il recevra ton message même s'il change de chambre."],
+            ['Comment ignorer quelqu\'un ?', "Clique sur l'avatar de la personne puis sur <b>« Ignorer »</b> : tu ne verras plus ses messages. Tu peux annuler à tout moment avec « Ne plus ignorer »."],
+        ]],
+        ['jeux', '🎮', 'Jeux', [
+            ['Comment jouer à BattleBall ?', "Rejoins une salle de <b>BattleBall</b>, place-toi dans une équipe et lance la partie : marche sur les cases pour les colorer à ta couleur. L'équipe qui en contrôle le plus gagne."],
+            ['Comment jouer à SnowStorm ?', "Dans <b>SnowStorm</b>, ramasse ou fabrique des boules de neige et vise les adversaires tout en esquivant les leurs. Chaque touche rapporte des points."],
+            ['Où voir les classements ?', "Rendez-vous sur l'onglet <b>Jeux</b> du site : les meilleurs joueurs de BattleBall et SnowStorm y sont classés, avec leurs points."],
+        ]],
+        ['securite', '🛡️', 'Sécurité & règles', [
+            ['Comment protéger mon compte ?', "Ne partage <b>jamais</b> ton mot de passe, même avec quelqu'un qui se présente comme modérateur. Le staff ne te demandera jamais ton mot de passe."],
+            ['Comment signaler un abus ?', "Préviens un <b>membre du staff</b> présent en jeu, ou utilise les outils de modération de l'hôtel. Décris précisément qui, où et ce qui s'est passé."],
+            ['Les règles de l\'hôtel', "Respecte les autres, pas d'insultes, pas de spam, pas d'arnaque. Amuse-toi et aide les nouveaux : un hôtel sympa, c'est grâce à toi !"],
+        ]],
+    ];
+}
+function view_help(): void {
+    $cats = help_cats();
+    echo '<div class="panel"><div class="panel-h blue">Centre d\'aide ' . HOTEL . '</div><div class="panel-b"><p class="helpintro">Bienvenue dans l\'aide de l\'hôtel. Choisis une catégorie, puis clique sur une question pour voir la réponse.</p></div></div>';
+    echo '<div class="cols">';
+
+    // Sommaire des catégories
+    echo '<div class="side"><div class="panel"><div class="panel-h orange">Catégories</div><div class="panel-b"><ul class="helpnav">';
+    foreach ($cats as $c) echo '<li><a href="#' . $c[0] . '"><span>' . $c[1] . '</span> ' . h($c[2]) . '</a></li>';
+    echo '</ul></div></div></div>';
+
+    // Articles
+    echo '<div class="main">';
+    foreach ($cats as $c) {
+        echo '<a id="' . $c[0] . '"></a><div class="panel"><div class="panel-h green">' . $c[1] . ' ' . h($c[2]) . '</div><div class="panel-b">';
+        foreach ($c[3] as $qa) {
+            echo '<details class="faqd"><summary>' . h($qa[0]) . '</summary><div class="faqa">' . $qa[1] . '</div></details>';
+        }
+        echo '</div></div>';
+    }
+    echo '</div>';
+    echo '</div>';
+}
+
+/* -------- Page perso : Habbo Home complet -------- */
+function av_mini(string $name, string $sex): string {
+    $c = $sex === 'F' ? 'f' : 'm';
+    return '<a class="friend" href="?p=profile&u=' . h(rawurlencode($name)) . '"><span class="av mini ' . $c . '">' . h(mb_strtoupper(mb_substr($name, 0, 1))) . '</span><span class="fn">' . h($name) . '</span></a>';
+}
+function stars(int $n): string { $n = max(0, min(5, $n)); return '<span class="stars">' . str_repeat('★', $n) . str_repeat('☆', 5 - $n) . '</span>'; }
+
+function view_profile(): void {
+    $cols = 'id,username,motto,figure,sex,`rank`,last_online,created_at,credits,tickets,film,badge,badge_active,club_expiration,battleball_points,snowstorm_points';
+    if (isset($_GET['id']) && ctype_digit((string)$_GET['id'])) {   // lien "page perso" du jeu : ?id=%ID%
+        $st = db()->prepare('SELECT ' . $cols . ' FROM users WHERE id=?');
+        $st->execute([(int)$_GET['id']]);
+    } else {
+        $name = trim($_GET['u'] ?? (me()['username'] ?? ''));
+        $st = db()->prepare('SELECT ' . $cols . ' FROM users WHERE username=?');
+        $st->execute([$name]);
+    }
+    $u = $st->fetch();
+    $name = $u['username'] ?? ($name ?? '');
+    if (!$u) { echo '<div class="cols one"><div class="panel"><div class="panel-h blue">Page perso</div><div class="panel-b"><p class="tip">Le Habbo « ' . h($name) . ' » est introuvable. <a href="?p=home">Retour à l\'accueil</a></p></div></div></div>'; return; }
+
+    $me    = me();
+    $isOwn = $me && $me['username'] === $u['username'];
+    $ranks = ranks_fr();
+    $rank  = (int)$u['rank'];
+    $sexc  = $u['sex'] === 'F' ? 'f' : 'm';
+
+    $seen  = (int)$u['last_online'] > 0 ? date('d/m/Y à H\hi', (int)$u['last_online']) : '—';
+    $since = $u['created_at'] ? date('d/m/Y', strtotime((string)$u['created_at'])) : '—';
+    $days  = $u['created_at'] ? max(0, (int)floor((time() - strtotime((string)$u['created_at'])) / 86400)) : 0;
+    $hc    = (int)$u['club_expiration'] > time();
+
+    // badges
+    $rankB = []; $rb = db()->prepare('SELECT badge FROM rank_badges WHERE `rank`=?'); $rb->execute([$rank]); foreach ($rb as $b) $rankB[] = $b['badge'];
+    $ownB  = []; $bs = db()->prepare('SELECT badge FROM users_badges WHERE user_id=?'); $bs->execute([(int)$u['id']]); foreach ($bs as $b) $ownB[] = $b['badge'];
+    $badges = array_values(array_unique(array_merge($rankB, $ownB)));
+    $worn   = ($u['badge_active'] && trim((string)$u['badge']) !== '') ? trim((string)$u['badge']) : '';
+
+    // amis
+    $fc = db()->prepare('SELECT COUNT(*) FROM messenger_friends WHERE from_id=? OR to_id=?'); $fc->execute([(int)$u['id'], (int)$u['id']]);
+    $friendCount = (int)$fc->fetchColumn();
+    $friends = [];
+    $fq = db()->prepare('SELECT us.username, us.sex FROM messenger_friends f JOIN users us ON us.id = IF(f.from_id=?, f.to_id, f.from_id) WHERE f.from_id=? OR f.to_id=? ORDER BY us.username LIMIT 18');
+    $fq->execute([(int)$u['id'], (int)$u['id'], (int)$u['id']]);
+    foreach ($fq as $f) $friends[] = $f;
+
+    // salles
+    $rq = db()->prepare('SELECT name,description,rating,visitors_max FROM rooms WHERE owner_id=? ORDER BY rating DESC, name');
+    $rq->execute([(int)$u['id']]);
+    $rooms = $rq->fetchAll();
+
+    echo '<div class="cols">';
+
+    /* ---------- Colonne gauche : carte d'identité ---------- */
+    echo '<div class="side">';
+    echo '<div class="panel idcard">';
+    echo '  <div class="panel-h blue">' . h($u['username']) . '</div>';
+    echo '  <div class="panel-b center">';
+    echo '    <div class="av big ' . $sexc . '"><span>' . h(mb_strtoupper(mb_substr($u['username'], 0, 1))) . '</span>';
+    if ($worn) echo '<img class="worn" src="/c_images/badges/' . h($worn) . '.gif" title="Badge porté : ' . h($worn) . '" onerror="this.style.display=\'none\'">';
+    echo '    </div>';
+    echo '    <div class="rankpill ' . ($rank >= 5 ? 'staff' : '') . '">' . h($ranks[$rank] ?? 'Habbo') . '</div>';
+    if ($hc) echo '    <div class="hcbadge">★ Habbo Club</div>';
+    echo '  </div>';
+    echo '</div>';
+    if ($isOwn) {
+        echo '<a class="hbtn green big" href="?p=play">Entre dans l\'Hôtel</a>';
+    } else {
+        echo '<a class="hbtn" href="?p=home">Retour à l\'accueil</a>';
+    }
+    echo '</div>';
+
+    /* ---------- Colonne principale ---------- */
+    echo '<div class="main">';
+
+    // Motto (+ édition si c'est ma page)
+    echo '<div class="panel"><div class="panel-h orange">' . ($isOwn ? 'Ma mission' : 'Mission') . '</div><div class="panel-b">';
+    if (isset($_GET['saved'])) echo '<div class="flash ok">Ton motto a été mis à jour !</div>';
+    echo '<p class="bigmotto">&laquo; ' . (trim((string)$u['motto']) !== '' ? h($u['motto']) : '<i>Pas encore de motto…</i>') . ' &raquo;</p>';
+    if ($isOwn) {
+        echo '<form method="post" action="?p=profile&u=' . h(rawurlencode($u['username'])) . '" class="mottoform">' . csrf_f();
+        echo '<input name="motto" maxlength="100" value="' . h($u['motto']) . '" placeholder="Écris ton motto…">';
+        echo '<button class="hbtn green sm2">Enregistrer</button></form>';
+    }
+    echo '</div></div>';
+
+    // En bref
+    echo '<div class="panel"><div class="panel-h blue">En bref</div><div class="panel-b">';
+    echo '<ul class="statl wide">';
+    echo '<li><span>Habbo depuis</span><b>' . $since . ' (' . $days . ' j)</b></li>';
+    echo '<li><span>Dernière visite</span><b>' . $seen . '</b></li>';
+    echo '<li><span>Sexe</span><b>' . ($u['sex'] === 'F' ? 'Fille' : 'Garçon') . '</b></li>';
+    echo '<li><span>Rang</span><b>' . h($ranks[$rank] ?? 'Habbo') . '</b></li>';
+    echo '</ul></div></div>';
+
+    // Le coffre (ma page uniquement)
+    if ($isOwn) {
+        echo '<div class="panel"><div class="panel-h green">Mon coffre</div><div class="panel-b"><div class="coffre">';
+        echo '<div class="coin cr"><b>' . (int)$u['credits'] . '</b><span>Crédits</span></div>';
+        echo '<div class="coin tk"><b>' . (int)$u['tickets'] . '</b><span>Tickets</span></div>';
+        echo '<div class="coin fl"><b>' . (int)$u['film'] . '</b><span>Pellicules</span></div>';
+        echo '</div></div></div>';
+    }
+
+    // Jeux
+    echo '<div class="panel"><div class="panel-h purple">Scores de jeux</div><div class="panel-b"><div class="games">';
+    echo '<div class="gcard bb"><span class="gi">🏐</span><div><b>' . (int)$u['battleball_points'] . '</b> pts<span>BattleBall</span></div></div>';
+    echo '<div class="gcard sn"><span class="gi">❄️</span><div><b>' . (int)$u['snowstorm_points'] . '</b> pts<span>SnowStorm</span></div></div>';
+    echo '</div></div></div>';
+
+    // Badges
+    echo '<div class="panel"><div class="panel-h orange">Badges (' . count($badges) . ')</div><div class="panel-b">';
+    if (!$badges) echo '<p class="tip">Aucun badge pour le moment.</p>';
+    else {
+        echo '<div class="bgrid">';
+        foreach ($badges as $b) {
+            $hl = ($b === $worn) ? ' worn' : '';
+            echo '<div class="bcell' . $hl . '" title="' . h($b) . ($b === $worn ? ' (porté)' : '') . '"><img src="/c_images/badges/' . h($b) . '.gif" alt="' . h($b) . '" onerror="this.parentNode.style.display=\'none\'"></div>';
+        }
+        echo '</div>';
+    }
+    echo '</div></div>';
+
+    // Amis
+    echo '<div class="panel"><div class="panel-h blue">Amis (' . $friendCount . ')</div><div class="panel-b">';
+    if (!$friends) echo '<p class="tip">' . ($isOwn ? 'Tu n\'as pas encore d\'amis — ajoute-les en jeu !' : 'Aucun ami pour le moment.') . '</p>';
+    else {
+        echo '<div class="friends">';
+        foreach ($friends as $f) echo av_mini((string)$f['username'], (string)$f['sex']);
+        echo '</div>';
+        if ($friendCount > count($friends)) echo '<p class="tip">… et ' . ($friendCount - count($friends)) . ' autre(s).</p>';
+    }
+    echo '</div></div>';
+
+    // Appartements
+    echo '<div class="panel"><div class="panel-h green">Appartements (' . count($rooms) . ')</div><div class="panel-b">';
+    if (!$rooms) echo '<p class="tip">' . ($isOwn ? 'Tu n\'as pas encore de chambre — crée-la en jeu !' : 'Aucun appartement.') . '</p>';
+    else {
+        echo '<div class="rooms">';
+        foreach ($rooms as $r) {
+            echo '<div class="rcard"><div class="ricon">🚪</div><div class="rinfo"><b>' . h($r['name']) . '</b>';
+            if (trim((string)$r['description']) !== '') echo '<span class="rd">' . h($r['description']) . '</span>';
+            echo '<span class="rm">' . stars((int)$r['rating']) . ' · ' . (int)$r['visitors_max'] . ' places</span></div></div>';
+        }
+        echo '</div>';
+    }
+    echo '</div></div>';
+
+    echo '</div>'; // .main
+    echo '</div>'; // .cols
+}
+
+/* =========================== GABARIT =========================== */
+function head(string $pg): void {
+    $u = me();
+    $credits = null; $rank = 0;
+    if ($u) { try { $st = db()->prepare('SELECT credits,`rank` FROM users WHERE id=?'); $st->execute([(int)$u['id']]); if ($row = $st->fetch()) { $credits = (int)$row['credits']; $rank = (int)$row['rank']; } } catch (Throwable $e) {} }
+    $isStaff = $rank >= 5; // modérateurs + admins
+    $tabs = [
+        'home'     => ['Accueil', '?p=home'],
+        'play'     => ['Hôtel', '?p=play'],
+        'news'     => ['Actualités', '?p=news'],
+        'games'    => ['Jeux', '?p=games'],
+        'community'=> ['Communauté', '?p=community'],
+        'help'     => ['Aide', '?p=help'],
+    ];
+    if ($isStaff) $tabs['admin'] = ['🛠 Admin', '/admin/'];
+    ?><!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title><?= HOTEL ?> — l'Hôtel où on se retrouve</title><style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:13px/1.5 Verdana,Geneva,Arial,sans-serif;color:#4a4a4a;background:#e9e4d6;
+     background-image:linear-gradient(#cfe3f2,#cfe3f2 120px,#e9e4d6 120px,#e9e4d6);}
+a{color:#2f6f9f;text-decoration:none}a:hover{text-decoration:underline}
+.page{width:800px;max-width:100%;margin:0 auto;padding:0 10px 40px}
+/* En-tête */
+header.top{display:flex;align-items:center;justify-content:space-between;padding:16px 4px 10px}
+.logo{font:900 40px/1 'Trebuchet MS','Segoe UI',Arial,sans-serif;color:#fff;letter-spacing:-1px;
+      text-shadow:2px 2px 0 #1c5580,-1px -1px 0 #1c5580,1px -1px 0 #1c5580,-1px 1px 0 #1c5580,3px 3px 0 rgba(0,0,0,.15)}
+.logo b{color:#ffcf3f;text-shadow:2px 2px 0 #a06a00,-1px -1px 0 #a06a00,1px -1px 0 #a06a00,-1px 1px 0 #a06a00}
+.logo small{display:block;font:700 12px Verdana;letter-spacing:1px;color:#1c5580;text-shadow:none;margin-top:2px}
+.uinfo{background:#fff;border:1px solid #cfc6ad;border-radius:8px;padding:8px 12px;font-size:12px;text-align:right;box-shadow:0 2px 0 rgba(0,0,0,.06)}
+.uinfo .cr{color:#c98a00;font-weight:700}
+.uinfo a{font-weight:700}
+/* Barre d'onglets */
+nav.tabs{display:flex;gap:3px;background:#2f6f9f;border-radius:8px 8px 0 0;padding:6px 6px 0;box-shadow:inset 0 -3px 0 rgba(0,0,0,.15)}
+nav.tabs a{color:#dcefff;font-weight:700;font-size:12px;padding:9px 16px;border-radius:7px 7px 0 0}
+nav.tabs a:hover{background:#3f82b5;text-decoration:none}
+nav.tabs a.on{background:#e9e4d6;color:#2f6f9f}
+nav.tabs a[href="/admin/"]{background:#e5820c;color:#fff;margin-left:auto}
+nav.tabs a[href="/admin/"]:hover{background:#f7a838}
+.uinfo .adminlink{color:#c26a00}
+/* Zone contenu */
+.body{background:#fff;border:1px solid #cfc6ad;border-top:0;border-radius:0 0 8px 8px;padding:16px;box-shadow:0 3px 10px rgba(0,0,0,.12)}
+.cols{display:flex;gap:16px;align-items:flex-start}
+.cols.one{max-width:460px;margin:0 auto}
+.main{flex:1;min-width:0}
+.side{width:250px;flex:0 0 250px}
+/* Panneaux façon Habbo */
+.panel{border:1px solid #d7d0bd;border-radius:9px;overflow:hidden;margin-bottom:16px;background:#fff}
+.panel-h{color:#fff;font-weight:700;font-size:13px;padding:8px 12px;text-shadow:0 1px 0 rgba(0,0,0,.2)}
+.panel-h.orange{background:linear-gradient(#f7a838,#ef8f13)}
+.panel-h.blue{background:linear-gradient(#4a92c8,#2f6f9f)}
+.panel-h.green{background:linear-gradient(#8fc94a,#6ba62f)}
+.panel-h.purple{background:linear-gradient(#a87fce,#7d52a8)}
+.panel-h.grey{background:linear-gradient(#9a9a9a,#7a7a7a)}
+.panel-b{padding:14px}
+.panel-b.center{text-align:center}
+.hotel .panel-b{padding:0}
+.hotelimg{display:block;width:100%;height:auto;background:#bfe3f5}
+.pitch{padding:14px 16px 4px;color:#5b5b5b}
+.hotel .hbtn{margin:14px 16px 18px}
+/* Boutons */
+.hbtn{display:block;text-align:center;font-weight:700;font-size:13px;color:#fff;padding:11px 14px;border-radius:8px;border:0;width:100%;cursor:pointer;margin-top:10px;
+      background:linear-gradient(#4a92c8,#2f6f9f);box-shadow:0 2px 0 rgba(0,0,0,.18);font-family:inherit}
+.hbtn:hover{filter:brightness(1.06);text-decoration:none}
+.hbtn.green{background:linear-gradient(#8fc94a,#5f9a27)}
+.hbtn.orange{background:linear-gradient(#f7a838,#e5820c)}
+.hbtn.grey{background:linear-gradient(#b7b7b7,#8f8f8f)}
+.hbtn.big{font-size:15px;padding:13px}
+/* Formulaires */
+label{display:block;font-weight:700;color:#6b6b6b;margin:10px 0 3px;font-size:12px}
+input[type=text],input:not([type]),input[type=password]{width:100%;border:1px solid #cfc6ad;background:#fbfaf5;border-radius:7px;padding:9px 10px;font:inherit}
+input:focus{outline:none;border-color:#4a92c8;background:#fff}
+.sexpick{display:flex;gap:8px}
+.sx{flex:1;border:1px solid #cfc6ad;border-radius:7px;padding:9px;text-align:center;cursor:pointer;font-weight:700;color:#5b5b5b;margin:0}
+.sx input{margin-right:5px}
+/* Actus */
+.news{display:flex;gap:12px;flex-wrap:wrap}
+.ncard{flex:1;min-width:150px;border:1px solid #e2ddcd;border-radius:9px;padding:12px;background:#fbfaf5}
+.ncard h3{font-size:13px;color:#3a3a3a;margin:8px 0 4px}
+.ncard p{font-size:11.5px;color:#6b6b6b}
+.ntag{display:inline-block;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px}
+.ntag.blue{background:#2f6f9f}.ntag.green{background:#6ba62f}.ntag.purple{background:#7d52a8}.ntag.orange{background:#e5820c}
+.nrow .nt{font-size:14px;color:#3a3a3a;margin:6px 0 3px}
+/* Divers */
+.flash{padding:9px 11px;border-radius:7px;margin-bottom:10px;font-size:12px}
+.flash.err{background:#fbe3e3;border:1px solid #e6a9a9;color:#b23}
+.flash.ok{background:#e6f6ea;border:1px solid #a6d8b4;color:#2c7a44}
+.tip{font-size:11.5px;color:#8a8a7a;margin-top:10px}
+.statl{list-style:none}
+.statl li{padding:6px 0;border-bottom:1px dotted #e2ddcd;font-size:12px}
+.statl li:last-child{border:0}
+.statl b{color:#2f6f9f}
+.statl.wide li{display:flex;justify-content:space-between}
+.statl.wide span{color:#8a8a7a}
+/* Profil — Habbo Home */
+.av{border-radius:12px;display:grid;place-items:center;border:3px solid #fff;box-shadow:0 0 0 1px #cfc6ad;position:relative}
+.av span{font-weight:900;color:#fff;text-shadow:1px 1px 0 rgba(0,0,0,.25);font-family:'Trebuchet MS',Arial}
+.av.m{background:linear-gradient(#5aa0d6,#2f6f9f)}
+.av.f{background:linear-gradient(#e78bc0,#c74f97)}
+.av.big{width:96px;height:96px;margin:0 auto 10px}.av.big span{font-size:42px}
+.av.mini{width:38px;height:38px;border-width:2px;border-radius:9px}.av.mini span{font-size:17px}
+.av .worn{position:absolute;right:-8px;bottom:-8px;width:34px;height:34px;background:#fff;border:1px solid #cfc6ad;border-radius:8px;padding:2px}
+.rankpill{display:inline-block;background:#2f6f9f;color:#fff;font-size:11px;font-weight:700;padding:3px 12px;border-radius:11px}
+.rankpill.staff{background:linear-gradient(#f7a838,#e5820c)}
+.hcbadge{display:inline-block;margin-top:8px;background:linear-gradient(#3a3a3a,#111);color:#ffcf3f;font-size:11px;font-weight:700;padding:3px 12px;border-radius:11px;border:1px solid #ffcf3f}
+.bigmotto{font-size:16px;color:#3a3a3a;font-style:italic;text-align:center;padding:6px 0}
+.mottoform{display:flex;gap:8px;margin-top:6px}.mottoform input{flex:1}
+.hbtn.sm2{width:auto;margin:0;padding:9px 16px;white-space:nowrap}
+.coffre{display:flex;gap:10px;text-align:center}
+.coin{flex:1;border:1px solid #e2ddcd;border-radius:9px;padding:12px 6px;background:#fbfaf5}
+.coin b{display:block;font-size:22px}.coin span{font-size:11px;color:#8a8a7a}
+.coin.cr b{color:#c98a00}.coin.tk b{color:#2f6f9f}.coin.fl b{color:#7d52a8}
+.games{display:flex;gap:10px}
+.gcard{flex:1;display:flex;align-items:center;gap:10px;border:1px solid #e2ddcd;border-radius:9px;padding:10px 12px;background:#fbfaf5}
+.gcard .gi{font-size:26px}.gcard b{font-size:18px;color:#2f6f9f}.gcard span{display:block;font-size:11px;color:#8a8a7a}
+.friends{display:flex;flex-wrap:wrap;gap:10px}
+.friend{width:64px;text-align:center;color:#4a4a4a}
+.friend .fn{display:block;font-size:10px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.friend .av.mini{margin:0 auto}
+.rooms{display:flex;flex-direction:column;gap:8px}
+.rcard{display:flex;align-items:center;gap:12px;border:1px solid #e2ddcd;border-radius:9px;padding:10px 12px;background:#fbfaf5}
+.ricon{font-size:24px}.rinfo b{font-size:13px}.rinfo .rd{display:block;font-size:11px;color:#8a8a7a}
+.rinfo .rm{display:block;font-size:11px;color:#8a8a7a;margin-top:2px}
+.stars{color:#f7a838;letter-spacing:1px}
+.bgrid{display:flex;flex-wrap:wrap;gap:8px}
+.bcell{width:44px;height:44px;border:1px solid #e2ddcd;border-radius:7px;background:#fbfaf5;display:grid;place-items:center;position:relative}
+.bcell img{max-width:40px;max-height:40px}
+.bcell.worn{border-color:#f7a838;box-shadow:0 0 0 2px #ffe6b8;background:#fff8ec}
+/* Pages Actus / Jeux / Communauté / Aide */
+.cols.one2{max-width:600px;margin:0 auto;display:block}
+.newslist{display:flex;flex-direction:column;gap:14px}
+.nrow{border-bottom:1px dotted #e2ddcd;padding-bottom:12px}.nrow:last-child{border:0;padding-bottom:0}
+.nrow .ndate{font-size:11px;color:#a59f8d;margin-left:8px}
+.nrow p{margin-top:6px;color:#5b5b5b}
+.gamelist{display:flex;flex-direction:column;gap:12px}
+.grow{display:flex;gap:12px;align-items:flex-start;border:1px solid #e2ddcd;border-radius:9px;padding:12px;background:#fbfaf5}
+.grow .gi{font-size:30px;line-height:1}.grow b{font-size:14px}.grow p{font-size:12px;color:#6b6b6b;margin-top:2px}
+.lb{list-style:none;counter-reset:none}
+.lb li{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dotted #e2ddcd;font-size:12px}
+.lb li:last-child{border:0}
+.lb .rk{width:20px;height:20px;background:#2f6f9f;color:#fff;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;flex:0 0 auto}
+.lb li:nth-child(1) .rk{background:#f7a838}.lb li:nth-child(2) .rk{background:#9db0c0}.lb li:nth-child(3) .rk{background:#cd7f32}
+.lb a{flex:1}.lb b{color:#2f6f9f}
+.hsearch{display:flex;gap:8px}.hsearch input{flex:1}
+.hof{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.hof .panel{margin:0}
+@media(max-width:560px){.hof{grid-template-columns:1fr}}
+.rules,.faq{list-style:none}
+.rules li{padding:6px 0 6px 22px;position:relative;font-size:12px}
+.rules li:before{content:'✓';position:absolute;left:0;color:#6ba62f;font-weight:700}
+.faq li{padding:6px 0 6px 18px;position:relative;font-size:12.5px;color:#5b5b5b}
+.faq li:before{content:'•';position:absolute;left:4px;color:#4a92c8;font-weight:700}
+/* Centre d'aide */
+.helpintro{color:#5b5b5b}
+.helpnav{list-style:none}
+.helpnav li{border-bottom:1px dotted #e2ddcd}.helpnav li:last-child{border:0}
+.helpnav a{display:block;padding:9px 4px;font-weight:700;color:#3a3a3a;font-size:12.5px}
+.helpnav a:hover{color:#2f6f9f;text-decoration:none}
+.helpnav span{display:inline-block;width:20px}
+.faqd{border:1px solid #e2ddcd;border-radius:8px;margin-bottom:8px;background:#fbfaf5;overflow:hidden}
+.faqd summary{cursor:pointer;padding:11px 14px;font-weight:700;color:#2f6f9f;font-size:12.5px;list-style:none;position:relative}
+.faqd summary::-webkit-details-marker{display:none}
+.faqd summary:before{content:'＋';position:absolute;right:14px;color:#8a8a7a;font-weight:700}
+.faqd[open] summary:before{content:'－'}
+.faqd[open] summary{background:#eef4fa;border-bottom:1px solid #e2ddcd}
+.faqa{padding:12px 14px;color:#5b5b5b;font-size:12.5px}
+.faqa b{color:#3a3a3a}
+/* Pied */
+footer.foot{text-align:center;color:#8a857a;font-size:11px;margin-top:16px}
+@media(max-width:640px){.cols{flex-direction:column}.side{width:100%;flex:none}.logo{font-size:30px}}
+</style></head><body>
+<div class="page">
+  <header class="top">
+    <a href="?p=home" class="logo"><?= substr(HOTEL,0,5) ?><b><?= substr(HOTEL,5) ?></b><small>l'Hôtel où on se retrouve</small></a>
+    <?php if ($u): ?>
+      <div class="uinfo">
+        Salut <b><?= h($u['username']) ?></b><?= $isStaff ? ' &middot; <a class="adminlink" href="/admin/">🛠 Administration</a>' : '' ?><br>
+        <span class="cr"><?= $credits !== null ? $credits : 0 ?> crédits</span> &middot;
+        <a href="?p=profile&u=<?= h(rawurlencode($u['username'])) ?>">Ma page</a> &middot;
+        <a href="?p=logout">Déconnexion</a>
+      </div>
+    <?php else: ?>
+      <div class="uinfo">Déjà membre ? <a href="?p=home">Connecte-toi</a><br>Nouveau ? <a href="?p=register">Crée ton Habbo</a></div>
+    <?php endif; ?>
+  </header>
+  <nav class="tabs"><?php foreach ($tabs as $k => $t) { $on = ($k === $pg || ($pg === 'profile' && $k === 'home')) ? ' on' : ''; $tgt = ($k === 'admin') ? ' target="_blank" rel="noopener"' : ''; echo '<a class="' . trim($on) . '" href="' . $t[1] . '"' . $tgt . '>' . h($t[0]) . '</a>'; } ?></nav>
+  <div class="body">
+<?php }
+function foot(): void {
+    echo '  </div><footer class="foot">' . HOTEL . ' — rétro Habbo v14 (2007). Habbo est une marque de Sulake. Projet privé, non affilié.</footer></div>';
+    // Ouvre le jeu dans une fenêtre séparée à la taille du client (720x540), pour garder le site ouvert
+    echo <<<'JS'
+<script>
+(function(){
+  function openGame(url){
+    var win=window.open(url,'habbov14game','width=728,height=548,resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no');
+    if(win){win.focus();}else{window.location=url;} // si popup bloqué, on bascule dans l'onglet
+    return false;
+  }
+  document.addEventListener('click',function(e){
+    var a=e.target && e.target.closest ? e.target.closest('a') : null;
+    if(!a) return;
+    var href=a.getAttribute('href')||'';
+    if(/[?&]p=play(\b|&|$)/.test(href)){ e.preventDefault(); openGame(a.href); }
+  });
+})();
+</script>
+JS;
+    echo '</body></html>';
+}

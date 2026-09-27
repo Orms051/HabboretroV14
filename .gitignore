@@ -1,0 +1,40 @@
+# ==== HabboretroV14 — .gitignore ====
+# On versionne le CODE + la CONFIG + le client (casts 14.1_b8).
+# On EXCLUT : base de données live, gros médias binaires, binaires d'outils,
+# logs, sauvegardes et dumps (qui contiennent des hash de mots de passe).
+
+# --- Base de données live (données MariaDB) ---
+/MariaDB/
+
+# --- Gros médias binaires ---
+/Server/www/c_images/
+/Server/www/c_imagestest/
+/Server/www/web-gallery/
+/Server/www/lib/
+/Server/www/tools/
+/Server/www/dcr/sound/
+/Server/www/dcr/hof_furni/
+/Server/www/boo.gif
+
+# --- Binaires d'outils (Elias, ProjectorRays, FFDec…) ---
+/tools/
+
+# --- Logs ---
+*.log
+
+# --- Sauvegardes / dumps (contiennent des hash users) ---
+/_backups/
+/_backups_HabboV14/
+*.sql
+*.bak
+*.bak_*
+kepler.jar.bak_*
+_backup_*/
+
+# --- Divers temp ---
+*.tmp
+Thumbs.db
+desktop.ini
+
+# --- Runtime PHP (binaires, téléchargeable) ---
+/Server/php/
