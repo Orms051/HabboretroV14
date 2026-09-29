@@ -443,9 +443,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'bus_type':
                 $tc = in_array($_POST['trigger_class'] ?? '', ['infobus_park', 'infobus_poll'], true) ? $_POST['trigger_class'] : 'infobus_park';
                 db()->prepare('UPDATE rooms_models SET trigger_class=? WHERE id=?')->execute([$tc, (int)$_POST['id']]); $msg = '🚌 Type du bus changé (' . ($tc === 'infobus_poll' ? 'Sondage/Vote' : 'Info/FRANK') . '). Redémarre l\'émulateur.'; break;
-            case 'srv_start': srv_start(); $msg = '▶️ Démarrage de l\'émulateur… patiente ~10 s puis actualise.'; break;
-            case 'srv_stop': srv_stop(); $msg = '⏹️ Émulateur arrêté.'; break;
-            case 'srv_restart': srv_stop(); sleep(3); srv_start(); $msg = '🔄 Redémarrage de l\'émulateur… patiente ~10 s puis actualise. Les changements de décor sont maintenant appliqués.'; break;
+            case 'srv_start':
+                if (emu_running()) { $msg = 'ℹ️ L\'émulateur tourne déjà.'; break; }
+                srv_start(); $msg = '▶️ Démarrage de l\'émulateur… patiente ~10 s puis actualise.'; break;
+            case 'srv_stop':
+                srv_stop(); usleep(800000);
+                if (emu_running()) { $ok = false; $msg = '⚠️ L\'arrêt a échoué (l\'émulateur répond encore). Vérifie que le serveur web a le droit d\'arrêter le process.'; }
+                else $msg = '⏹️ Émulateur arrêté.';
+                break;
+            case 'srv_restart':
+                srv_stop(); sleep(3); srv_start();
+                $msg = '🔄 Redémarrage de l\'émulateur… patiente ~10 s puis actualise. Les changements de décor sont maintenant appliqués.'; break;
             case 'set_entry_bg':
                 $cc = preg_replace('/[^a-z_]/', '', strtolower((string)($_POST['country'] ?? '')));
                 if ($cc === '' || !is_file(DCR_DIR . '/hh_entry_' . $cc . '.cct')) { $ok = false; $msg = '❌ Fond introuvable.'; break; }
@@ -1704,8 +1712,15 @@ function user_badges_html(int $uid, array $codes): string {
     return $o;
 }
 function emu_running(): bool { $c = @fsockopen('127.0.0.1', 12321, $e, $s, 0.8); if ($c) { fclose($c); return true; } return false; }
-function srv_stop(): void { @exec('powershell -NoProfile -ExecutionPolicy Bypass -File "' . __DIR__ . '\\_emu_stop.ps1" 2>&1'); }
-function srv_start(): void { @exec('powershell -NoProfile -ExecutionPolicy Bypass -File "' . __DIR__ . '\\_emu_start.ps1" 2>&1'); }
+/* ⚠️ Sous Apache (Laragon) le PATH ne contient PAS powershell → chemin complet obligatoire. */
+function ps_exe(): string {
+    foreach ([(getenv('SystemRoot') ?: 'C:\\Windows') . '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'] as $c) {
+        if (is_file($c)) return '"' . $c . '"';
+    }
+    return 'powershell';
+}
+function srv_stop(): array { $o = []; $c = -1; @exec(ps_exe() . ' -NoProfile -ExecutionPolicy Bypass -File "' . __DIR__ . '\\_emu_stop.ps1" 2>&1', $o, $c); return ['code' => $c, 'out' => $o]; }
+function srv_start(): array { $o = []; $c = -1; @exec(ps_exe() . ' -NoProfile -ExecutionPolicy Bypass -File "' . __DIR__ . '\\_emu_start.ps1" 2>&1', $o, $c); return ['code' => $c, 'out' => $o]; }
 
 /* ---- RCON (alerte hôtel, etc.) ---- */
 function rcon_str(string $s): string { return pack('N', strlen($s)) . $s; }
