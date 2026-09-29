@@ -567,13 +567,11 @@ function tab_default_rank(string $tab): int {
 function nav_groups(): array {
     return [
         '' => ['dashboard', 'search'],
+        'Joueurs & modération' => ['users', 'badges', 'ranks', 'moderation', 'audit', 'commandes'],
         'Catalogue & mobis' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax'],
-        'Salles' => ['rooms', 'models'],
-        'Communauté' => ['news', 'bots'],
-        'Joueurs' => ['users', 'badges', 'ranks'],
-        'Jeux' => ['games', 'gamemaps', 'events', 'recycler', 'vouchers'],
-        'Modération' => ['moderation', 'audit', 'bus', 'commandes'],
-        'Système' => ['textes', 'settings', 'access', 'mysql', 'server'],
+        'Hôtel & animations' => ['rooms', 'models', 'bots', 'games', 'gamemaps', 'events', 'recycler', 'vouchers', 'bus'],
+        'Site & contenus' => ['news', 'textes'],
+        'Administration' => ['settings', 'access', 'mysql', 'server'],
     ];
 }
 function ensure_tab_perms(): void {
@@ -1910,7 +1908,14 @@ a{color:inherit}
 .side nav{padding:12px 10px;display:flex;flex-direction:column;flex:1}
 .side nav a{display:flex;align-items:center;padding:11px 13px;border-radius:11px;text-decoration:none;color:var(--mut);font-weight:600}
 .side nav a .i{font-size:17px;width:22px;text-align:center}
-.side nav .grp{font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--mut);opacity:.7;padding:12px 13px 4px}
+.side nav .grp{display:flex;align-items:center;width:100%;background:none;border:0;border-top:1px solid var(--line2);cursor:pointer;font-family:inherit;text-align:left;font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--mut);opacity:.75;padding:11px 13px 6px;margin-top:8px}
+.side nav .grp:hover{opacity:1}
+.side nav .grp .car{margin-left:auto;font-size:11px;opacity:.8;transition:transform .15s}
+.navgrp{margin-top:2px}
+.navgrp.open>.grp .car{transform:rotate(90deg)}
+.navgrp>.grpitems{display:none}
+.navgrp.open>.grpitems{display:block}
+.navgrp:first-of-type>.grp{border-top:0;margin-top:2px}
 .side nav a:hover{background:var(--panel);color:var(--txt)}
 .side nav a.on{background:var(--blue);color:#fff;box-shadow:0 6px 16px var(--glow)}
 .side .foot{border-top:1px solid var(--line2);padding:14px 16px;font-size:13px}
@@ -1918,7 +1923,7 @@ a{color:inherit}
 .side .foot a:hover{color:var(--txt)}
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
 .topbar{height:0}
-.content{padding:26px 30px 70px;max-width:1080px;width:100%;margin:0 auto}
+.content{padding:28px 36px 70px;max-width:1400px;width:100%;margin:0 auto}
 .pagehead h1{font-size:25px;margin:0}.pagehead .sub{color:var(--mut);margin:4px 0 18px}
 .sub{color:var(--mut)}.muted{color:var(--mut)}.sm{font-size:12px}
 h3{font-size:15px;margin:0}h3.sec{margin:22px 0 10px;color:var(--mut);font-size:13px;text-transform:uppercase;letter-spacing:1px}
@@ -1991,7 +1996,7 @@ details.panel summary{list-style:none}details.panel summary::-webkit-details-mar
 details.panel summary::before{content:'▸';color:var(--mut);margin-right:8px;font-size:12px;display:inline-block;transition:transform .15s}
 details[open].panel summary::before{transform:rotate(90deg)}
 /* --- Compat Basilisk/Goanna : remplace gap flex par des marges --- */
-.side nav>*+*{margin-top:3px}
+.side nav a{margin-top:3px}
 .side nav a>*+*{margin-left:11px}
 .stat>*+*{margin-left:13px}
 .ph>*+*{margin-left:10px}
@@ -2007,18 +2012,36 @@ details[open].panel summary::before{transform:rotate(90deg)}
 label>input,label>select,label>textarea{margin-top:4px}
 input[type=checkbox]{margin-top:0;margin-right:6px}
 #toasts>*+*{margin-top:8px}
+/* Sous-onglets de section (style Cadurix) */
+.subtabs{display:flex;flex-wrap:wrap;margin:0 0 20px;padding-bottom:14px;border-bottom:1px solid var(--line2)}
+.subtabs>a{margin:0 8px 8px 0;padding:8px 15px;border-radius:10px;background:var(--panel);border:1px solid var(--line2);color:var(--mut);font-weight:700;font-size:12.5px;text-decoration:none;white-space:nowrap}
+.subtabs>a:hover{color:var(--text);border-color:var(--acc)}
+.subtabs>a.on{background:var(--acc);border-color:var(--acc);color:#fff}
 </style></head><body>
 <aside class="side"><div class="brand"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="width:100%;max-width:180px;height:auto;display:block;margin:0 auto 4px;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated"><small>ADMINISTRATION</small></div><nav><?php
+    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Site & contenus' => '📰', 'Administration' => '⚙️'];
     foreach (nav_groups() as $grpLabel => $keys) {
         $visible = array_filter($keys, fn($k) => isset($nav[$k]) && tab_allowed($k));
         if (!$visible) continue;
-        if ($grpLabel !== '') echo '<div class="grp">' . h($grpLabel) . '</div>';
-        foreach ($visible as $k) { [$ic, $lbl] = $nav[$k]; echo '<a class="' . ($p === $k ? 'on' : '') . '" href="?p=' . $k . '"><span class="i">' . $ic . '</span><span>' . h($lbl) . '</span></a>'; }
+        if ($grpLabel === '') {
+            foreach ($visible as $k) { [$ic, $lbl] = $nav[$k]; echo '<a class="' . ($p === $k ? 'on' : '') . '" href="?p=' . $k . '"><span class="i">' . $ic . '</span><span>' . h($lbl) . '</span></a>'; }
+            continue;
+        }
+        $first = reset($visible);
+        $cur = in_array($p, $visible, true);
+        echo '<a class="' . ($cur ? 'on' : '') . '" href="?p=' . $first . '"><span class="i">' . ($gicons[$grpLabel] ?? '📁') . '</span><span>' . h($grpLabel) . '</span></a>';
     }
     ?></nav><div class="foot">
     <label class="thsel">🎨 Thème<select onchange="setTheme(this.value)"><?php foreach (THEMES as $k => $tt) echo '<option value="' . $k . '"' . ($k === $tk ? ' selected' : '') . '>' . $tt[1] . ' ' . h($tt[0]) . '</option>'; ?></select></label>
     <div class="who">👤 <?= h($_SESSION['admin']['username']) ?></div><a href="http://localhost/" target="_blank">▶️ Jeu</a><a href="?p=logout">Déconnexion</a></div></aside>
 <div class="main"><div class="content"><?php
+    foreach (nav_groups() as $gl => $keys) {
+        if ($gl === '' || !in_array($p, $keys, true)) continue;
+        echo '<div class="subtabs">';
+        foreach ($keys as $k) { if (!isset($nav[$k]) || !tab_allowed($k)) continue; [$ic, $lbl] = $nav[$k]; echo '<a class="' . ($p === $k ? 'on' : '') . '" href="?p=' . $k . '"><span>' . $ic . '</span> ' . h($lbl) . '</a>'; }
+        echo '</div>';
+        break;
+    }
     if ($flash) echo '<script>window.__flash=' . json_encode($flash) . ';</script>';
 }
 function render_footer(): void { ?>
@@ -2028,6 +2051,8 @@ function toast(msg,ok){var t=document.createElement('div');t.className='toast'+(
 function tgl(id){var e=document.getElementById(id);if(e)e.style.display=e.style.display==='none'?'table-row':'none';}
 function setTheme(v){document.cookie='r14theme='+v+';path=/;max-age=31536000';location.reload();}
 function pickBadge(c){var e=document.getElementById('badgecode');if(e){e.value=c;e.scrollIntoView({block:'center'});e.focus();toast('Badge '+c+' sélectionné',true);}}
+function toggleGrp(btn){var g=btn.parentNode;g.classList.toggle('open');try{var o=JSON.parse(localStorage.getItem('r14nav')||'{}');o[g.getAttribute('data-g')]=g.classList.contains('open');localStorage.setItem('r14nav',JSON.stringify(o));}catch(e){}}
+(function(){try{var o=JSON.parse(localStorage.getItem('r14nav')||'{}');var l=document.querySelectorAll('.navgrp');for(var i=0;i<l.length;i++){var g=l[i];if(g.getAttribute('data-cur'))continue;var k=g.getAttribute('data-g');if(k in o){if(o[k])g.classList.add('open');else g.classList.remove('open');}}}catch(e){}})();
 if(window.__flash)toast(window.__flash,true);
 document.addEventListener('submit',function(e){
   var f=e.target;if(!f.classList.contains('js'))return;e.preventDefault();
