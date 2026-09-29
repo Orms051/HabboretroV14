@@ -707,7 +707,7 @@ function page_vouchers(): void {
     echo '<div class="row"><label style="flex:1">Code<input name="code" required placeholder="PROMO2026"></label>';
     echo '<label>Crédits<input type="number" name="credits" value="100" style="width:110px"></label>';
     echo '<label>Expire le (optionnel)<input type="date" name="expiry"></label>';
-    echo '<label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="single" checked> Usage unique</label>';
+    echo '<label style="flex-direction:row;align-items:center"><input type="checkbox" name="single" checked> Usage unique</label>';
     echo '<button type="button" class="mini ghost" onclick="this.form.code.value=\'PROMO\'+Math.random().toString(36).slice(2,7).toUpperCase()">🎲 Générer</button></div>';
     echo '<label style="margin-top:8px">Objets offerts — sale codes séparés par des virgules (optionnel)<input name="items" placeholder="ex: throne, hc_lmp"></label>';
     echo '<button style="margin-top:10px">🎁 Créer le code</button></form></div>';
@@ -792,7 +792,7 @@ function page_furni(): void {
             echo '<div class="row"><label style="flex:1">Nom<input name="name" value="' . h($edit['name']) . '"></label><label>Longueur<input type="number" name="length" value="' . (int)$edit['length'] . '" style="width:90px"></label><label>Largeur<input type="number" name="width" value="' . (int)$edit['width'] . '" style="width:90px"></label></div>';
             echo '<label style="margin-top:8px">Description<input name="description" value="' . h($edit['description']) . '"></label>';
             echo '<label style="margin-top:8px">Comportement (behaviour)<input name="behaviour" value="' . h($edit['behaviour']) . '"></label>';
-            echo '<div class="row" style="margin-top:8px"><label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="is_tradable" ' . ($edit['is_tradable'] ? 'checked' : '') . '> Échangeable</label><label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="is_recyclable" ' . ($edit['is_recyclable'] ? 'checked' : '') . '> Recyclable</label></div>';
+            echo '<div class="row" style="margin-top:8px"><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_tradable" ' . ($edit['is_tradable'] ? 'checked' : '') . '> Échangeable</label><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_recyclable" ' . ($edit['is_recyclable'] ? 'checked' : '') . '> Recyclable</label></div>';
             echo '<button style="margin-top:10px">💾 Enregistrer</button></form><p class="hint">sprite: ' . h((string)$edit['sprite']) . ' · sprite_id: ' . (int)$edit['sprite_id'] . '</p></div>';
             return;
         }
@@ -987,7 +987,7 @@ function page_catalogue(): void {
             echo '<div class="row"><label style="flex:1">Nom (onglet)<input name="name" value="' . h($ep['name']) . '"></label><label>Ordre<input type="number" name="order_id" value="' . (int)$ep['order_id'] . '" style="width:80px"></label><label>Rang mini<input type="number" name="min_role" value="' . (int)$ep['min_role'] . '" style="width:70px"></label></div>';
             echo '<label style="margin-top:8px">Image d\'en-tête<select name="image_headline">' . headline_options((string)$ep['image_headline']) . '</select></label>';
             echo '<label style="margin-top:8px">Description (en-tête de la page)<textarea name="body" rows="5">' . h((string)$ep['body']) . '</textarea></label>';
-            echo '<div class="row" style="margin-top:8px"><label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="index_visible"' . ((int)$ep['index_visible'] ? ' checked' : '') . '> Visible au catalogue</label><label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="is_club_only"' . ((int)$ep['is_club_only'] ? ' checked' : '') . '> Réservé HC</label></div>';
+            echo '<div class="row" style="margin-top:8px"><label style="flex-direction:row;align-items:center"><input type="checkbox" name="index_visible"' . ((int)$ep['index_visible'] ? ' checked' : '') . '> Visible au catalogue</label><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_club_only"' . ((int)$ep['is_club_only'] ? ' checked' : '') . '> Réservé HC</label></div>';
             echo '<button style="margin-top:10px">💾 Enregistrer</button></form><p class="hint">⚠️ Redémarre l\'émulateur après pour voir les changements en jeu (le catalogue est mis en cache au démarrage).</p></div>';
             return;
         }
@@ -1002,7 +1002,7 @@ function page_catalogue(): void {
             echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="cat_item"><input type="hidden" name="id" value="' . (int)$ei['id'] . '">';
             echo '<div class="row"><label style="flex:1">Nom<input name="name" value="' . h((string)$ei['name']) . '"></label><label style="flex:1">Page' . page_select('page_id', (int)$ei['page_id']) . '</label></div>';
             echo '<label style="margin-top:8px">Description<input name="description" value="' . h((string)$ei['description']) . '"></label>';
-            echo '<div class="row" style="margin-top:8px;align-items:flex-end"><label>Prix (crédits)<input type="number" name="price" value="' . (int)$ei['price'] . '" style="width:110px"></label><label>Quantité<input type="number" name="amount" value="' . (int)$ei['amount'] . '" style="width:90px"></label><label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="is_hidden"' . ((int)$ei['is_hidden'] ? ' checked' : '') . '> Masqué au catalogue</label></div>';
+            echo '<div class="row" style="margin-top:8px;align-items:flex-end"><label>Prix (crédits)<input type="number" name="price" value="' . (int)$ei['price'] . '" style="width:110px"></label><label>Quantité<input type="number" name="amount" value="' . (int)$ei['amount'] . '" style="width:90px"></label><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_hidden"' . ((int)$ei['is_hidden'] ? ' checked' : '') . '> Masqué au catalogue</label></div>';
             echo '<button style="margin-top:12px">💾 Enregistrer</button></form><p class="hint">sale_code : <code>' . h((string)$ei['sale_code']) . '</code> · ⚠️ Redémarre l\'émulateur pour voir les changements en jeu.</p></div>';
             return;
         }
@@ -1088,7 +1088,7 @@ function page_convert(): void {
     echo '<div class="panel"><div class="ph"><h3>Convertir un meuble</h3></div>';
     echo '<form method="post" class="js" data-reload data-confirm="Lancer la conversion ? (quelques secondes)">' . csrf_field() . '<input type="hidden" name="action" value="furni_convert">';
     echo '<div class="row"><label style="flex:1">Sprite (nom exact du meuble)<input name="sprite" placeholder="ex : exe_wfall" required></label><label>Révision<input name="revision" placeholder="ex : 56746" required style="width:120px"></label></div>';
-    echo '<div class="row" style="margin-top:8px"><label>Type<select name="ftype"><option value="s">Sol (au sol)</option><option value="i">Mural (au mur)</option></select></label><label>Longueur<input type="number" name="len" value="1" style="width:80px"></label><label>Largeur<input type="number" name="wid" value="1" style="width:80px"></label><label style="flex-direction:row;align-items:center;gap:6px;margin-top:20px"><input type="checkbox" name="mkdef"> Créer la définition si absente</label></div>';
+    echo '<div class="row" style="margin-top:8px"><label>Type<select name="ftype"><option value="s">Sol (au sol)</option><option value="i">Mural (au mur)</option></select></label><label>Longueur<input type="number" name="len" value="1" style="width:80px"></label><label>Largeur<input type="number" name="wid" value="1" style="width:80px"></label><label style="flex-direction:row;align-items:center;margin-top:20px"><input type="checkbox" name="mkdef"> Créer la définition si absente</label></div>';
     echo '<button style="margin-top:12px">🔧 Convertir & installer</button></form>';
     echo '<p class="hint">💡 La <b>révision</b> se trouve dans la furnidata de Habbo. URL testée : <code>https://images.habbo.com/dcr/hof_furni/&lt;révision&gt;/&lt;sprite&gt;.swf</code><br>⚠️ Après conversion : <b>vide le cache de Basilisk</b> pour voir le meuble. Certains meubles animés spéciaux (téléporteurs) s\'affichent mais gardent leurs limites de comportement côté client.</p></div>';
 
@@ -1907,8 +1907,8 @@ a{color:inherit}
 .side{width:238px;flex:0 0 238px;background:var(--sidebar);border-right:1px solid var(--line2);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
 .side .brand{padding:20px 18px;font-weight:900;color:var(--acc);font-size:17px;letter-spacing:.5px;border-bottom:1px solid var(--line2)}
 .side .brand small{display:block;color:var(--mut);font-weight:600;font-size:11px;letter-spacing:2px;margin-top:2px}
-.side nav{padding:12px 10px;display:flex;flex-direction:column;gap:3px;flex:1}
-.side nav a{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:11px;text-decoration:none;color:var(--mut);font-weight:600}
+.side nav{padding:12px 10px;display:flex;flex-direction:column;flex:1}
+.side nav a{display:flex;align-items:center;padding:11px 13px;border-radius:11px;text-decoration:none;color:var(--mut);font-weight:600}
 .side nav a .i{font-size:17px;width:22px;text-align:center}
 .side nav .grp{font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--mut);opacity:.7;padding:12px 13px 4px}
 .side nav a:hover{background:var(--panel);color:var(--txt)}
@@ -1923,14 +1923,14 @@ a{color:inherit}
 .sub{color:var(--mut)}.muted{color:var(--mut)}.sm{font-size:12px}
 h3{font-size:15px;margin:0}h3.sec{margin:22px 0 10px;color:var(--mut);font-size:13px;text-transform:uppercase;letter-spacing:1px}
 code{background:var(--bg);padding:2px 7px;border-radius:6px;color:var(--acc);font-size:12px;border:1px solid var(--line);font-family:var(--mono)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:14px;margin-bottom:18px}
-.stat{display:flex;align-items:center;gap:13px;background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:16px 18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));grid-gap:14px;gap:14px;margin-bottom:18px}
+.stat{display:flex;align-items:center;background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:16px 18px}
 .stat .ic{font-size:24px;width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:var(--soft)}
 .stat.blue .ic{color:var(--blue)}.stat.green .ic{color:var(--green)}.stat.gold .ic{color:var(--acc)}.stat.red .ic{color:var(--red)}
 .stat .num{font-size:23px;font-weight:800;line-height:1}.stat .lbl{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-top:3px}
-.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:820px){.cols{grid-template-columns:1fr}}
+.cols{display:grid;grid-template-columns:1fr 1fr;grid-gap:16px;gap:16px}@media(max-width:820px){.cols{grid-template-columns:1fr}}
 .panel{background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:16px 18px;margin:12px 0}
-.ph{display:flex;align-items:center;gap:10px;margin-bottom:12px}.ph h3{flex:0 0 auto}.ph .srch{margin-left:auto}
+.ph{display:flex;align-items:center;margin-bottom:12px}.ph h3{flex:0 0 auto}.ph .srch{margin-left:auto}
 .lnk{margin-left:auto;color:var(--blue);text-decoration:none;font-size:13px;font-weight:600}
 table.clean{width:100%;border-collapse:collapse}table.clean th{text-align:left;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:8px 10px;border-bottom:1px solid var(--line2)}
 table.clean td{padding:9px 10px;border-bottom:1px solid var(--line)}table.clean tr:hover td{background:var(--panel2)}
@@ -1942,37 +1942,37 @@ button{background:var(--blue);color:#fff;border:0;border-radius:9px;padding:9px 
 button.ghost,a.ghost{background:transparent;border:1px solid var(--line2);color:var(--mut)}
 button.mini,a.mini{padding:6px 11px;font-size:13px;border-radius:8px}a.lnkbtn{text-decoration:none;display:inline-block}
 button.mini.ok{background:var(--green)}button.mini.warn{background:#c2603a}
-.row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
-label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mut)}label input,label select{color:var(--txt)}
-.srch{display:flex;gap:6px}.srch input{padding:7px 11px}
+.row{display:flex;align-items:flex-end;flex-wrap:wrap}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--mut)}label input,label select{color:var(--txt)}
+.srch{display:flex}.srch input{padding:7px 11px}
 input.filt{padding:8px 12px;border-radius:9px}
 .tag{background:var(--bg);border:1px solid var(--line2);border-radius:6px;padding:2px 8px;color:var(--mut);font-size:12px}
 .tag.blue{background:#22406a;border-color:#2f5da0;color:#cfe0ff}.tag.green{background:#234a2e;border-color:#356b45;color:#c6efd4}
 .tag.purple{background:#3d2a55;border-color:#5b3f80;color:#e2d2f6}.tag.orange{background:#5a3410;border-color:#8a5216;color:#ffd9a8}
 .rk{color:#fff;border-radius:6px;padding:3px 9px;font-size:11px;font-weight:700}.rk.green{background:#2e7d46}.rk.red{background:#8a3030}
-.decorwrap{display:grid;grid-template-columns:1fr;gap:12px}
-.seasons{display:flex;gap:9px;flex-wrap:wrap}
+.decorwrap{display:grid;grid-template-columns:1fr;grid-gap:12px;gap:12px}
+.seasons{display:flex;flex-wrap:wrap}
 button.season{background:var(--panel2);border:1px solid var(--line2);color:var(--txt);padding:11px 16px;border-radius:11px;font-weight:700}
 button.season:hover{border-color:var(--acc);background:var(--soft)}button.season.active{background:var(--acc);color:#fff;border-color:var(--acc);cursor:default}
 .warn{background:var(--soft);border:1px solid var(--line2);color:var(--txt);padding:12px 16px;border-radius:12px;margin:12px 0}
 .empty{color:var(--mut);text-align:center;padding:22px}
 details.panel summary{cursor:pointer;font-size:15px;font-weight:700}details[open].panel summary{margin-bottom:10px}
 .setting{border-top:1px solid var(--line);padding:9px 0}.setting:first-of-type{border-top:0}
-.srow{display:flex;gap:8px;align-items:center}.srow code{flex:0 0 290px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.srow input{flex:1}
+.srow{display:flex;align-items:center}.srow code{flex:0 0 290px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.srow input{flex:1}
 .hint{color:var(--mut);font-size:12px;margin-top:4px;padding-left:2px}
-.thsel{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--mut);margin-bottom:12px}.thsel select{width:100%}
-.srv{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+.thsel{display:flex;flex-direction:column;font-size:12px;color:var(--mut);margin-bottom:12px}.thsel select{width:100%}
+.srv{display:flex;flex-wrap:wrap;margin-top:6px}
 .srv button{padding:12px 18px;font-size:14px;border-radius:11px}
 button.bigok{background:var(--green)}button.bigred{background:var(--red)}button.bigwarn{background:#e0792b}
 .pager{display:flex;align-items:center;justify-content:space-between;margin-top:12px}.pager a{text-decoration:none;margin-left:6px}
-.perms{display:flex;gap:7px;flex-wrap:wrap}.perms .tag{padding:5px 10px}
-.badgegrid{display:flex;flex-wrap:wrap;gap:8px}
-.bcell{display:flex;flex-direction:column;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:8px 6px;min-width:58px;cursor:pointer}
+.perms{display:flex;flex-wrap:wrap}.perms .tag{padding:5px 10px}
+.badgegrid{display:flex;flex-wrap:wrap}
+.bcell{display:flex;flex-direction:column;align-items:center;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:8px 6px;min-width:58px;cursor:pointer}
 .bcell:hover{border-color:var(--acc)}.bcell span{font-size:10px;color:var(--mut);font-family:var(--mono)}
 .bcell form{margin:0}img.badge{width:40px;height:40px;object-fit:contain}
 .bchip{display:inline-flex;align-items:center;gap:2px;background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:3px 6px}
 .bprev{display:inline-flex;align-items:center;gap:3px}img.badge.sm{width:22px;height:22px}
-#toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:50}
+#toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;z-index:50}
 .toast{background:#12331f;border:1px solid #2c6b3f;color:#c7f5d6;padding:12px 16px;border-radius:11px;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.4);animation:sl .25s ease}
 .toast.err{background:#331414;border-color:#6b2c2c;color:#f4c0c0}
 @keyframes sl{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
@@ -1990,6 +1990,23 @@ button.mini,a.mini{font-weight:700}
 details.panel summary{list-style:none}details.panel summary::-webkit-details-marker{display:none}
 details.panel summary::before{content:'▸';color:var(--mut);margin-right:8px;font-size:12px;display:inline-block;transition:transform .15s}
 details[open].panel summary::before{transform:rotate(90deg)}
+/* --- Compat Basilisk/Goanna : remplace gap flex par des marges --- */
+.side nav>*+*{margin-top:3px}
+.side nav a>*+*{margin-left:11px}
+.stat>*+*{margin-left:13px}
+.ph>*+*{margin-left:10px}
+.row>*+*{margin-left:10px}
+.srch>*+*{margin-left:6px}
+.seasons>*{margin:0 9px 9px 0}
+.srow>*+*{margin-left:8px}
+.thsel>*+*{margin-top:5px}
+.srv>*{margin:0 10px 10px 0}
+.perms>*{margin:0 7px 7px 0}
+.badgegrid>*{margin:0 8px 8px 0}
+.bcell>*+*{margin-top:4px}
+label>input,label>select,label>textarea{margin-top:4px}
+input[type=checkbox]{margin-top:0;margin-right:6px}
+#toasts>*+*{margin-top:8px}
 </style></head><body>
 <aside class="side"><div class="brand"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="width:100%;max-width:180px;height:auto;display:block;margin:0 auto 4px;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated"><small>ADMINISTRATION</small></div><nav><?php
     foreach (nav_groups() as $grpLabel => $keys) {
