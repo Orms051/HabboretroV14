@@ -106,6 +106,18 @@ function make_hash(string $pw): string { return password_hash($pw, PASSWORD_ARGO
 function redirect(string $to): void { header('Location: ' . $to); exit; }
 function is_ajax(): bool { return (($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'fetch') || !empty($_POST['ajax']); }
 function cur_page(): int { return max(1, (int)($_GET['pg'] ?? 1)); }
+/* Icône réelle d'un mobi (téléchargée depuis Habbo -> c_images/furni_icons/<base>.png) */
+function furni_icon(string $sprite): string {
+    $b = preg_replace('/\*.*$/', '', $sprite);
+    if ($b === '') return '';
+    return is_file(__DIR__ . '/../c_images/furni_icons/' . $b . '.png') ? '/c_images/furni_icons/' . rawurlencode($b) . '.png' : '';
+}
+function furni_icon_img(string $sprite, int $size = 32): string {
+    $u = furni_icon($sprite);
+    $box = 'width:' . $size . 'px;height:' . $size . 'px';
+    if ($u === '') return '<span class="ficon none" style="display:inline-block;' . $box . ';border-radius:6px;background:rgba(128,128,128,.12)"></span>';
+    return '<img class="ficon" src="' . h($u) . '" alt="" loading="lazy" style="max-width:' . $size . 'px;max-height:' . $size . 'px;object-fit:contain;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated;vertical-align:middle">';
+}
 
 $p = $_GET['p'] ?? 'dashboard';
 
@@ -776,7 +788,7 @@ function page_furni(): void {
     echo '<form method="post" class="js row" data-reload data-confirm="Distribuer ce meuble à TOUS les joueurs ?">' . csrf_field() . '<input type="hidden" name="action" value="furni_all"><label>ID définition<input type="number" name="definition_id" placeholder="ex. 42" required style="width:120px"></label><button>🎁 Distribuer à tous</button></form></details>';
     if (isset($_GET['edit'])) { $st = db()->prepare('SELECT * FROM items_definitions WHERE id=?'); $st->execute([(int)$_GET['edit']]); $edit = $st->fetch() ?: null;
         if ($edit) {
-            echo '<div class="panel"><div class="ph"><h3>✏️ ' . h($edit['name']) . ' (#' . (int)$edit['id'] . ')</h3><a class="lnk" href="?p=furni">← Retour</a></div><form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="def_update"><input type="hidden" name="id" value="' . (int)$edit['id'] . '">';
+            echo '<div class="panel"><div class="ph"><h3>' . furni_icon_img((string)$edit['sprite'], 48) . ' ' . h($edit['name']) . ' (#' . (int)$edit['id'] . ')</h3><a class="lnk" href="?p=furni">← Retour</a></div><form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="def_update"><input type="hidden" name="id" value="' . (int)$edit['id'] . '">';
             echo '<div class="row"><label style="flex:1">Nom<input name="name" value="' . h($edit['name']) . '"></label><label>Longueur<input type="number" name="length" value="' . (int)$edit['length'] . '" style="width:90px"></label><label>Largeur<input type="number" name="width" value="' . (int)$edit['width'] . '" style="width:90px"></label></div>';
             echo '<label style="margin-top:8px">Description<input name="description" value="' . h($edit['description']) . '"></label>';
             echo '<label style="margin-top:8px">Comportement (behaviour)<input name="behaviour" value="' . h($edit['behaviour']) . '"></label>';
@@ -796,8 +808,8 @@ function page_furni(): void {
         $tot = (int)db()->query('SELECT COUNT(*) FROM items_definitions')->fetchColumn();
         $rows = db()->query('SELECT id,sprite,name,length,width,behaviour FROM items_definitions ORDER BY id LIMIT ' . PER_PAGE . ' OFFSET ' . $off)->fetchAll();
     }
-    echo '<table class="clean"><tr><th>#</th><th>Nom</th><th>Sprite</th><th>Taille</th><th>Comportement</th><th></th></tr>';
-    foreach ($rows as $r) echo '<tr><td>' . (int)$r['id'] . '</td><td><b>' . h($r['name']) . '</b></td><td class="sm muted">' . h((string)$r['sprite']) . '</td><td class="sm">' . (int)$r['length'] . '×' . (int)$r['width'] . '</td><td class="sm muted">' . h((string)$r['behaviour']) . '</td><td><a class="mini ghost" href="?p=furni&edit=' . (int)$r['id'] . '">Éditer</a></td></tr>';
+    echo '<table class="clean"><tr><th>#</th><th></th><th>Nom</th><th>Sprite</th><th>Taille</th><th>Comportement</th><th></th></tr>';
+    foreach ($rows as $r) echo '<tr><td>' . (int)$r['id'] . '</td><td>' . furni_icon_img((string)$r['sprite']) . '</td><td><b>' . h($r['name']) . '</b></td><td class="sm muted">' . h((string)$r['sprite']) . '</td><td class="sm">' . (int)$r['length'] . '×' . (int)$r['width'] . '</td><td class="sm muted">' . h((string)$r['behaviour']) . '</td><td><a class="mini ghost" href="?p=furni&edit=' . (int)$r['id'] . '">Éditer</a></td></tr>';
     echo '</table>';
     pager($tot, $pg, '?p=furni' . ($q !== '' ? '&q=' . urlencode($q) : ''));
     echo '</div>';
@@ -986,7 +998,7 @@ function page_catalogue(): void {
         $st = db()->prepare('SELECT * FROM catalogue_items WHERE id=?'); $st->execute([(int)$_GET['edititem']]); $ei = $st->fetch() ?: null;
         if ($ei) {
             $lbl = $ei['name'] !== '' ? $ei['name'] : $ei['sale_code'];
-            echo '<div class="panel"><div class="ph"><h3>✏️ ' . h((string)$lbl) . '</h3><a class="lnk" href="?p=catalogue">← Retour</a></div>';
+            echo '<div class="panel"><div class="ph"><h3>' . furni_icon_img((string)$ei['sale_code'], 48) . ' ' . h((string)$lbl) . '</h3><a class="lnk" href="?p=catalogue">← Retour</a></div>';
             echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="cat_item"><input type="hidden" name="id" value="' . (int)$ei['id'] . '">';
             echo '<div class="row"><label style="flex:1">Nom<input name="name" value="' . h((string)$ei['name']) . '"></label><label style="flex:1">Page' . page_select('page_id', (int)$ei['page_id']) . '</label></div>';
             echo '<label style="margin-top:8px">Description<input name="description" value="' . h((string)$ei['description']) . '"></label>';
@@ -1036,11 +1048,11 @@ function page_catalogue(): void {
     } else { $total = (int)db()->query('SELECT COUNT(*) FROM catalogue_items')->fetchColumn();
         $s = db()->query('SELECT ci.id,ci.name,ci.description,ci.sale_code,ci.price,ci.is_hidden,cp.name AS page FROM catalogue_items ci LEFT JOIN catalogue_pages cp ON cp.id=ci.page_id ORDER BY ci.id LIMIT ' . PER_PAGE . ' OFFSET ' . $off); }
     echo '<p class="muted sm">Clique sur <b>Éditer</b> pour changer le nom, la description, la page ou le prix d\'un article. (Le nom du meuble en salle/inventaire se change dans « Meubles (défs) ».)</p>';
-    echo '<table class="clean"><tr><th>Nom</th><th>Page</th><th>Prix</th><th>Visible</th><th></th></tr>';
+    echo '<table class="clean"><tr><th></th><th>Nom</th><th>Page</th><th>Prix</th><th>Visible</th><th></th></tr>';
     foreach ($s as $it) {
         $label = $it['name'] !== '' ? $it['name'] : '<span class="muted">(' . h((string)$it['sale_code']) . ')</span>';
         $desc = (string)$it['description'] !== '' ? '<div class="sm muted" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' . h((string)$it['description']) . '</div>' : '';
-        echo '<tr class="frow"><td><b>' . $label . '</b>' . $desc . '</td>'
+        echo '<tr class="frow"><td>' . furni_icon_img((string)$it['sale_code']) . '</td><td><b>' . $label . '</b>' . $desc . '</td>'
             . '<td class="sm muted">' . h((string)$it['page']) . '</td>'
             . '<td class="sm" style="white-space:nowrap">' . (int)$it['price'] . ' cr</td>'
             . '<td style="text-align:center">' . ((int)$it['is_hidden'] ? '🚫' : '✅') . '</td>'
@@ -1979,7 +1991,7 @@ details.panel summary{list-style:none}details.panel summary::-webkit-details-mar
 details.panel summary::before{content:'▸';color:var(--mut);margin-right:8px;font-size:12px;display:inline-block;transition:transform .15s}
 details[open].panel summary::before{transform:rotate(90deg)}
 </style></head><body>
-<aside class="side"><div class="brand">Habbo<small>ADMINISTRATION</small></div><nav><?php
+<aside class="side"><div class="brand"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="height:30px;width:auto;display:block;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated"><small>ADMINISTRATION</small></div><nav><?php
     foreach (nav_groups() as $grpLabel => $keys) {
         $visible = array_filter($keys, fn($k) => isset($nav[$k]) && tab_allowed($k));
         if (!$visible) continue;
