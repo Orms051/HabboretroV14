@@ -1634,24 +1634,37 @@ function hotel_alert_presets(): array {
     ];
 }
 function page_server(): void {
-    page_title('Serveur', 'État des services et contrôle de l\'émulateur');
+    page_title('Serveur', 'État des services, contrôle de l\'émulateur et diagnostics');
     $up = emu_running();
     $online = db()->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn();
+    $dbver = ''; try { $dbver = (string)db()->query('SELECT VERSION()')->fetchColumn(); } catch (Throwable $e) {}
+    $dbShort = $dbver !== '' ? (stripos($dbver, 'maria') !== false ? 'MariaDB' : 'MySQL') . ' ' . preg_replace('/[-+].*$/', '', $dbver) : 'Active';
+
+    /* --- État des services (réel) --- */
     echo '<div class="grid">';
     echo '<div class="stat ' . ($up ? 'green' : 'red') . '"><div class="ic">' . ($up ? '🟢' : '🔴') . '</div><div><div class="num" style="font-size:17px">' . ($up ? 'En marche' : 'Arrêté') . '</div><div class="lbl">Émulateur · port 12321</div></div></div>';
-    echo '<div class="stat green"><div class="ic">🟢</div><div><div class="num" style="font-size:17px">Active</div><div class="lbl">Base de données · 3306</div></div></div>';
-    echo '<div class="stat green"><div class="ic">🟢</div><div><div class="num" style="font-size:17px">Actif</div><div class="lbl">Site web · 80</div></div></div>';
+    echo '<div class="stat green"><div class="ic">🗄️</div><div><div class="num" style="font-size:15px">' . h($dbShort) . '</div><div class="lbl">Base de données · 3306</div></div></div>';
+    echo '<div class="stat green"><div class="ic">🌐</div><div><div class="num" style="font-size:15px">PHP ' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '</div><div class="lbl">Site web · Apache · 80</div></div></div>';
     echo '<div class="stat blue"><div class="ic">👥</div><div><div class="num">' . ($up ? ($online !== false ? $online : '0') : '—') . '</div><div class="lbl">Joueurs en ligne</div></div></div>';
     echo '</div>';
+
+    /* --- Contrôle de l'émulateur --- */
     echo '<div class="panel"><div class="ph"><h3>🎮 Contrôle de l\'émulateur</h3><a class="mini ghost lnkbtn" href="?p=server" style="margin-left:auto">🔄 Rafraîchir l\'état</a></div>';
-    echo '<p class="sub">' . ($up ? 'Le jeu est accessible, les joueurs peuvent se connecter.' : 'L\'émulateur est arrêté — personne ne peut jouer. Clique sur Démarrer.') . '</p>';
+    echo '<p class="sub">' . ($up ? '✅ Le jeu est accessible, les joueurs peuvent se connecter.' : '⛔ L\'émulateur est arrêté — personne ne peut jouer. Clique sur Démarrer.') . '</p>';
     echo '<div class="srv">';
     echo '<form method="post" class="js" data-reload><input type="hidden" name="action" value="srv_start">' . csrf_field() . '<button class="bigok"' . ($up ? ' disabled' : '') . '>▶️ Démarrer</button></form>';
     echo '<form method="post" class="js" data-reload data-confirm="Arrêter l\'émulateur ? Les joueurs seront déconnectés."><input type="hidden" name="action" value="srv_stop">' . csrf_field() . '<button class="bigred"' . ($up ? '' : ' disabled') . '>⏹️ Arrêter</button></form>';
     echo '<form method="post" class="js" data-reload data-confirm="Redémarrer l\'émulateur ? Les joueurs seront déconnectés ~10 s."><input type="hidden" name="action" value="srv_restart">' . csrf_field() . '<button class="bigwarn">🔄 Redémarrer</button></form>';
     echo '</div><p class="hint">💡 Le <b>redémarrage</b> applique les changements de décor, d\'activation de salle et certains réglages. La base de données et le site web ne sont pas touchés.</p></div>';
 
-    // Alerte hôtel (RCON)
+    /* --- Diagnostics : dernières erreurs du serveur --- */
+    $errs = server_log_errors(14);
+    echo '<div class="panel"><div class="ph"><h3>🩺 Diagnostics — dernières erreurs</h3><span class="muted sm" style="margin-left:auto">server.log</span></div>';
+    if (!$errs) echo '<div class="empty">Aucune erreur récente dans le log 🎉</div>';
+    else echo '<pre class="logbox">' . h(implode("\n", $errs)) . '</pre><p class="hint">Extrait des dernières lignes ERROR/WARN/exception du log de l\'émulateur (sans secrets).</p>';
+    echo '</div>';
+
+    // Alerte hôtel (RCON) — action LIVE tournée vers les joueurs connectés, sa place naturelle est ici (contrôle serveur).
     echo '<div class="panel"><div class="ph"><h3>📢 Alerte à tout l\'hôtel</h3></div>';
     echo '<p class="sub">Envoie un message pop-up à tous les joueurs connectés (via l\'émulateur).</p>';
     $presetOpts = '<option value="">— Choisir un message prédéfini —</option>';
@@ -1712,6 +1725,21 @@ function user_badges_html(int $uid, array $codes): string {
     return $o;
 }
 function emu_running(): bool { $c = @fsockopen('127.0.0.1', 12321, $e, $s, 0.8); if ($c) { fclose($c); return true; } return false; }
+/* Dernières lignes d'erreur du log émulateur (server.log), sans secrets. */
+function server_log_errors(int $max = 14): array {
+    $f = dirname(__DIR__) . '/server.log';
+    if (!is_file($f)) return [];
+    $sz = filesize($f); $fp = @fopen($f, 'rb'); if (!$fp) return [];
+    fseek($fp, max(0, $sz - 140000)); $data = fread($fp, 140000); fclose($fp);
+    $out = [];
+    foreach (preg_split('/\r\n|\n/', (string)$data) as $ln) {
+        $ln = rtrim($ln);
+        if ($ln === '') continue;
+        if (stripos($ln, 'password') !== false || stripos($ln, 'jdbc:') !== false) continue;
+        if (preg_match('/\bERROR\b|\bWARN\b|Exception|Caused by|\bat [a-z0-9_.$]+\(/i', $ln)) $out[] = $ln;
+    }
+    return array_slice($out, -$max);
+}
 /* ⚠️ Sous Apache (Laragon) le PATH ne contient PAS powershell → chemin complet obligatoire. */
 function ps_exe(): string {
     foreach ([(getenv('SystemRoot') ?: 'C:\\Windows') . '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'] as $c) {
@@ -2064,6 +2092,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
 .qa .qabtn:last-child{margin-bottom:0}
 .qa .qabtn span{margin-left:10px}
 .qa .qabtn:hover{border-color:var(--acc);color:var(--acc)}
+.logbox{max-height:230px;overflow:auto;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;font:12px/1.5 var(--mono);color:var(--mut);white-space:pre-wrap;word-break:break-word;margin:0}
 </style></head><body>
 <aside class="side"><div class="brand"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="width:100%;max-width:180px;height:auto;display:block;margin:0 auto 4px;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated"><small>ADMINISTRATION</small></div><nav><?php
     $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Site & contenus' => '📰', 'Administration' => '⚙️'];
