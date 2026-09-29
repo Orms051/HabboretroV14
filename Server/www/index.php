@@ -774,10 +774,11 @@ nav.tabs a[href="/admin/"]:hover{background:#f7a838}
 .uinfo .adminlink{color:#c26a00}
 /* Zone contenu */
 .body{background:#fff;border:1px solid #cfc6ad;border-top:0;border-radius:0 0 8px 8px;padding:16px;box-shadow:0 3px 10px rgba(0,0,0,.12)}
-.cols{display:flex;gap:16px;align-items:flex-start}
+.cols{display:flex;align-items:flex-start}
+.cols>*+*{margin-left:16px} /* remplace gap:16px (non supporté par Basilisk/Goanna) */
 .cols.one{max-width:460px;margin:0 auto}
 .main{flex:1;min-width:0}
-.side{width:250px;flex:0 0 250px}
+.side{width:250px;flex:0 0 250px;min-width:0}
 /* Panneaux façon Habbo */
 .panel{border:1px solid #d7d0bd;border-radius:9px;overflow:hidden;margin-bottom:16px;background:#fff}
 .panel-h{color:#fff;font-weight:700;font-size:13px;padding:8px 12px;text-shadow:0 1px 0 rgba(0,0,0,.2)}
@@ -820,12 +821,14 @@ input:focus{outline:none;border-color:#4a92c8;background:#fff}
 .newspanel .panel-b{padding:12px}
 .nfeat{border:1px solid #e2ddcd;border-left-width:5px;border-radius:8px;padding:12px 14px;background:#fbfaf5}
 .nfeat.blue{border-left-color:#2f6f9f}.nfeat.green{border-left-color:#6ba62f}.nfeat.purple{border-left-color:#7d52a8}.nfeat.orange{border-left-color:#e5820c}
-.nfeat-h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.nfeat-h{display:flex;align-items:center;margin-bottom:6px}
+.nfeat-h>*+*{margin-left:8px}
 .nfeat h3{font-size:15px;color:#33475b;margin:2px 0 4px}
 .nfeat p{font-size:12px;color:#5b5b5b;line-height:1.55}
 .ndate{font-size:10.5px;color:#a59f8d;font-weight:700}
 .newsmini{margin-top:10px;border-top:1px dotted #e2ddcd;padding-top:8px}
-.nmini{display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px dotted #ece7d7;color:#3a3a3a}
+.nmini{display:flex;align-items:center;padding:7px 4px;border-bottom:1px dotted #ece7d7;color:#3a3a3a}
+.nmini>*+*{margin-left:8px}
 .nmini:last-child{border-bottom:0}
 .nmini:hover{background:#f6f2e6;text-decoration:none;border-radius:6px}
 .nmini-t{flex:1;font-size:12px;font-weight:700;color:#33475b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -844,10 +847,12 @@ input:focus{outline:none;border-color:#4a92c8;background:#fff}
 .statl.wide li{display:flex;justify-content:space-between}
 .statl.wide span{color:#8a8a7a}
 /* En ce moment dans l'hôtel */
-.rn-online{display:flex;align-items:center;gap:8px;font-size:12px;color:#4a4a4a;padding-bottom:9px;border-bottom:1px dotted #e2ddcd;margin-bottom:9px}
+.rn-online{display:flex;align-items:center;font-size:12px;color:#4a4a4a;padding-bottom:9px;border-bottom:1px dotted #e2ddcd;margin-bottom:9px}
+.rn-online>*+*{margin-left:8px}
 .rn-online img{width:14px;height:14px}
 .rn-online b{color:#6ba62f;font-size:15px}
-.rn-room{display:flex;align-items:center;gap:10px}
+.rn-room{display:flex;align-items:center}
+.rn-room>*+*{margin-left:10px}
 .rn-star{color:#f7a838;font-size:20px;line-height:1}
 .rn-room .rinfo b{font-size:12.5px;color:#33475b}
 .rn-room .rm{display:block;font-size:11px;color:#8a8a7a;margin-top:2px}
@@ -874,8 +879,8 @@ input:focus{outline:none;border-color:#4a92c8;background:#fff}
 .games{display:flex;gap:10px}
 .gcard{flex:1;display:flex;align-items:center;gap:10px;border:1px solid #e2ddcd;border-radius:9px;padding:10px 12px;background:#fbfaf5}
 .gcard .gi{font-size:26px}.gcard b{font-size:18px;color:#2f6f9f}.gcard span{display:block;font-size:11px;color:#8a8a7a}
-.friends{display:flex;flex-wrap:wrap;gap:10px}
-.friend{width:64px;text-align:center;color:#4a4a4a}
+.friends{display:flex;flex-wrap:wrap}
+.friend{width:64px;text-align:center;color:#4a4a4a;margin:0 10px 10px 0}
 .friend .fn{display:block;font-size:10px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .friend .av.mini{margin:0 auto}
 .rooms{display:flex;flex-direction:column;gap:8px}
@@ -945,7 +950,7 @@ input:focus{outline:none;border-color:#4a92c8;background:#fff}
 .hcsteps li{margin:6px 0}
 /* Pied */
 footer.foot{text-align:center;color:#8a857a;font-size:11px;margin-top:16px}
-@media(max-width:640px){.cols{flex-direction:column}.side{width:100%;flex:none}.logo{font-size:30px}}
+@media(max-width:640px){.cols{flex-direction:column}.cols>*+*{margin-left:0;margin-top:16px}.side{width:100%;flex:none}}
 </style></head><body>
 <div class="page">
   <header class="top">
