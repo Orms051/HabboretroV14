@@ -1991,7 +1991,7 @@ details.panel summary{list-style:none}details.panel summary::-webkit-details-mar
 details.panel summary::before{content:'▸';color:var(--mut);margin-right:8px;font-size:12px;display:inline-block;transition:transform .15s}
 details[open].panel summary::before{transform:rotate(90deg)}
 </style></head><body>
-<aside class="side"><div class="brand"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="height:30px;width:auto;display:block;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated"><small>ADMINISTRATION</small></div><nav><?php
+<aside class="side"><div class="brand"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="width:100%;max-width:180px;height:auto;display:block;margin:0 auto 4px;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated"><small>ADMINISTRATION</small></div><nav><?php
     foreach (nav_groups() as $grpLabel => $keys) {
         $visible = array_filter($keys, fn($k) => isset($nav[$k]) && tab_allowed($k));
         if (!$visible) continue;
