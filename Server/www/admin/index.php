@@ -863,38 +863,62 @@ function page_dashboard(): void {
     $bans = (int)$d->query('SELECT COUNT(*) FROM users_bans')->fetchColumn();
     $economy = (int)$d->query('SELECT COALESCE(SUM(credits),0) FROM users')->fetchColumn();
     $online = $d->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn();
+    $emu = emu_running();
     page_title('Tableau de bord', 'Vue d\'ensemble de ton hôtel');
-    echo '<div class="panel"><div class="ph"><h3>⚡ Actions rapides</h3></div><div class="row" style="align-items:flex-end;gap:8px">';
-    echo '<a class="mini lnkbtn" href="?p=users">➕ Créer un compte</a>';
-    echo '<a class="mini ghost lnkbtn" href="?p=search">🔍 Rechercher</a>';
-    echo '<a class="mini ghost lnkbtn" href="?p=server">📢 Alerte hôtel</a>';
-    echo '<a class="mini ghost lnkbtn" href="?p=server">💾 Sauvegarder</a>';
-    echo '<form method="post" class="js" data-reload data-confirm="Donner des crédits à TOUS les joueurs ?" style="display:flex;gap:6px;align-items:flex-end;margin-left:auto">' . csrf_field() . '<input type="hidden" name="action" value="credits_all"><label>💰 Crédits à tous<input type="number" name="delta" value="500" style="width:100px"></label><button class="mini">Distribuer</button></form>';
-    echo '</div></div>';
+
+    /* --- Indicateurs utiles d'abord --- */
     echo '<div class="grid">';
-    stat_box('👥', $users, 'Joueurs', 'blue'); stat_box('🟢', $online !== false ? $online : '0', 'En ligne', 'green');
+    stat_box('🟢', $online !== false ? $online : '0', 'En ligne', 'green');
+    stat_box('👥', $users, 'Comptes', 'blue');
+    stat_box('🏠', $priv, 'Appartements', 'blue');
+    stat_box('🏛️', $rooms, 'Salles publiques', 'blue');
     stat_box('💰', number_format($economy, 0, ',', ' '), 'Crédits en circulation', 'gold');
-    stat_box('🏛️', $rooms, 'Salles publiques', 'blue'); stat_box('🏠', $priv, 'Salles privées', 'blue');
-    stat_box('🛋️', $items, 'Articles catalogue', 'gold'); stat_box('🚫', $bans, 'Bannissements', 'red');
+    stat_box($emu ? '🟢' : '🔴', $emu ? 'En marche' : 'Arrêté', 'Émulateur', $emu ? 'green' : 'red');
     echo '</div>';
-    echo '<div class="cols"><div class="panel"><div class="ph"><h3>🏆 Joueurs les plus riches</h3></div><table class="clean"><tr><th>Nom</th><th>Rang</th><th>Crédits</th></tr>';
-    foreach ($d->query('SELECT username,rank,credits FROM users ORDER BY credits DESC LIMIT 6') as $u) echo '<tr><td><b>' . h($u['username']) . '</b></td><td>' . rank_badge((int)$u['rank']) . '</td><td>' . number_format((int)$u['credits'], 0, ',', ' ') . '</td></tr>';
-    echo '</table></div>';
-    echo '<div class="panel"><div class="ph"><h3>🆕 Derniers inscrits</h3><a class="lnk" href="?p=users">Voir tout →</a></div><table class="clean"><tr><th>Nom</th><th>Rang</th><th>Crédits</th></tr>';
-    foreach ($d->query('SELECT username,rank,credits FROM users ORDER BY id DESC LIMIT 6') as $u) echo '<tr><td><b>' . h($u['username']) . '</b></td><td>' . rank_badge((int)$u['rank']) . '</td><td>' . (int)$u['credits'] . '</td></tr>';
-    echo '</table></div></div>';
-    echo '<div class="panel"><div class="ph"><h3>🕓 Derniers connectés</h3><span class="muted sm" style="margin-left:auto">' . ($online !== false ? (int)$online : 0) . ' en ligne</span></div><table class="clean"><tr><th>Nom</th><th>Rang</th><th>Dernière connexion</th></tr>';
-    foreach ($d->query('SELECT username,rank,last_online FROM users WHERE last_online>0 ORDER BY last_online DESC LIMIT 8') as $u) {
-        $ago = (int)$u['last_online']; $when = $ago > 0 ? date('d/m/Y H:i', $ago) : '—';
-        $recent = $ago > (time() - 300);
+
+    /* --- Activité (large) + Actions fréquentes (côté) --- */
+    echo '<div class="dcols">';
+    echo '<div class="panel"><div class="ph"><h3>🕓 Activité récente</h3><span class="muted sm" style="margin-left:auto">' . ($online !== false ? (int)$online : 0) . ' en ligne</span></div><table class="clean"><tr><th>Joueur</th><th>Rang</th><th>Dernière connexion</th></tr>';
+    foreach ($d->query('SELECT username,rank,last_online FROM users WHERE last_online>0 ORDER BY last_online DESC LIMIT 10') as $u) {
+        $ago = (int)$u['last_online']; $when = $ago > 0 ? date('d/m/Y H:i', $ago) : '—'; $recent = $ago > (time() - 300);
         echo '<tr><td><b>' . h($u['username']) . '</b>' . ($recent ? ' <span class="rk" style="background:#2bbf5b">actif</span>' : '') . '</td><td>' . rank_badge((int)$u['rank']) . '</td><td class="sm muted">' . $when . '</td></tr>';
     }
     echo '</table></div>';
+
+    echo '<div class="panel"><div class="ph"><h3>⚡ Actions fréquentes</h3></div><div class="qa">';
+    echo '<a class="qabtn" href="?p=users">➕<span>Créer un compte</span></a>';
+    echo '<a class="qabtn" href="?p=search">🔍<span>Rechercher un joueur</span></a>';
+    echo '<a class="qabtn" href="?p=news">📰<span>Publier une actualité</span></a>';
+    echo '<a class="qabtn" href="?p=server">📢<span>Alerte à l\'hôtel</span></a>';
+    echo '<a class="qabtn" href="?p=server">💾<span>Sauvegarder la base</span></a>';
+    echo '</div>';
+    echo '<form method="post" class="js" data-reload data-confirm="Donner des crédits à TOUS les joueurs ?" style="margin-top:12px;display:flex;align-items:flex-end">' . csrf_field() . '<input type="hidden" name="action" value="credits_all"><label style="flex:1">💰 Crédits à tous les joueurs<input type="number" name="delta" value="500"></label><button class="mini" style="margin-left:8px">Distribuer</button></form>';
+    echo '</div></div>';
+
+    /* --- Journal admin + bannissements --- */
+    echo '<div class="cols">';
+    echo '<div class="panel"><div class="ph"><h3>📜 Dernières actions admin</h3><a class="lnk" href="?p=audit">Voir tout →</a></div>';
+    try {
+        ensure_admin_log();
+        $logs = $d->query('SELECT author,action,detail,created_at FROM admin_log ORDER BY id DESC LIMIT 8')->fetchAll();
+        if (!$logs) echo '<div class="empty">Aucune action enregistrée.</div>';
+        else { echo '<table class="clean"><tr><th>Quand</th><th>Qui</th><th>Action</th></tr>'; foreach ($logs as $l) echo '<tr><td class="sm muted" style="white-space:nowrap">' . h(date('d/m H:i', strtotime((string)$l['created_at']))) . '</td><td class="sm"><b>' . h($l['author']) . '</b></td><td class="sm">' . h(($l['detail'] ?? '') !== '' ? $l['detail'] : $l['action']) . '</td></tr>'; echo '</table>'; }
+    } catch (Throwable $e) { echo '<div class="empty">Journal indisponible.</div>'; }
+    echo '</div>';
     echo '<div class="panel"><div class="ph"><h3>🚫 Bannissements récents</h3><a class="lnk" href="?p=moderation">Gérer →</a></div>';
     $br = $d->query('SELECT b.banned_value,b.message,b.ban_type,u.username FROM users_bans b LEFT JOIN users u ON (b.ban_type=\'USER_ID\' AND u.id=b.banned_value) ORDER BY b.banned_until DESC LIMIT 6')->fetchAll();
     if (!$br) echo '<div class="empty">Aucun bannissement 🎉</div>';
-    else { echo '<table class="clean"><tr><th>Cible</th><th>Motif</th></tr>'; foreach ($br as $b) echo '<tr><td>' . h($b['ban_type'] === 'USER_ID' ? ('👤 ' . ($b['username'] ?? $b['banned_value'])) : $b['banned_value']) . '</td><td class="muted">' . h($b['message']) . '</td></tr>'; echo '</table>'; }
-    echo '</div>';
+    else { echo '<table class="clean"><tr><th>Cible</th><th>Motif</th></tr>'; foreach ($br as $b) echo '<tr><td>' . h($b['ban_type'] === 'USER_ID' ? ('👤 ' . ($b['username'] ?? $b['banned_value'])) : $b['banned_value']) . '</td><td class="muted sm">' . h($b['message']) . '</td></tr>'; echo '</table>'; }
+    echo '</div></div>';
+
+    /* --- Classements (relégués après l'utile) --- */
+    echo '<div class="cols">';
+    echo '<div class="panel"><div class="ph"><h3>🆕 Derniers inscrits</h3><a class="lnk" href="?p=users">Voir tout →</a></div><table class="clean"><tr><th>Nom</th><th>Rang</th><th>Crédits</th></tr>';
+    foreach ($d->query('SELECT username,rank,credits FROM users ORDER BY id DESC LIMIT 6') as $u) echo '<tr><td><b>' . h($u['username']) . '</b></td><td>' . rank_badge((int)$u['rank']) . '</td><td>' . (int)$u['credits'] . '</td></tr>';
+    echo '</table></div>';
+    echo '<div class="panel"><div class="ph"><h3>🏆 Joueurs les plus riches</h3></div><table class="clean"><tr><th>Nom</th><th>Rang</th><th>Crédits</th></tr>';
+    foreach ($d->query('SELECT username,rank,credits FROM users ORDER BY credits DESC LIMIT 6') as $u) echo '<tr><td><b>' . h($u['username']) . '</b></td><td>' . rank_badge((int)$u['rank']) . '</td><td>' . number_format((int)$u['credits'], 0, ',', ' ') . '</td></tr>';
+    echo '</table></div></div>';
 }
 
 function page_rooms(): void {
@@ -2017,6 +2041,14 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
 .subtabs>a{margin:0 8px 8px 0;padding:8px 15px;border-radius:10px;background:var(--panel);border:1px solid var(--line2);color:var(--mut);font-weight:700;font-size:12.5px;text-decoration:none;white-space:nowrap}
 .subtabs>a:hover{color:var(--text);border-color:var(--acc)}
 .subtabs>a.on{background:var(--acc);border-color:var(--acc);color:#fff}
+/* Tableau de bord : colonnes asymétriques + actions rapides */
+.dcols{display:grid;grid-template-columns:1.7fr 1fr;grid-gap:16px;gap:16px}
+@media(max-width:900px){.dcols{grid-template-columns:1fr}}
+.qa{display:flex;flex-direction:column}
+.qa .qabtn{display:flex;align-items:center;padding:11px 13px;border-radius:10px;background:var(--bg);border:1px solid var(--line2);color:var(--txt);text-decoration:none;font-weight:600;font-size:13px;margin-bottom:7px}
+.qa .qabtn:last-child{margin-bottom:0}
+.qa .qabtn span{margin-left:10px}
+.qa .qabtn:hover{border-color:var(--acc);color:var(--acc)}
 </style></head><body>
 <aside class="side"><div class="brand"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="width:100%;max-width:180px;height:auto;display:block;margin:0 auto 4px;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated"><small>ADMINISTRATION</small></div><nav><?php
     $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Site & contenus' => '📰', 'Administration' => '⚙️'];
