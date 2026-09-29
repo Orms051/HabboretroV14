@@ -94,7 +94,7 @@ function hexrgb(string $hex): string { $h = ltrim($hex, '#'); return hexdec(subs
 function db(): PDO { static $pdo = null; if ($pdo === null) $pdo = new PDO('mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . DB_NAME . ';charset=utf8mb4', DB_USER, DB_PASS, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_TIMEOUT => 2]); return $pdo; }
 function admin_db_down(): void {
     if (!headers_sent()) http_response_code(503);
-    echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>HabboretroV14 · Admin</title><style>body{font:14px/1.6 Segoe UI,Arial,sans-serif;background:#20262e;color:#e6ebf2;display:grid;place-items:center;height:100vh;margin:0}.box{background:#2b333d;border:1px solid #3a444f;border-radius:14px;padding:30px 34px;max-width:440px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.4)}h1{font-size:20px;margin:0 0 10px}p{color:#aeb8c4;margin:8px 0}b{color:#ffcf3f}a{color:#6fb1ff}</style></head><body><div class="box"><h1>🛠 La base de données est éteinte</h1><p>Le panneau d\'administration a besoin de la base pour fonctionner.</p><p>Lance <b>START-HABBORETROV14.bat</b>, attends « Base prête ! », puis <a href="?p=dashboard">recharge cette page</a>.</p></div></body></html>';
+    echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Habbo · Admin</title><style>body{font:14px/1.6 Segoe UI,Arial,sans-serif;background:#20262e;color:#e6ebf2;display:grid;place-items:center;height:100vh;margin:0}.box{background:#2b333d;border:1px solid #3a444f;border-radius:14px;padding:30px 34px;max-width:440px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.4)}h1{font-size:20px;margin:0 0 10px}p{color:#aeb8c4;margin:8px 0}b{color:#ffcf3f}a{color:#6fb1ff}</style></head><body><div class="box"><h1>🛠 La base de données est éteinte</h1><p>Le panneau d\'administration a besoin de la base pour fonctionner.</p><p>Lance le serveur (fichier <b>START</b> dans le dossier du jeu), attends « Base prête ! », puis <a href="?p=dashboard">recharge cette page</a>.</p></div></body></html>';
 }
 function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 function csrf(): string { if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16)); return $_SESSION['csrf']; }
@@ -165,6 +165,15 @@ if (isset($_GET['loginas']) && (int)($_SESSION['admin']['rank'] ?? 0) >= 7) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_check();
     $a = $_POST['action'] ?? ''; $back = $_POST['back'] ?? ('?p=' . $p); $ok = true; $msg = '';
+    /* ---- Contrôle du droit PAR action, AVANT exécution (ferme le contournement POST) ---- */
+    $reqTab = action_tab($a);
+    if ($a !== '' && $reqTab === '') $reqTab = $p; // action non cartographiée : au moins l'onglet courant
+    if ($reqTab !== '' && !tab_allowed($reqTab)) {
+        admin_log('denied', 'Action refusée: ' . $a . ' (onglet ' . $reqTab . ', rang ' . (int)($_SESSION['admin']['rank'] ?? 0) . ')');
+        $deny = '🔒 Accès refusé : ton rang n\'autorise pas cette action.';
+        if (is_ajax()) { header('Content-Type: application/json'); echo json_encode(['ok' => false, 'msg' => $deny]); exit; }
+        flash($deny); redirect($back);
+    }
     try {
         switch ($a) {
             case 'user_update':
@@ -565,6 +574,42 @@ function tab_perms(): array {
 }
 function tab_min(string $tab): int { $m = tab_perms(); return $m[$tab] ?? tab_default_rank($tab); }
 function tab_allowed(string $tab): bool { return (int)($_SESSION['admin']['rank'] ?? 0) >= tab_min($tab); }
+/* Carte action POST -> onglet propriétaire (le plus PERMISSIF où le bouton est exposé),
+   pour contrôler le droit AVANT exécution sans jamais verrouiller un accès existant. */
+function action_tab(string $a): string {
+    static $map = [
+        // Joueurs
+        'user_update' => 'users', 'user_details' => 'users', 'user_rank' => 'users', 'credits_all' => 'users',
+        'user_password' => 'users', 'user_create' => 'users', 'user_credits' => 'users', 'user_hc' => 'users',
+        'user_delete' => 'users', 'clear_hand' => 'users', 'note_add' => 'users', 'note_del' => 'users',
+        // Badges / rangs
+        'badge_add' => 'badges', 'badge_remove' => 'badges', 'badge_all' => 'badges',
+        'rank_badge_add' => 'ranks', 'rank_badge_remove' => 'ranks',
+        // Bots / jeux / événements
+        'bot_update' => 'bots', 'game_rank_update' => 'games', 'game_points' => 'games',
+        'gmap_update' => 'gamemaps', 'event_delete' => 'events',
+        // Salles & décors (le bouton « Redémarrer l'ému » vit ici, rang 5)
+        'room_update' => 'rooms', 'room_decor' => 'rooms', 'room_toggle' => 'rooms',
+        'decor_season' => 'rooms', 'srv_restart' => 'rooms', 'model_update' => 'models',
+        // Catalogue & mobis
+        'cat_item' => 'catalogue', 'cat_page' => 'catalogue', 'cat_page_move' => 'catalogue', 'cat_bulk' => 'catalogue',
+        'navcat_update' => 'navcats', 'navcat_move' => 'navcats',
+        'pkg_add' => 'packages', 'pkg_update' => 'packages', 'pkg_delete' => 'packages',
+        'def_update' => 'furni', 'furni_all' => 'furni', 'song_update' => 'trax', 'song_delete' => 'trax',
+        'furni_convert' => 'convert', 'furni_decompile' => 'convert',
+        // Communauté / modération
+        'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
+        'ban_add' => 'moderation', 'ban_remove' => 'moderation', 'bus_type' => 'bus',
+        // Jeux : codes & recycleur
+        'voucher_add' => 'vouchers', 'voucher_delete' => 'vouchers',
+        'recy_add' => 'recycler', 'recy_update' => 'recycler', 'recy_delete' => 'recycler',
+        // Système (rang 7 par défaut)
+        'setting_update' => 'settings', 'xtext_update' => 'textes', 'tabperm_update' => 'access',
+        'srv_start' => 'server', 'srv_stop' => 'server', 'set_entry_bg' => 'server', 'hotel_alert' => 'server',
+        'db_backup' => 'mysql',
+    ];
+    return $map[$a] ?? '';
+}
 
 /* ---- Journal d'actions admin ---- */
 function ensure_admin_log(): void {
@@ -1542,7 +1587,7 @@ function hotel_alert_presets(): array {
         '🎉 Un événement vient de commencer dans les salles publiques — rejoins-nous !',
         '❄️ De nouveaux mobis sont disponibles au Catalogue !',
         '🎁 Distribution de crédits en cours, profites-en !',
-        '👋 Bienvenue sur HabboretroV14 — amuse-toi bien !',
+        '👋 Bienvenue sur Habbo — amuse-toi bien !',
         '⚠️ Merci de respecter les autres joueurs. Les insultes = ban.',
     ];
 }
@@ -1841,7 +1886,7 @@ function render_header(string $p): void {
     $nav = admin_nav();
     $flash = flash();
     $tk = current_theme_key(); $t = THEMES[$tk]; $acc = $t[7]; $rgb = hexrgb($acc);
-    ?><!doctype html><html lang="fr" data-mode="<?= $t[2] ?>"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HabboretroV14 · Admin</title>
+    ?><!doctype html><html lang="fr" data-mode="<?= $t[2] ?>"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Habbo · Admin</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"><style>
 :root{--bg:<?= $t[3] ?>;--panel:<?= $t[4] ?>;--panel2:<?= $t[5] ?>;--sidebar:<?= $t[6] ?>;--line:<?= $t[10] ?>;--line2:<?= $t[11] ?>;--txt:<?= $t[8] ?>;--mut:<?= $t[9] ?>;--acc:<?= $acc ?>;--blue:<?= $acc ?>;--soft:rgba(<?= $rgb ?>,.13);--glow:rgba(<?= $rgb ?>,.32);--green:#12a85a;--red:#e5484d;--font:'Plus Jakarta Sans',system-ui,Segoe UI,Roboto,sans-serif;--mono:'JetBrains Mono',monospace}
@@ -1934,7 +1979,7 @@ details.panel summary{list-style:none}details.panel summary::-webkit-details-mar
 details.panel summary::before{content:'▸';color:var(--mut);margin-right:8px;font-size:12px;display:inline-block;transition:transform .15s}
 details[open].panel summary::before{transform:rotate(90deg)}
 </style></head><body>
-<aside class="side"><div class="brand">HabboretroV14<small>ADMINISTRATION</small></div><nav><?php
+<aside class="side"><div class="brand">Habbo<small>ADMINISTRATION</small></div><nav><?php
     foreach (nav_groups() as $grpLabel => $keys) {
         $visible = array_filter($keys, fn($k) => isset($nav[$k]) && tab_allowed($k));
         if (!$visible) continue;
@@ -1974,7 +2019,7 @@ function filt(inp,tblId){var q=inp.value.toLowerCase();var t=document.getElement
 }
 function render_login(?string $err): void {
     $t = THEMES[current_theme_key()]; $acc = $t[7];
-    ?><!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HabboretroV14 · Connexion</title>
+    ?><!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Habbo · Connexion</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet"><style>
 body{margin:0;font:14px/1.5 'Plus Jakarta Sans',system-ui,Segoe UI,sans-serif;background:<?= $t[3] ?>;color:<?= $t[8] ?>;display:grid;place-items:center;height:100vh}
 .box{background:<?= $t[4] ?>;border:1px solid <?= $t[11] ?>;border-radius:20px;padding:34px;width:350px;box-shadow:0 24px 70px rgba(0,0,0,.18)}
@@ -1982,7 +2027,7 @@ h1{color:<?= $acc ?>;margin:0 0 4px;font-size:23px}.m{color:<?= $t[9] ?>;font-si
 input{width:100%;background:<?= $t[3] ?>;border:1px solid <?= $t[11] ?>;color:<?= $t[8] ?>;border-radius:11px;padding:12px;margin:6px 0}
 button{width:100%;background:<?= $acc ?>;color:#fff;border:0;border-radius:11px;padding:13px;font-weight:800;cursor:pointer;margin-top:12px}
 .err{background:#fde8e8;border:1px solid #f5b5b5;color:#a33;padding:10px 12px;border-radius:10px;font-size:13px;margin-bottom:10px}
-</style></head><body><form class="box" method="post"><h1>HabboretroV14 · Admin</h1><p class="m">Housekeeping — connexion (rang 5+)</p>
+</style></head><body><form class="box" method="post"><h1>Habbo · Admin</h1><p class="m">Housekeeping — connexion (rang 5+)</p>
 <?php if ($err) echo '<div class="err">' . h($err) . '</div>'; ?>
 <input type="hidden" name="csrf" value="<?= h(csrf()) ?>"><input name="username" placeholder="Nom Habbo" autofocus required>
 <input name="password" type="password" placeholder="Mot de passe" required><button>Se connecter</button></form></body></html><?php
