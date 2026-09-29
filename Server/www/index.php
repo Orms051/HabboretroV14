@@ -35,6 +35,17 @@ $err = null; $ok = null;
 /* ---- Déconnexion ---- */
 if ($p === 'logout') { unset($_SESSION['site_user']); redirect('?p=home'); }
 
+/* ---- Mode maintenance (fichier, marche même si MySQL est éteint) ----
+   Le staff (rang >= 5) et la page de connexion passent outre pour pouvoir désactiver. */
+$maint = maintenance_state();
+if (!empty($maint['on'])) {
+    $isStaff = false;
+    if (!empty($_SESSION['site_user']['id'])) {
+        try { $st = db()->prepare('SELECT `rank` FROM users WHERE id=?'); $st->execute([(int)$_SESSION['site_user']['id']]); $isStaff = ((int)$st->fetchColumn()) >= 5; } catch (Throwable $e) {}
+    }
+    if (!$isStaff && $p !== 'login') { maintenance_habbo($maint); exit; }
+}
+
 try { // ---- si la base est éteinte, on affiche une page « maintenance » propre (pas d'erreur fatale)
 
 /* ---- Inscription ---- */
@@ -115,6 +126,47 @@ function maintenance_page(): void {
     echo '  </div>';
     echo '</div></div>';
     foot();
+}
+
+/* ---- Mode maintenance (fichier maintenance.json à la racine du site) ---- */
+function maintenance_state(): array {
+    $f = __DIR__ . '/maintenance.json';
+    if (!is_file($f)) return ['on' => false];
+    $j = json_decode((string)@file_get_contents($f), true);
+    return is_array($j) ? array_merge(['on' => false], $j) : ['on' => false];
+}
+function maintenance_habbo(array $m): void {
+    if (!headers_sent()) { http_response_code(503); header('Retry-After: 3600'); }
+    $msg = trim((string)($m['message'] ?? '')); if ($msg === '') $msg = "L'Hôtel est momentanément fermé pour une petite mise à jour. Reviens très vite !";
+    $eta = trim((string)($m['eta'] ?? ''));
+    ?><!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Habbo — Maintenance</title><link rel="icon" href="/web-gallery/v2/favicon.ico"><style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:14px/1.6 Verdana,Geneva,Arial,sans-serif;color:#4a4a4a;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:#cfe3f2;background-image:linear-gradient(#cfe3f2,#e9e4d6)}
+.mbox{width:520px;max-width:100%;text-align:center}
+.mlogo{margin:0 auto 18px;height:70px;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated}
+.mcard{background:#fff;border:1px solid #cfc6ad;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.15);overflow:hidden}
+.mcard .h{background:linear-gradient(#f7a838,#ef8f13);color:#fff;font-weight:700;font-size:16px;padding:14px;text-shadow:0 1px 0 rgba(0,0,0,.2)}
+.mcard .b{padding:26px}
+.mimg{width:90px;height:auto;margin:0 auto 14px;display:block;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated}
+.mcard p{color:#5b5b5b;font-size:14px;margin:8px 0}
+.meta{display:inline-block;margin-top:14px;background:#eef4fa;border:1px solid #cfe0f0;color:#2f6f9f;font-weight:700;font-size:13px;padding:8px 14px;border-radius:9px}
+.mfoot{margin-top:16px;color:#8a857a;font-size:11px}
+</style></head><body>
+<div class="mbox">
+  <img class="mlogo" src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo">
+  <div class="mcard">
+    <div class="h">🛠️ L'Hôtel est fermé pour maintenance</div>
+    <div class="b">
+      <img class="mimg" src="/web-gallery/v2/images/hotel-button-hotelclosed.png" alt="" onerror="this.style.display='none'">
+      <p><?= h($msg) ?></p>
+      <?php if ($eta !== '') echo '<div class="meta">⏱️ Retour estimé : ' . h($eta) . '</div>'; ?>
+      <p style="margin-top:16px"><b>Merci de ta patience — reviens bientôt !</b></p>
+    </div>
+  </div>
+  <div class="mfoot">Habbo — rétro v14 (2007). Habbo est une marque de Sulake. Projet privé, non affilié.</div>
+</div>
+</body></html><?php
 }
 
 function render(string $p, ?string $err): void {

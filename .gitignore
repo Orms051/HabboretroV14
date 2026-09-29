@@ -38,3 +38,4 @@ desktop.ini
 
 # --- Runtime PHP (binaires, téléchargeable) ---
 /Server/php/
+/Server/www/maintenance.json

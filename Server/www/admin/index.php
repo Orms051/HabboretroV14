@@ -454,6 +454,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'srv_restart':
                 srv_stop(); sleep(3); srv_start();
                 $msg = '🔄 Redémarrage de l\'émulateur… patiente ~10 s puis actualise. Les changements de décor sont maintenant appliqués.'; break;
+            case 'maint_on':
+                $mj = ['on' => true, 'message' => mb_substr(trim((string)($_POST['message'] ?? '')), 0, 300), 'eta' => mb_substr(trim((string)($_POST['eta'] ?? '')), 0, 60), 'by' => (string)($_SESSION['admin']['username'] ?? ''), 'at' => date('c')];
+                file_put_contents(dirname(__DIR__) . '/maintenance.json', json_encode($mj, JSON_UNESCAPED_UNICODE));
+                $msg = '🚧 Mode maintenance ACTIVÉ — le site public affiche la page de fermeture (le staff garde l\'accès).'; break;
+            case 'maint_off':
+                @unlink(dirname(__DIR__) . '/maintenance.json');
+                $msg = '✅ Mode maintenance désactivé — le site est de nouveau ouvert.'; break;
             case 'set_entry_bg':
                 $cc = preg_replace('/[^a-z_]/', '', strtolower((string)($_POST['country'] ?? '')));
                 if ($cc === '' || !is_file(DCR_DIR . '/hh_entry_' . $cc . '.cct')) { $ok = false; $msg = '❌ Fond introuvable.'; break; }
@@ -624,6 +631,7 @@ function action_tab(string $a): string {
         // Système (rang 7 par défaut)
         'setting_update' => 'settings', 'xtext_update' => 'textes', 'tabperm_update' => 'access',
         'srv_start' => 'server', 'srv_stop' => 'server', 'set_entry_bg' => 'server', 'hotel_alert' => 'server',
+        'maint_on' => 'server', 'maint_off' => 'server',
         'db_backup' => 'mysql',
     ];
     return $map[$a] ?? '';
@@ -1656,6 +1664,22 @@ function page_server(): void {
     echo '<form method="post" class="js" data-reload data-confirm="Arrêter l\'émulateur ? Les joueurs seront déconnectés."><input type="hidden" name="action" value="srv_stop">' . csrf_field() . '<button class="bigred"' . ($up ? '' : ' disabled') . '>⏹️ Arrêter</button></form>';
     echo '<form method="post" class="js" data-reload data-confirm="Redémarrer l\'émulateur ? Les joueurs seront déconnectés ~10 s."><input type="hidden" name="action" value="srv_restart">' . csrf_field() . '<button class="bigwarn">🔄 Redémarrer</button></form>';
     echo '</div><p class="hint">💡 Le <b>redémarrage</b> applique les changements de décor, d\'activation de salle et certains réglages. La base de données et le site web ne sont pas touchés.</p></div>';
+
+    /* --- Mode maintenance --- */
+    $mf = dirname(__DIR__) . '/maintenance.json';
+    $mData = is_file($mf) ? (json_decode((string)@file_get_contents($mf), true) ?: []) : [];
+    $mOn = !empty($mData['on']);
+    echo '<div class="panel"><div class="ph"><h3>🚧 Mode maintenance</h3><span class="rk ' . ($mOn ? 'red' : 'green') . '" style="margin-left:auto">' . ($mOn ? 'ACTIVÉ' : 'Inactif') . '</span></div>';
+    echo '<p class="sub">Ferme le site public avec une page « Hôtel en maintenance » (503). Le staff (rang 5+) et l\'admin gardent l\'accès. Fonctionne même si l\'émulateur ou MySQL sont arrêtés.</p>';
+    if ($mOn) {
+        echo '<p class="hint">Activé par <b>' . h((string)($mData['by'] ?? '?')) . '</b>' . (!empty($mData['message']) ? ' · « ' . h((string)$mData['message']) . ' »' : '') . (!empty($mData['eta']) ? ' · retour estimé : ' . h((string)$mData['eta']) : '') . '</p>';
+        echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="maint_off"><button class="bigok">✅ Rouvrir le site</button></form>';
+    } else {
+        echo '<form method="post" class="js" data-reload data-confirm="Activer le mode maintenance ? Le site public sera fermé aux joueurs.">' . csrf_field() . '<input type="hidden" name="action" value="maint_on">';
+        echo '<div class="row"><label style="flex:2">Message affiché<input name="message" placeholder="Ex. Petite mise à jour en cours, on revient vite !"></label><label style="flex:1">Retour estimé<input name="eta" placeholder="Ex. 18h30"></label></div>';
+        echo '<button class="bigwarn" style="margin-top:10px">🚧 Activer la maintenance</button></form>';
+    }
+    echo '</div>';
 
     /* --- Diagnostics : dernières erreurs du serveur --- */
     $errs = server_log_errors(14);
