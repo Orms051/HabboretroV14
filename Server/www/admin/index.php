@@ -2103,6 +2103,20 @@ details[open].panel summary::before{transform:rotate(90deg)}
 label>input,label>select,label>textarea{margin-top:4px}
 input[type=checkbox]{margin-top:0;margin-right:6px}
 #toasts>*+*{margin-top:8px}
+/* Barre supérieure */
+.topbar{display:flex;align-items:center;padding:12px 36px;border-bottom:1px solid var(--line2);background:var(--panel);position:sticky;top:0;z-index:20}
+.tb-crumb{font-size:14px;color:var(--mut);white-space:nowrap}
+.tb-crumb b{color:var(--txt)}
+.tb-sec{opacity:.85}
+.tb-sep{margin:0 8px;opacity:.5}
+.tb-search{display:flex;align-items:center;margin:0 auto;flex:1;max-width:440px}
+.tb-search input{flex:1;min-width:0;padding:9px 12px;border-radius:9px 0 0 9px;border:1px solid var(--line2);border-right:0;background:var(--bg);color:var(--txt);font:inherit;font-size:13px}
+.tb-search button{padding:9px 13px;border-radius:0 9px 9px 0;border:1px solid var(--acc);background:var(--acc);color:#fff;cursor:pointer;font-size:14px}
+.tb-status{display:flex;align-items:center;text-decoration:none;font-weight:700;font-size:12.5px;padding:7px 12px;border-radius:9px;border:1px solid var(--line2);white-space:nowrap}
+.tb-status .dot{width:9px;height:9px;border-radius:50%;margin-right:7px}
+.tb-status.up{color:var(--green)}.tb-status.up .dot{background:var(--green)}
+.tb-status.down{color:var(--red)}.tb-status.down .dot{background:var(--red)}
+@media(max-width:760px){.topbar{padding:10px 16px}.tb-crumb{display:none}}
 /* Sous-onglets de section (style Cadurix) */
 .subtabs{display:flex;flex-wrap:wrap;margin:0 0 20px;padding-bottom:14px;border-bottom:1px solid var(--line2)}
 .subtabs>a{margin:0 8px 8px 0;padding:8px 15px;border-radius:10px;background:var(--panel);border:1px solid var(--line2);color:var(--mut);font-weight:700;font-size:12.5px;text-decoration:none;white-space:nowrap}
@@ -2134,7 +2148,16 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
     ?></nav><div class="foot">
     <label class="thsel">🎨 Thème<select onchange="setTheme(this.value)"><?php foreach (THEMES as $k => $tt) echo '<option value="' . $k . '"' . ($k === $tk ? ' selected' : '') . '>' . $tt[1] . ' ' . h($tt[0]) . '</option>'; ?></select></label>
     <div class="who">👤 <?= h($_SESSION['admin']['username']) ?></div><a href="http://localhost/" target="_blank">▶️ Jeu</a><a href="?p=logout">Déconnexion</a></div></aside>
-<div class="main"><div class="content"><?php
+<div class="main"><?php
+    $secLabel = ''; foreach (nav_groups() as $gl => $keys) { if ($gl !== '' && in_array($p, $keys, true)) { $secLabel = $gl; break; } }
+    $pageLabel = isset($nav[$p]) ? $nav[$p][1] : 'Tableau de bord';
+    $emuUp = emu_running();
+    $sq = ($p === 'search') ? h(trim($_GET['q'] ?? '')) : '';
+?><header class="topbar">
+  <div class="tb-crumb"><?php if ($secLabel !== '') echo '<span class="tb-sec">' . h($secLabel) . '</span><span class="tb-sep">›</span>'; ?><b><?= h($pageLabel) ?></b></div>
+  <form class="tb-search" method="get" action="?"><input type="hidden" name="p" value="search"><input name="q" placeholder="Rechercher un joueur, un mobi, une salle…" value="<?= $sq ?>"><button type="submit" title="Rechercher">🔍</button></form>
+  <a class="tb-status <?= $emuUp ? 'up' : 'down' ?>" href="?p=server" title="État de l'émulateur — ouvrir la page Serveur"><span class="dot"></span><?= $emuUp ? 'En marche' : 'Arrêté' ?></a>
+</header><div class="content"><?php
     foreach (nav_groups() as $gl => $keys) {
         if ($gl === '' || !in_array($p, $keys, true)) continue;
         echo '<div class="subtabs">';
