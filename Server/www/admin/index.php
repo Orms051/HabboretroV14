@@ -192,8 +192,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         switch ($a) {
             case 'user_update':
-                db()->prepare('UPDATE users SET rank=?, credits=?, motto=? WHERE id=?')->execute([max(1, min(7, (int)$_POST['rank'])), (int)$_POST['credits'], trim($_POST['motto'] ?? ''), (int)$_POST['id']]);
-                $msg = '✅ Joueur mis à jour.'; break;
+                $uid = (int)$_POST['id']; $nr = max(1, min(7, (int)$_POST['rank'])); $nc = (int)$_POST['credits']; $nm = trim($_POST['motto'] ?? '');
+                $os = db()->prepare('SELECT username,`rank`,credits,motto FROM users WHERE id=?'); $os->execute([$uid]); $o = $os->fetch();
+                db()->prepare('UPDATE users SET rank=?, credits=?, motto=? WHERE id=?')->execute([$nr, $nc, $nm, $uid]);
+                $ch = [];
+                if ($o) { if ((int)$o['rank'] !== $nr) $ch[] = 'rang ' . $o['rank'] . '→' . $nr; if ((int)$o['credits'] !== $nc) $ch[] = 'crédits ' . $o['credits'] . '→' . $nc; if ((string)$o['motto'] !== $nm) $ch[] = 'motto modifié'; }
+                $msg = '✅ ' . ($o['username'] ?? ('#' . $uid)) . ' mis à jour' . ($ch ? ' (' . implode(', ', $ch) . ')' : '') . '.'; break;
             case 'user_details':
                 $bd = parse_fr_date($_POST['birthday'] ?? '');
                 $sx = ($_POST['sex'] ?? 'M') === 'F' ? 'F' : 'M';
