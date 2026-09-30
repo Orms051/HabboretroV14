@@ -5,6 +5,7 @@
  * Le jeu (client Shockwave) est chargé via /client.php?sso=<ticket>.
  */
 declare(strict_types=1);
+session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax', 'secure' => (($_SERVER['HTTPS'] ?? '') !== '')]);
 session_start();
 mb_internal_encoding('UTF-8');
 
@@ -26,7 +27,7 @@ function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES,
 /* Date de naissance à la française (JJ/MM/AAAA) — type=date non géré par Basilisk/Goanna */
 function parse_fr_date(?string $s): string { $s = trim((string)$s); if (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})$#', $s, $m)) return sprintf('%04d-%02d-%02d', (int)$m[3], (int)$m[2], (int)$m[1]); if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $s)) return $s; return '1990-01-01'; }
 function csrf(): string { if (empty($_SESSION['scsrf'])) $_SESSION['scsrf'] = bin2hex(random_bytes(16)); return $_SESSION['scsrf']; }
-function csrf_ok(): bool { return ($_POST['csrf'] ?? '') === ($_SESSION['scsrf'] ?? ''); }
+function csrf_ok(): bool { $t = (string)($_POST['csrf'] ?? ''); return $t !== '' && !empty($_SESSION['scsrf']) && hash_equals((string)$_SESSION['scsrf'], $t); }
 function hash_pw(string $pw): string { return password_hash($pw, PASSWORD_ARGON2ID, ['memory_cost' => 65536, 'time_cost' => 2, 'threads' => 1]); }
 function me(): ?array { return $_SESSION['site_user'] ?? null; }
 function redirect(string $to) { header('Location: ' . $to); exit; }
@@ -66,6 +67,7 @@ if ($p === 'register' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 db()->prepare('INSERT INTO users (username,password,figure,sex,motto,credits,email,birthday) VALUES (?,?,?,?,?,?,?,?)')
                     ->execute([$u, hash_pw($pw), DEFAULT_FIGURE, $sex, 'Nouveau sur ' . HOTEL . ' !', 100, $u . '@' . HOTEL . '.local', $bd]);
                 $id = (int)db()->lastInsertId();
+                session_regenerate_id(true);
                 $_SESSION['site_user'] = ['id' => $id, 'username' => $u];
                 redirect('?p=home&welcome=1');
             }
@@ -81,6 +83,7 @@ if ($p === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $st = db()->prepare('SELECT id,username,password FROM users WHERE username=?'); $st->execute([trim($_POST['username'] ?? '')]);
         $u = $st->fetch();
         if ($u && password_verify((string)($_POST['password'] ?? ''), $u['password'])) {
+            session_regenerate_id(true);
             $_SESSION['site_user'] = ['id' => (int)$u['id'], 'username' => $u['username']];
             redirect('?p=home');
         }

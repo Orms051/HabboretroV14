@@ -5,6 +5,7 @@
  * Accès : http://localhost/admin/  — rang >= 5 requis.
  */
 declare(strict_types=1);
+session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax', 'secure' => (($_SERVER['HTTPS'] ?? '') !== '')]);
 session_start();
 mb_internal_encoding('UTF-8');
 
@@ -102,13 +103,15 @@ function fr_date(?string $iso): string { if ($iso && preg_match('/^(\d{4})-(\d{2
 function parse_fr_date(?string $s): string { $s = trim((string)$s); if (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})$#', $s, $m)) return sprintf('%04d-%02d-%02d', (int)$m[3], (int)$m[2], (int)$m[1]); if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $s)) return $s; return '1990-01-01'; }
 function csrf(): string { if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16)); return $_SESSION['csrf']; }
 function csrf_field(): string { return '<input type="hidden" name="csrf" value="' . h(csrf()) . '">'; }
-function csrf_check(): void { if (($_POST['csrf'] ?? '') !== ($_SESSION['csrf'] ?? '')) { http_response_code(400); exit('CSRF invalide.'); } }
+function csrf_check(): void { $t = (string)($_POST['csrf'] ?? ''); if ($t === '' || empty($_SESSION['csrf']) || !hash_equals((string)$_SESSION['csrf'], $t)) { http_response_code(400); exit('CSRF invalide.'); } }
 function flash(?string $m = null): ?string { if ($m !== null) { $_SESSION['flash'] = $m; return null; } $f = $_SESSION['flash'] ?? null; unset($_SESSION['flash']); return $f; }
 function require_login(): void { if (empty($_SESSION['admin'])) { header('Location: /?p=login'); exit; } }
 function make_hash(string $pw): string { return password_hash($pw, PASSWORD_ARGON2ID, ['memory_cost' => 65536, 'time_cost' => 2, 'threads' => 1]); }
 function redirect(string $to): void { header('Location: ' . $to); exit; }
 function is_ajax(): bool { return (($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'fetch') || !empty($_POST['ajax']); }
 function cur_page(): int { return max(1, (int)($_GET['pg'] ?? 1)); }
+/* Rang max qu'un admin peut ATTRIBUER = son propre rang (anti-escalade de privilèges) */
+function my_rank(): int { return (int)($_SESSION['admin']['rank'] ?? 1); }
 /* Icône réelle d'un mobi (téléchargée depuis Habbo -> c_images/furni_icons/<base>.png) */
 function furni_icon(string $sprite): string {
     $b = preg_replace('/\*.*$/', '', $sprite);
@@ -136,7 +139,7 @@ if ($p === 'login') {
         $st = db()->prepare('SELECT id,username,password,rank FROM users WHERE username=?'); $st->execute([trim($_POST['username'] ?? '')]);
         $u = $st->fetch();
         if ($u && password_verify((string)($_POST['password'] ?? ''), $u['password'])) {
-            if ((int)$u['rank'] >= MIN_RANK) { $_SESSION['admin'] = ['id' => $u['id'], 'username' => $u['username'], 'rank' => (int)$u['rank']]; redirect('?p=dashboard'); }
+            if ((int)$u['rank'] >= MIN_RANK) { session_regenerate_id(true); $_SESSION['admin'] = ['id' => $u['id'], 'username' => $u['username'], 'rank' => (int)$u['rank']]; redirect('?p=dashboard'); }
             $err = "Ce compte n'a pas les droits (rang " . MIN_RANK . "+ requis).";
         } else $err = 'Nom ou mot de passe incorrect.';
     }
@@ -149,6 +152,12 @@ if (empty($_SESSION['admin']) && !empty($_SESSION['site_user']['id'])) {
     if ($su && (int)$su['rank'] >= MIN_RANK) $_SESSION['admin'] = ['id' => $su['id'], 'username' => $su['username'], 'rank' => (int)$su['rank']];
 }
 require_login();
+
+/* ---------- Revérifie compte + rang en base à chaque requête (source de vérité) ---------- */
+$rv = db()->prepare('SELECT `rank` FROM users WHERE id=?'); $rv->execute([(int)($_SESSION['admin']['id'] ?? 0)]);
+$curRank = $rv->fetchColumn();
+if ($curRank === false || (int)$curRank < MIN_RANK) { session_destroy(); redirect('/?p=login'); }
+$_SESSION['admin']['rank'] = (int)$curRank;
 
 /* ---------- Téléchargement d'une sauvegarde (rang 7) ---------- */
 if (isset($_GET['dlbackup']) && (int)($_SESSION['admin']['rank'] ?? 0) >= 7) {
@@ -163,17 +172,19 @@ if (isset($_GET['dlbackup']) && (int)($_SESSION['admin']['rank'] ?? 0) >= 7) {
     }
 }
 
-/* ---------- Connexion « en tant que » un joueur (item 1) ---------- */
-if (isset($_GET['loginas']) && (int)($_SESSION['admin']['rank'] ?? 0) >= 7) {
-    $uid = (int)$_GET['loginas'];
+/* ---------- Connexion « en tant que » un joueur (POST + CSRF, rang 7) ---------- */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'loginas') {
+    if ((int)($_SESSION['admin']['rank'] ?? 0) < 7) { http_response_code(403); exit('Réservé au rang 7.'); }
+    csrf_check();
+    $uid = (int)($_POST['id'] ?? 0);
     $st = db()->prepare('SELECT username FROM users WHERE id=?'); $st->execute([$uid]); $uname = $st->fetchColumn();
     if ($uname !== false) {
         $ticket = bin2hex(random_bytes(16));
         db()->prepare('UPDATE users SET sso_ticket=? WHERE id=?')->execute([$ticket, $uid]);
         admin_log('login_as', 'Connexion en tant que ' . $uname . ' (#' . $uid . ')');
-        header('Location: /client.php?sso=' . $ticket);
-        exit;
+        redirect('/client.php?sso=' . $ticket);
     }
+    redirect('?p=user&id=' . $uid);
 }
 
 /* ---------- Actions ---------- */
@@ -192,7 +203,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         switch ($a) {
             case 'user_update':
-                $uid = (int)$_POST['id']; $nr = max(1, min(7, (int)$_POST['rank'])); $nc = (int)$_POST['credits']; $nm = trim($_POST['motto'] ?? '');
+                $uid = (int)$_POST['id']; $nr = max(1, min(my_rank(), (int)$_POST['rank'])); $nc = (int)$_POST['credits']; $nm = trim($_POST['motto'] ?? '');
                 $os = db()->prepare('SELECT username,`rank`,credits,motto FROM users WHERE id=?'); $os->execute([$uid]); $o = $os->fetch();
                 db()->prepare('UPDATE users SET rank=?, credits=?, motto=? WHERE id=?')->execute([$nr, $nc, $nm, $uid]);
                 $ch = [];
@@ -204,7 +215,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 db()->prepare('UPDATE users SET email=?, birthday=?, sex=?, motto=? WHERE id=?')->execute([trim($_POST['email'] ?? ''), $bd, $sx, trim($_POST['motto'] ?? ''), (int)$_POST['id']]);
                 $msg = '✅ Détails du joueur enregistrés.'; break;
             case 'user_rank':
-                db()->prepare('UPDATE users SET rank=? WHERE id=?')->execute([max(1, min(7, (int)$_POST['rank'])), (int)$_POST['id']]);
+                db()->prepare('UPDATE users SET rank=? WHERE id=?')->execute([max(1, min(my_rank(), (int)$_POST['rank'])), (int)$_POST['id']]);
                 $msg = '🎖️ Rang modifié. (Le joueur doit se reconnecter pour les nouveaux droits.)'; break;
             case 'credits_all':
                 $d = (int)$_POST['delta']; db()->prepare('UPDATE users SET credits = GREATEST(0, credits + ?)')->execute([$d]);
@@ -218,7 +229,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $st = db()->prepare('SELECT id FROM users WHERE username=?'); $st->execute([$u]);
                 if ($st->fetch()) { $ok = false; $msg = '❌ Ce nom existe déjà.'; break; }
                 $bd = parse_fr_date($_POST['birthday'] ?? '');
-                db()->prepare('INSERT INTO users (username,password,rank,credits,email,birthday,motto,sex) VALUES (?,?,?,?,?,?,?,?)')->execute([$u, make_hash($np), max(1, min(7, (int)($_POST['rank'] ?? 1))), 100, $u . '@retro14.local', $bd, 'Nouveau Habbo', 'M']);
+                db()->prepare('INSERT INTO users (username,password,rank,credits,email,birthday,motto,sex) VALUES (?,?,?,?,?,?,?,?)')->execute([$u, make_hash($np), max(1, min(my_rank(), (int)($_POST['rank'] ?? 1))), 100, $u . '@retro14.local', $bd, 'Nouveau Habbo', 'M']);
                 $msg = '✅ Compte "' . $u . '" créé.'; break;
             case 'user_credits':
                 db()->prepare('UPDATE users SET credits = credits + ? WHERE id=?')->execute([(int)$_POST['delta'], (int)$_POST['id']]);
@@ -230,17 +241,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = $days > 0 ? '⭐ Club Habbo accordé (' . $days . ' j).' : '⭐ Club Habbo retiré.'; break;
             case 'user_delete':
                 $uid = (int)$_POST['id'];
-                foreach ([
-                    'DELETE FROM messenger_requests WHERE from_id=? OR to_id=?',
-                    'DELETE FROM messenger_friends WHERE from_id=? OR to_id=?',
-                    'DELETE FROM users_badges WHERE user_id=?',
-                    'DELETE FROM users_bans WHERE ban_type=\'USER_ID\' AND banned_value=?',
-                    'DELETE FROM users WHERE id=?',
-                ] as $sql) {
-                    $params = substr_count($sql, '?') === 2 ? [$uid, $uid] : [$uid];
-                    try { db()->prepare($sql)->execute($params); } catch (Throwable $e) {}
+                $un = db()->prepare('SELECT username FROM users WHERE id=?'); $un->execute([$uid]); $dname = $un->fetchColumn();
+                if ($dname === false) { $ok = false; $msg = '❌ Joueur introuvable.'; break; }
+                db()->beginTransaction();
+                try {
+                    foreach ([
+                        'messenger_requests WHERE from_id=? OR to_id=?',
+                        'messenger_friends WHERE from_id=? OR to_id=?',
+                        'users_badges WHERE user_id=?',
+                        'users_bans WHERE ban_type=\'USER_ID\' AND banned_value=?',
+                    ] as $frag) {
+                        $params = substr_count($frag, '?') === 2 ? [$uid, $uid] : [$uid];
+                        try { db()->prepare('DELETE FROM ' . $frag)->execute($params); } catch (Throwable $e) {} // tables optionnelles
+                    }
+                    db()->prepare('DELETE FROM users WHERE id=?')->execute([$uid]);
+                    db()->commit();
+                    $msg = '🗑️ Compte "' . $dname . '" supprimé (demandes/amis/badges nettoyés).';
+                } catch (Throwable $e) {
+                    if (db()->inTransaction()) db()->rollBack();
+                    $ok = false; $msg = '❌ Suppression annulée (erreur) : rien n\'a été supprimé.';
                 }
-                $msg = '🗑️ Compte supprimé (et ses demandes/amis/badges nettoyés).'; break;
+                break;
             case 'badge_add':
                 $code = strtoupper(trim($_POST['badge'] ?? '')); $name = trim($_POST['username'] ?? '');
                 if (strlen($code) < 1 || strlen($code) > 3 || !in_array($code, badge_codes(), true)) { $ok = false; $msg = '❌ Code de badge invalide.'; break; }
@@ -493,7 +514,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $ok2 = rcon_send('hotel_alert', $params);
                 $ok = $ok2; $msg = $ok2 ? '📢 Alerte envoyée à tous les joueurs connectés.' : '❌ Émulateur injoignable (RCON). Est-il démarré ?'; break;
             case 'db_backup':
-                $ok = db_backup(); $msg = $ok ? '💾 Sauvegarde créée.' : '❌ Échec de la sauvegarde.'; break;
+                $ok = db_backup(); $msg = $ok ? '💾 Sauvegarde créée et vérifiée.' : ('❌ Échec de la sauvegarde : ' . ($GLOBALS['backup_err'] ?? 'raison inconnue')); break;
             case 'cat_bulk':
                 $pageId = (int)($_POST['page_id'] ?? 0); $what = $_POST['what'] ?? '';
                 $where = $pageId > 0 ? 'page_id=' . $pageId : '1';
@@ -1194,7 +1215,7 @@ function page_user(): void {
     echo '<div style="margin-bottom:10px"><a class="mini ghost lnkbtn" href="?p=users">← Retour aux joueurs</a></div>';
     page_title('👤 ' . $u['username'], 'Fiche complète du joueur · ID ' . $id);
     echo '<div style="margin:-10px 0 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' . rank_badge((int)$u['rank']) . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">Compte actif</span>');
-    if ((int)($_SESSION['admin']['rank'] ?? 0) >= 7) echo '<a class="mini ghost lnkbtn" href="?loginas=' . $id . '" target="_blank" style="margin-left:auto" title="Ouvre le jeu connecté en tant que ce joueur (nouvel onglet)">🎭 Se connecter en tant que…</a>';
+    if ((int)($_SESSION['admin']['rank'] ?? 0) >= 7) echo '<form method="post" action="?p=user&id=' . $id . '" target="_blank" style="margin-left:auto" onsubmit="return confirm(\'Ouvrir le jeu connecté en tant que ' . h(addslashes($u['username'])) . ' ?\')">' . csrf_field() . '<input type="hidden" name="action" value="loginas"><input type="hidden" name="id" value="' . $id . '"><button class="mini ghost" title="Ouvre le jeu connecté en tant que ce joueur (nouvel onglet)">🎭 Se connecter en tant que…</button></form>';
     echo '</div>';
 
     echo '<div class="grid">';
@@ -1801,11 +1822,20 @@ function backup_list(): array {
 }
 function db_backup(): bool {
     $dump = realpath(__DIR__ . '/../../../MariaDB/bin/mysqldump.exe');
-    if (!$dump) return false;
+    if (!$dump) { $GLOBALS['backup_err'] = 'mysqldump.exe introuvable'; return false; }
     $file = backup_dir() . '/v14_' . date('Ymd_His') . '.sql';
-    @exec('"' . $dump . '" -u ' . DB_USER . ' -P ' . DB_PORT . ' -h ' . DB_HOST . ' --default-character-set=utf8mb4 ' . DB_NAME . ' --result-file="' . $file . '" 2>&1');
+    $out = []; $code = -1;
+    @exec('"' . $dump . '" -u ' . DB_USER . ' -P ' . DB_PORT . ' -h ' . DB_HOST . ' --default-character-set=utf8mb4 ' . DB_NAME . ' --result-file="' . $file . '" 2>&1', $out, $code);
+    // Vérifie le code de sortie ET que le dump se termine proprement (pas de sauvegarde partielle)
+    $tail = is_file($file) ? @file_get_contents($file, false, null, max(0, filesize($file) - 200)) : '';
+    $okDump = ($code === 0) && is_file($file) && filesize($file) > 100 && strpos((string)$tail, 'Dump completed') !== false;
+    if (!$okDump) {
+        $GLOBALS['backup_err'] = 'code ' . $code . ($out ? ' — ' . implode(' | ', array_slice($out, 0, 2)) : '');
+        if (is_file($file)) @unlink($file); // supprime la sauvegarde partielle/corrompue
+        return false;
+    }
     foreach (array_slice(backup_list(), 15) as $old) @unlink($old); // garder 15
-    return is_file($file) && filesize($file) > 0;
+    return true;
 }
 function page_title(string $t, string $sub = ''): void { echo '<div class="pagehead"><h1>' . h($t) . '</h1>' . ($sub ? '<p class="sub">' . h($sub) . '</p>' : '') . '</div>'; }
 function stat_box(string $icon, $val, string $label, string $col = 'blue'): void { echo '<div class="stat ' . $col . '"><div class="ic">' . $icon . '</div><div><div class="num">' . h((string)$val) . '</div><div class="lbl">' . h($label) . '</div></div></div>'; }
