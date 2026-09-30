@@ -112,6 +112,15 @@ function is_ajax(): bool { return (($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') ===
 function cur_page(): int { return max(1, (int)($_GET['pg'] ?? 1)); }
 /* Rang max qu'un admin peut ATTRIBUER = son propre rang (anti-escalade de privilèges) */
 function my_rank(): int { return (int)($_SESSION['admin']['rank'] ?? 1); }
+/* Rang actuel du compte cible (0 si introuvable). */
+function target_rank(int $id): int { if ($id <= 0) return 0; $st = db()->prepare('SELECT `rank` FROM users WHERE id=?'); $st->execute([$id]); $r = $st->fetchColumn(); return $r === false ? 0 : (int)$r; }
+/* Anti-escalade : un compte de rang STRICTEMENT supérieur au mien est protégé (pas de modif/suppression/loginas). */
+function is_protected_target(int $id): bool { return $id > 0 && target_rank($id) > my_rank(); }
+/* ---- Anti-bruteforce connexion admin (fichier, par IP ; 5 échecs / 15 min => blocage 10 min) ---- */
+function throttle_file(string $ctx): string { return sys_get_temp_dir() . '/retro14_thr_' . preg_replace('/[^a-z]/', '', $ctx) . '_' . md5((string)($_SERVER['REMOTE_ADDR'] ?? 'cli')) . '.json'; }
+function throttle_blocked(string $ctx): int { $d = @json_decode((string)@file_get_contents(throttle_file($ctx)), true); $u = (int)($d['until'] ?? 0); $now = time(); return $u > $now ? $u - $now : 0; }
+function throttle_fail(string $ctx): void { $f = throttle_file($ctx); $now = time(); $d = @json_decode((string)@file_get_contents($f), true) ?: []; if ((int)($d['first'] ?? 0) < $now - 900) $d = ['first' => $now, 'fails' => 0, 'until' => 0]; $d['fails'] = (int)($d['fails'] ?? 0) + 1; if ($d['fails'] >= 5) $d['until'] = $now + 600; @file_put_contents($f, json_encode($d), LOCK_EX); }
+function throttle_ok(string $ctx): void { @unlink(throttle_file($ctx)); }
 /* Icône réelle d'un mobi (téléchargée depuis Habbo -> c_images/furni_icons/<base>.png) */
 function furni_icon(string $sprite): string {
     $b = preg_replace('/\*.*$/', '', $sprite);
@@ -131,17 +140,18 @@ $p = $_GET['p'] ?? 'dashboard';
 try { db(); } catch (PDOException $e) { admin_db_down(); exit; }
 
 /* ---------- Auth ---------- */
-if ($p === 'logout') { session_destroy(); redirect('?p=login'); }
+if ($p === 'logout') { $_SESSION = []; session_destroy(); redirect('?p=login'); }
 if ($p === 'login') {
     $err = null;
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         csrf_check();
+        if (($w = throttle_blocked('admin')) > 0) { render_login('Trop de tentatives. Réessaie dans ' . (int)ceil($w / 60) . ' min.'); exit; }
         $st = db()->prepare('SELECT id,username,password,rank FROM users WHERE username=?'); $st->execute([trim($_POST['username'] ?? '')]);
         $u = $st->fetch();
         if ($u && password_verify((string)($_POST['password'] ?? ''), $u['password'])) {
-            if ((int)$u['rank'] >= MIN_RANK) { session_regenerate_id(true); $_SESSION['admin'] = ['id' => $u['id'], 'username' => $u['username'], 'rank' => (int)$u['rank']]; redirect('?p=dashboard'); }
+            if ((int)$u['rank'] >= MIN_RANK) { throttle_ok('admin'); session_regenerate_id(true); $_SESSION['admin'] = ['id' => $u['id'], 'username' => $u['username'], 'rank' => (int)$u['rank']]; redirect('?p=dashboard'); }
             $err = "Ce compte n'a pas les droits (rang " . MIN_RANK . "+ requis).";
-        } else $err = 'Nom ou mot de passe incorrect.';
+        } else { throttle_fail('admin'); $err = 'Nom ou mot de passe incorrect.'; }
     }
     render_login($err); exit;
 }
@@ -177,6 +187,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login
     if ((int)($_SESSION['admin']['rank'] ?? 0) < 7) { http_response_code(403); exit('Réservé au rang 7.'); }
     csrf_check();
     $uid = (int)($_POST['id'] ?? 0);
+    if (is_protected_target($uid)) { admin_log('denied', 'loginas refusé sur compte supérieur #' . $uid); http_response_code(403); exit('Action interdite : compte de rang supérieur.'); }
     $st = db()->prepare('SELECT username FROM users WHERE id=?'); $st->execute([$uid]); $uname = $st->fetchColumn();
     if ($uname !== false) {
         $ticket = bin2hex(random_bytes(16));
@@ -193,10 +204,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $a = $_POST['action'] ?? ''; $back = $_POST['back'] ?? ('?p=' . $p); $ok = true; $msg = '';
     /* ---- Contrôle du droit PAR action, AVANT exécution (ferme le contournement POST) ---- */
     $reqTab = action_tab($a);
-    if ($a !== '' && $reqTab === '') $reqTab = $p; // action non cartographiée : au moins l'onglet courant
-    if ($reqTab !== '' && !tab_allowed($reqTab)) {
+    if ($a !== '' && $reqTab === '') {
+        // Action non cartographiée : REFUS par défaut (fail-closed), sauf rang maximum (7).
+        if ((int)($_SESSION['admin']['rank'] ?? 0) < 7) {
+            admin_log('denied', 'Action non cartographiée refusée: ' . $a . ' (rang ' . (int)($_SESSION['admin']['rank'] ?? 0) . ')');
+            $deny = '🔒 Action inconnue refusée.';
+            if (is_ajax()) { header('Content-Type: application/json'); echo json_encode(['ok' => false, 'msg' => $deny]); exit; }
+            flash($deny); redirect($back);
+        }
+    } elseif ($reqTab !== '' && !tab_allowed($reqTab)) {
         admin_log('denied', 'Action refusée: ' . $a . ' (onglet ' . $reqTab . ', rang ' . (int)($_SESSION['admin']['rank'] ?? 0) . ')');
         $deny = '🔒 Accès refusé : ton rang n\'autorise pas cette action.';
+        if (is_ajax()) { header('Content-Type: application/json'); echo json_encode(['ok' => false, 'msg' => $deny]); exit; }
+        flash($deny); redirect($back);
+    }
+    /* ---- Anti-escalade : aucune action sur un compte de rang STRICTEMENT supérieur ---- */
+    $targetActions = ['user_update', 'user_details', 'user_rank', 'user_password', 'user_credits', 'user_hc', 'user_delete'];
+    if (in_array($a, $targetActions, true) && is_protected_target((int)($_POST['id'] ?? 0))) {
+        admin_log('denied', 'Action ' . $a . ' refusée sur compte supérieur #' . (int)($_POST['id'] ?? 0) . ' (rang ' . (int)($_SESSION['admin']['rank'] ?? 0) . ')');
+        $deny = '🔒 Action interdite : ce compte est d\'un rang supérieur au tien.';
         if (is_ajax()) { header('Content-Type: application/json'); echo json_encode(['ok' => false, 'msg' => $deny]); exit; }
         flash($deny); redirect($back);
     }
@@ -235,9 +261,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 db()->prepare('UPDATE users SET credits = credits + ? WHERE id=?')->execute([(int)$_POST['delta'], (int)$_POST['id']]);
                 $msg = '💰 ' . ((int)$_POST['delta'] >= 0 ? '+' : '') . (int)$_POST['delta'] . ' crédits.'; break;
             case 'user_hc':
-                $days = (int)$_POST['days']; $now = time() * 1000;
-                if ($days > 0) db()->prepare('UPDATE users SET club_subscribed=?, club_expiration=? WHERE id=?')->execute([$now, $now + $days * 86400000, (int)$_POST['id']]);
-                else db()->prepare('UPDATE users SET club_subscribed=0, club_expiration=0 WHERE id=?')->execute([(int)$_POST['id']]);
+                $days = (int)$_POST['days']; $now = time(); $uid = (int)$_POST['id']; // UNIX en SECONDES (comme le JAR Kepler)
+                if ($days > 0) {
+                    $cs = db()->prepare('SELECT club_subscribed, club_expiration FROM users WHERE id=?'); $cs->execute([$uid]); $cur = $cs->fetch() ?: ['club_subscribed' => 0, 'club_expiration' => 0];
+                    $first = (int)$cur['club_subscribed'] > 0 ? (int)$cur['club_subscribed'] : $now;         // conserve la 1re inscription (badge or)
+                    $base = (int)$cur['club_expiration'] > $now ? (int)$cur['club_expiration'] : $now;        // prolonge si encore actif
+                    db()->prepare('UPDATE users SET club_subscribed=?, club_expiration=? WHERE id=?')->execute([$first, $base + $days * 86400, $uid]);
+                } else {
+                    db()->prepare('UPDATE users SET club_subscribed=0, club_expiration=0 WHERE id=?')->execute([$uid]);
+                }
                 $msg = $days > 0 ? '⭐ Club Habbo accordé (' . $days . ' j).' : '⭐ Club Habbo retiré.'; break;
             case 'user_delete':
                 $uid = (int)$_POST['id'];
@@ -261,6 +293,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (db()->inTransaction()) db()->rollBack();
                     $ok = false; $msg = '❌ Suppression annulée (erreur) : rien n\'a été supprimé.';
                 }
+                break;
+            case 'pwreset_do':
+                ensure_pw_resets();
+                $rid = (int)($_POST['rid'] ?? 0);
+                $rq = db()->prepare('SELECT username,status FROM password_resets WHERE id=?'); $rq->execute([$rid]); $req = $rq->fetch();
+                if (!$req) { $ok = false; $msg = '❌ Demande introuvable.'; break; }
+                $us = db()->prepare('SELECT id,`rank` FROM users WHERE username=?'); $us->execute([(string)$req['username']]); $tu = $us->fetch();
+                if (!$tu) { $ok = false; $msg = '❌ Aucun compte nommé « ' . $req['username'] .' » (demande marquée rejetée).'; db()->prepare('UPDATE password_resets SET status=\'rejected\', handled_by=?, handled_at=NOW() WHERE id=?')->execute([$_SESSION['admin']['username'] ?? '?', $rid]); break; }
+                if (is_protected_target((int)$tu['id'])) { $ok = false; $msg = '🔒 Ce compte est d\'un rang supérieur au tien : reset refusé.'; break; }
+                $tmp = 'Habbo' . random_int(1000, 9999);
+                db()->prepare('UPDATE users SET password=? WHERE id=?')->execute([make_hash($tmp), (int)$tu['id']]);
+                db()->prepare('UPDATE password_resets SET status=\'done\', handled_by=?, handled_at=NOW() WHERE id=?')->execute([$_SESSION['admin']['username'] ?? '?', $rid]);
+                $msg = '🔑 Mot de passe provisoire pour « ' . $req['username'] . ' » : ' . $tmp . ' — communique-le au joueur, il devra le changer.'; break;
+            case 'pwreset_reject':
+                ensure_pw_resets();
+                db()->prepare('UPDATE password_resets SET status=\'rejected\', handled_by=?, handled_at=NOW() WHERE id=?')->execute([$_SESSION['admin']['username'] ?? '?', (int)($_POST['rid'] ?? 0)]);
+                $msg = '🗑️ Demande rejetée.'; break;
+            case 'cmsg_handle':
+                ensure_contact_msgs();
+                db()->prepare('UPDATE contact_messages SET status=\'handled\', handled_by=?, handled_at=NOW() WHERE id=?')->execute([$_SESSION['admin']['username'] ?? '?', (int)($_POST['id'] ?? 0)]);
+                $msg = '✅ Message marqué comme traité.'; break;
+            case 'cmsg_delete':
+                ensure_contact_msgs();
+                db()->prepare('DELETE FROM contact_messages WHERE id=?')->execute([(int)($_POST['id'] ?? 0)]);
+                $msg = '🗑️ Message supprimé.'; break;
+            case 'umsg_send':
+                ensure_user_msgs();
+                $toName = trim((string)($_POST['username'] ?? ''));
+                if ($toName !== '') { $rs = db()->prepare('SELECT id,username FROM users WHERE username=?'); $rs->execute([$toName]); if ($row = $rs->fetch()) { $uid = (int)$row['id']; $un = $row['username']; } else { $uid = 0; $un = false; } }
+                else { $uid = (int)($_POST['id'] ?? 0); $chk = db()->prepare('SELECT username FROM users WHERE id=?'); $chk->execute([$uid]); $un = $chk->fetchColumn(); }
+                if ($un === false) { $ok = false; $msg = '❌ Joueur introuvable' . ($toName !== '' ? ' : « ' . $toName . ' »' : '') . '.'; break; }
+                $body = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 2000);
+                if ($body === '') { $ok = false; $msg = '❌ Message vide.'; break; }
+                db()->prepare('INSERT INTO user_messages (user_id,from_staff,subject,body) VALUES (?,?,?,?)')->execute([$uid, $_SESSION['admin']['username'] ?? 'Équipe', mb_substr(trim((string)($_POST['subject'] ?? '')), 0, 120), $body]);
+                $msg = '✉️ Message envoyé à ' . $un . '.'; break;
+            case 'smsg_post':
+                ensure_staff_msgs();
+                $b = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 2000);
+                if ($b === '') { $ok = false; $msg = '❌ Message vide.'; break; }
+                db()->prepare('INSERT INTO staff_messages (author,body) VALUES (?,?)')->execute([$_SESSION['admin']['username'] ?? '?', $b]);
+                $msg = '💬 Message posté sur le fil de l\'équipe.'; break;
+            case 'smsg_delete':
+                ensure_staff_msgs();
+                $mid = (int)($_POST['id'] ?? 0);
+                $au = db()->prepare('SELECT author FROM staff_messages WHERE id=?'); $au->execute([$mid]); $author = $au->fetchColumn();
+                if ($author !== false && ($author === ($_SESSION['admin']['username'] ?? '') || my_rank() >= 7)) { db()->prepare('DELETE FROM staff_messages WHERE id=?')->execute([$mid]); $msg = '🗑️ Message supprimé.'; }
+                else { $ok = false; $msg = '🔒 Tu ne peux supprimer que tes propres messages.'; }
                 break;
             case 'badge_add':
                 $code = strtoupper(trim($_POST['badge'] ?? '')); $name = trim($_POST['username'] ?? '');
@@ -484,11 +563,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = '🔄 Redémarrage de l\'émulateur… patiente ~10 s puis actualise. Les changements de décor sont maintenant appliqués.'; break;
             case 'maint_on':
                 $mj = ['on' => true, 'message' => mb_substr(trim((string)($_POST['message'] ?? '')), 0, 300), 'eta' => mb_substr(trim((string)($_POST['eta'] ?? '')), 0, 60), 'by' => (string)($_SESSION['admin']['username'] ?? ''), 'at' => date('c')];
-                file_put_contents(dirname(__DIR__) . '/maintenance.json', json_encode($mj, JSON_UNESCAPED_UNICODE));
-                $msg = '🚧 Mode maintenance ACTIVÉ — le site public affiche la page de fermeture (le staff garde l\'accès).'; break;
+                $mfp = dirname(__DIR__) . '/maintenance.json';
+                $wr = @file_put_contents($mfp, json_encode($mj, JSON_UNESCAPED_UNICODE), LOCK_EX);
+                if ($wr === false) { $ok = false; $msg = '❌ Échec : impossible d\'écrire maintenance.json (droits d\'écriture du serveur web ?).'; }
+                else $msg = '🚧 Mode maintenance ACTIVÉ — le site public ET le jeu affichent la page de fermeture (le staff garde l\'accès).'; break;
             case 'maint_off':
-                @unlink(dirname(__DIR__) . '/maintenance.json');
-                $msg = '✅ Mode maintenance désactivé — le site est de nouveau ouvert.'; break;
+                $mfp = dirname(__DIR__) . '/maintenance.json';
+                clearstatcache(true, $mfp);
+                if (!is_file($mfp)) { $msg = '✅ Maintenance déjà désactivée.'; }
+                elseif (@unlink($mfp)) { $msg = '✅ Mode maintenance désactivé — le site et le jeu sont de nouveau ouverts.'; }
+                else { $ok = false; $msg = '❌ Échec : impossible de supprimer maintenance.json (droits ? fichier verrouillé ?).'; }
+                break;
             case 'set_entry_bg':
                 $cc = preg_replace('/[^a-z_]/', '', strtolower((string)($_POST['country'] ?? '')));
                 if ($cc === '' || !is_file(DCR_DIR . '/hh_entry_' . $cc . '.cct')) { $ok = false; $msg = '❌ Fond introuvable.'; break; }
@@ -581,6 +666,7 @@ switch ($p) {
     case 'convert': page_convert(); break;
     case 'bots': page_bots(); break;
     case 'users': page_users(); break;
+    case 'messages': page_messages(); break;
     case 'user': page_user(); break;
     case 'badges': page_badges(); break;
     case 'ranks': page_ranks(); break;
@@ -601,7 +687,7 @@ render_footer();
 
 /* ============ ACCÈS AUX ONGLETS PAR RANG ============ */
 function admin_nav(): array {
-    return ['dashboard' => ['🏠', 'Accueil'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur']];
+    return ['dashboard' => ['🏠', 'Accueil'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur']];
 }
 function tab_default_rank(string $tab): int {
     $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7];
@@ -614,6 +700,7 @@ function nav_groups(): array {
         'Catalogue & mobis' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax'],
         'Hôtel & animations' => ['rooms', 'models', 'bots', 'games', 'gamemaps', 'events', 'recycler', 'vouchers', 'bus'],
         'Site & contenus' => ['news', 'textes'],
+        'Messagerie' => ['messages'],
         'Administration' => ['settings', 'access', 'mysql', 'server'],
     ];
 }
@@ -653,6 +740,9 @@ function action_tab(string $a): string {
         // Communauté / modération
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
         'ban_add' => 'moderation', 'ban_remove' => 'moderation', 'bus_type' => 'bus',
+        'pwreset_do' => 'messages', 'pwreset_reject' => 'messages',
+        'cmsg_handle' => 'messages', 'cmsg_delete' => 'messages', 'umsg_send' => 'users',
+        'smsg_post' => 'messages', 'smsg_delete' => 'messages',
         // Jeux : codes & recycleur
         'voucher_add' => 'vouchers', 'voucher_delete' => 'vouchers',
         'recy_add' => 'recycler', 'recy_update' => 'recycler', 'recy_delete' => 'recycler',
@@ -676,6 +766,38 @@ function admin_log(string $action, string $detail = ''): void {
 function ensure_admin_notes(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS admin_notes (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, author VARCHAR(64) NOT NULL, note VARCHAR(500) NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
+/* ---- Demandes de réinitialisation de mot de passe (file traitée par le staff) ---- */
+function ensure_pw_resets(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS password_resets (id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(64) NOT NULL, message VARCHAR(500) NOT NULL DEFAULT '', ip VARCHAR(45) NOT NULL DEFAULT '', status ENUM('pending','done','rejected') NOT NULL DEFAULT 'pending', handled_by VARCHAR(64) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, handled_at DATETIME NULL, INDEX(status)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+/* ---- Messages du formulaire Contact (boîte de réception) ---- */
+function ensure_contact_msgs(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS contact_messages (id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(64) NOT NULL DEFAULT '', subject VARCHAR(120) NOT NULL DEFAULT '', message VARCHAR(1000) NOT NULL, ip VARCHAR(45) NOT NULL DEFAULT '', status ENUM('new','handled') NOT NULL DEFAULT 'new', handled_by VARCHAR(64) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, handled_at DATETIME NULL, INDEX(status)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+/* ---- Messages Staff -> joueur (lus sur le site) ---- */
+function ensure_user_msgs(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS user_messages (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, from_staff VARCHAR(64) NOT NULL DEFAULT '', subject VARCHAR(120) NOT NULL DEFAULT '', body VARCHAR(2000) NOT NULL, read_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(user_id), INDEX(read_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+/* Total d'éléments en attente dans la boîte de réception (messages Contact + demandes MDP). */
+function inbox_pending(): int {
+    try { ensure_contact_msgs(); ensure_pw_resets();
+        return (int)db()->query("SELECT (SELECT COUNT(*) FROM contact_messages WHERE status='new') + (SELECT COUNT(*) FROM password_resets WHERE status='pending')")->fetchColumn();
+    } catch (Throwable $e) { return 0; }
+}
+/* ---- Discussion interne de l'équipe (staff <-> staff) ---- */
+function ensure_staff_msgs(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS staff_messages (id INT AUTO_INCREMENT PRIMARY KEY, author VARCHAR(64) NOT NULL DEFAULT '', body VARCHAR(2000) NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("CREATE TABLE IF NOT EXISTS staff_seen (username VARCHAR(64) NOT NULL PRIMARY KEY, last_id INT NOT NULL DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+/* Nb de messages staff non lus par $me (postés par d'autres après sa dernière visite). */
+function staff_unread(string $me): int {
+    try { ensure_staff_msgs();
+        $st = db()->prepare('SELECT last_id FROM staff_seen WHERE username=?'); $st->execute([$me]); $last = (int)$st->fetchColumn();
+        $c = db()->prepare('SELECT COUNT(*) FROM staff_messages WHERE id>? AND author<>?'); $c->execute([$last, $me]); return (int)$c->fetchColumn();
+    } catch (Throwable $e) { return 0; }
+}
+/* Badge global de l'onglet Messagerie = éléments joueurs en attente + messages staff non lus. */
+function messages_badge(): int { return inbox_pending() + staff_unread((string)($_SESSION['admin']['username'] ?? '')); }
 /* ---- Saison courante (pour décors auto) ---- */
 function current_season(): string {
     $m = (int)date('n'); $d = (int)date('j');
@@ -909,6 +1031,12 @@ function page_dashboard(): void {
     $online = $d->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn();
     $emu = emu_running();
     page_title('Tableau de bord', 'Vue d\'ensemble de ton hôtel');
+
+    /* --- Alerte : boîte de réception (messages joueurs + demandes MDP) --- */
+    $inbox = inbox_pending();
+    if ($inbox > 0) {
+        echo '<a class="alertbar" href="?p=messages">💬 <b>' . $inbox . ' élément' . ($inbox > 1 ? 's' : '') . '</b> en attente dans la messagerie (messages / demandes de mot de passe) — clique pour traiter &raquo;</a>';
+    }
 
     /* --- Indicateurs utiles d'abord --- */
     echo '<div class="grid">';
@@ -1206,8 +1334,8 @@ function page_user(): void {
     $back = '?p=user&id=' . $id;
     $seen = (int)$u['last_online'] > 0 ? date('d/m/Y H:i', (int)$u['last_online']) : 'jamais';
     $created = $u['created_at'] ? date('d/m/Y', strtotime((string)$u['created_at'])) : '?';
-    $hcActive = (int)$u['club_expiration'] > time() * 1000;
-    $hc = $hcActive ? ('actif jusqu\'au ' . date('d/m/Y', (int)($u['club_expiration'] / 1000))) : 'non membre';
+    $hcActive = (int)$u['club_expiration'] > time(); // UNIX en SECONDES (comme le JAR)
+    $hc = $hcActive ? ('actif jusqu\'au ' . date('d/m/Y', (int)$u['club_expiration'])) : 'non membre';
     $bs = db()->prepare("SELECT message,banned_until FROM users_bans WHERE ban_type='USER_ID' AND banned_value=?"); $bs->execute([(string)$id]); $ban = $bs->fetch(); $isBan = (bool)$ban;
     $rb = []; foreach (db()->query('SELECT badge FROM rank_badges WHERE rank=' . (int)$u['rank']) as $r) $rb[] = $r['badge'];
     $ob = []; $obs = db()->prepare('SELECT badge FROM users_badges WHERE user_id=?'); $obs->execute([$id]); foreach ($obs as $r) $ob[] = $r['badge'];
@@ -1276,6 +1404,21 @@ function page_user(): void {
         echo '</table>'; }
     echo '</div>';
 
+    // Message au joueur (Staff -> joueur, lu sur le site)
+    ensure_user_msgs();
+    echo '<div class="panel"><div class="ph"><h3>✉️ Envoyer un message à ' . h($u['username']) . '</h3></div>';
+    echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="umsg_send"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">'
+       . '<label>Sujet<input name="subject" maxlength="100" placeholder="Ex : Réponse à ta demande"></label>'
+       . '<label style="margin-top:6px">Message<textarea name="body" rows="3" maxlength="2000" required placeholder="Ton message pour le joueur (il le lira sur le site)."></textarea></label>'
+       . '<button style="margin-top:8px">✉️ Envoyer</button></form>';
+    $sent = db()->prepare('SELECT subject,body,from_staff,read_at,created_at FROM user_messages WHERE user_id=? ORDER BY id DESC LIMIT 6'); $sent->execute([$id]); $sentList = $sent->fetchAll();
+    if ($sentList) {
+        echo '<table class="clean" style="margin-top:12px"><tr><th>Envoyé</th><th>Par</th><th>Sujet</th><th>Lu</th></tr>';
+        foreach ($sentList as $sm) echo '<tr><td class="sm muted">' . h(date('d/m H:i', strtotime((string)$sm['created_at']))) . '</td><td class="sm"><b>' . h((string)$sm['from_staff']) . '</b></td><td>' . h((string)($sm['subject'] ?: '(sans sujet)')) . '</td><td class="sm">' . ($sm['read_at'] ? '✅ ' . h(date('d/m H:i', strtotime((string)$sm['read_at']))) : '<span class="muted">non lu</span>') . '</td></tr>';
+        echo '</table>';
+    }
+    echo '</div>';
+
     echo '<div class="panel"><div class="ph"><h3>🚫 Modération</h3></div>';
     if ($isBan) echo '<p>🚫 Banni : <b>' . h($ban['message']) . '</b> (' . ((int)$ban['banned_until'] >= BAN_PERMANENT ? '♾️ définitif' : 'jusqu\'au ' . date('d/m/Y', (int)($ban['banned_until'] / 1000))) . ') <form method="post" class="js" data-reload style="display:inline"><input type="hidden" name="action" value="ban_remove">' . csrf_field() . '<input type="hidden" name="value" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '"><button class="mini ghost">Lever le ban</button></form></p>';
     else echo '<form method="post" class="js row" data-reload><input type="hidden" name="action" value="ban_add"><input type="hidden" name="type" value="USER_ID"><input type="hidden" name="value" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<label>Durée (j · 0 = définitif)<input type="number" name="days" value="0" style="width:120px"></label><label style="flex:1">Motif<input name="message" value="Comportement inapproprié"></label><button style="background:var(--red)">🚫 Bannir</button></form>';
@@ -1321,7 +1464,7 @@ function page_users(): void {
         <label>Nom<input name="username" required></label><label>Mot de passe<input name="newpass" required></label><label>Anniversaire<input name="birthday" placeholder="JJ/MM/AAAA" value="01/01/1990"></label><label>Rang<select name="rank">' . rank_options(1) . '</select></label><button>Créer</button>
         <span class="muted sm" style="align-self:center">Rangs 1→6 (6 = Admin). Kepler n\'a pas de rang « HabboX ».</span></form></div>';
 
-    echo '<div class="panel"><div class="ph"><h3>👥 Comptes</h3><form method="get" class="srch"><input type="hidden" name="p" value="users"><input name="q" value="' . h($q) . '" placeholder="🔍 Nom du joueur..."><button class="mini">OK</button></form></div>';
+    echo '<div class="panel"><div class="ph"><h3>👥 Comptes</h3><form method="get" class="srch"><input type="hidden" name="p" value="users"><input name="q" list="dl_pseudos" autocomplete="off" value="' . h($q) . '" placeholder="🔍 Nom du joueur..."><button class="mini">OK</button></form></div>';
     $bans = []; foreach (db()->query("SELECT banned_value FROM users_bans WHERE ban_type='USER_ID'") as $b) $bans[(int)$b['banned_value']] = true;
     if ($q !== '') { $st = db()->prepare('SELECT COUNT(*) FROM users WHERE username LIKE ?'); $st->execute(['%' . $q . '%']); $total = (int)$st->fetchColumn();
         $st = db()->prepare('SELECT id,username,rank,credits,motto,last_online FROM users WHERE username LIKE ? ORDER BY username LIMIT ' . PER_PAGE . ' OFFSET ' . $off); $st->execute(['%' . $q . '%']);
@@ -1378,7 +1521,7 @@ function page_badges(): void {
     echo '<div class="cols">';
     echo '<div class="panel"><div class="ph"><h3>📛 Attribuer un badge à un joueur</h3></div>
         <form method="post" class="js row" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="badge_add">
-        <label style="flex:1">Joueur<input name="username" value="' . h($u) . '" required></label>
+        <label style="flex:1">Joueur<input name="username" list="dl_pseudos" autocomplete="off" value="' . h($u) . '" required></label>
         <label>Code badge<input name="badge" id="badgecode" maxlength="3" placeholder="ADM" required style="width:90px;text-transform:uppercase"></label>
         <button>Attribuer</button></form>
         <p class="muted sm">Astuce : clique un badge dans la galerie ci-dessous pour remplir le code automatiquement.</p></div>';
@@ -1398,7 +1541,7 @@ function page_badges(): void {
     }
     echo '</table></div></div>';
 
-    echo '<div class="panel"><div class="ph"><h3>👤 Badges d\'un joueur</h3><form method="get" class="srch"><input type="hidden" name="p" value="badges"><input name="u" value="' . h($u) . '" placeholder="Nom du joueur..."><button class="mini">Voir</button></form></div>';
+    echo '<div class="panel"><div class="ph"><h3>👤 Badges d\'un joueur</h3><form method="get" class="srch"><input type="hidden" name="p" value="badges"><input name="u" list="dl_pseudos" autocomplete="off" value="' . h($u) . '" placeholder="Nom du joueur..."><button class="mini">Voir</button></form></div>';
     if ($u !== '') {
         $st = db()->prepare('SELECT id FROM users WHERE username=?'); $st->execute([$u]); $uid = $st->fetchColumn();
         if (!$uid) echo '<div class="empty">Joueur « ' . h($u) . ' » introuvable.</div>';
@@ -1474,12 +1617,95 @@ function page_ranks(): void {
     }
 }
 
+function page_messages(): void {
+    page_title('Messagerie', 'Boîte de réception : messages des joueurs et demandes de mot de passe');
+    ensure_contact_msgs(); ensure_pw_resets(); ensure_user_msgs();
+
+    /* --- Écrire à un joueur (Staff -> joueur) --- */
+    $pre = trim($_GET['to'] ?? '');
+    echo '<div class="panel"><div class="ph"><h3>✉️ Écrire à un joueur</h3></div>';
+    echo '<form method="post" class="js" data-reload><input type="hidden" name="action" value="umsg_send">' . csrf_field()
+       . '<div class="row"><label style="flex:1">Destinataire (pseudo)<input name="username" list="dl_pseudos" autocomplete="off" value="' . h($pre) . '" placeholder="Tape les premières lettres…" required></label>'
+       . '<label style="flex:1">Sujet (facultatif)<input name="subject" maxlength="100" placeholder="Ex : Réponse à ta demande"></label></div>'
+       . '<label style="margin-top:8px">Message<textarea name="body" rows="3" maxlength="2000" required placeholder="Ton message pour le joueur (il le lira sur le site)."></textarea></label>'
+       . '<button style="margin-top:8px">✉️ Envoyer</button></form>';
+    echo '<p class="muted sm" style="margin-top:8px">💡 Tu peux aussi écrire depuis la fiche d\'un joueur (Joueurs → un joueur), avec l\'historique lu/non-lu.</p>';
+    echo '</div>';
+
+    /* --- Messages du formulaire Contact --- */
+    $new = db()->query("SELECT id,username,subject,message,ip,created_at FROM contact_messages WHERE status='new' ORDER BY created_at ASC")->fetchAll();
+    echo '<div class="panel"><div class="ph"><h3>📥 Messages des joueurs</h3>' . ($new ? '<span class="rk red" style="margin-left:auto">' . count($new) . ' non lu' . (count($new) > 1 ? 's' : '') . '</span>' : '') . '</div>';
+    if (!$new) echo '<div class="empty">Aucun nouveau message 🎉</div>';
+    else {
+        echo '<table class="clean"><tr><th>Reçu</th><th>De</th><th>Sujet & message</th><th style="width:200px">Action</th></tr>';
+        foreach ($new as $m) {
+            $when = h(date('d/m H:i', strtotime((string)$m['created_at'])));
+            $subj = trim((string)$m['subject']);
+            echo '<tr><td class="sm muted">' . $when . '</td>'
+               . '<td><b>' . h((string)($m['username'] ?: '—')) . '</b><br><span class="sm muted">' . h((string)$m['ip']) . '</span></td>'
+               . '<td>' . ($subj !== '' ? '<b>' . h($subj) . '</b><br>' : '') . '<span class="muted">' . nl2br(h((string)$m['message'])) . '</span></td>'
+               . '<td>' . ($m['username'] ? '<a class="mini ghost lnkbtn" href="?p=messages&to=' . h(rawurlencode((string)$m['username'])) . '">✉️ Répondre</a> ' : '') . '<form method="post" class="js" data-reload style="display:inline"><input type="hidden" name="action" value="cmsg_handle">' . csrf_field() . '<input type="hidden" name="id" value="' . (int)$m['id'] . '"><button class="mini">✅ Traité</button></form> '
+               . '<form method="post" class="js" data-reload style="display:inline" data-confirm="Supprimer ce message ?"><input type="hidden" name="action" value="cmsg_delete">' . csrf_field() . '<input type="hidden" name="id" value="' . (int)$m['id'] . '"><button class="mini ghost">Supprimer</button></form></td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '</div>';
+
+    /* --- Demandes de réinitialisation de mot de passe --- */
+    $reqs = db()->query("SELECT id,username,message,ip,created_at FROM password_resets WHERE status='pending' ORDER BY created_at ASC")->fetchAll();
+    echo '<div class="panel"><div class="ph"><h3>🔑 Demandes de mot de passe</h3>' . ($reqs ? '<span class="rk red" style="margin-left:auto">' . count($reqs) . ' en attente</span>' : '') . '</div>';
+    if (!$reqs) echo '<div class="empty">Aucune demande en attente 🎉</div>';
+    else {
+        echo '<table class="clean"><tr><th>Reçue</th><th>Pseudo</th><th>Indice</th><th>IP</th><th style="width:230px">Action</th></tr>';
+        foreach ($reqs as $r) {
+            $when = h(date('d/m H:i', strtotime((string)$r['created_at'])));
+            echo '<tr><td class="sm muted">' . $when . '</td>'
+               . '<td><b>' . h((string)$r['username']) . '</b></td>'
+               . '<td class="muted sm">' . h((string)$r['message']) . '</td>'
+               . '<td class="sm muted">' . h((string)$r['ip']) . '</td>'
+               . '<td><form method="post" style="display:inline" onsubmit="return confirm(\'Réinitialiser le mot de passe de « ' . h(addslashes((string)$r['username'])) . ' » ? Un mot de passe provisoire sera généré.\')">' . csrf_field() . '<input type="hidden" name="action" value="pwreset_do"><input type="hidden" name="rid" value="' . (int)$r['id'] . '"><button class="mini">🔑 Traiter</button></form> '
+               . '<form method="post" class="js" data-reload style="display:inline" data-confirm="Rejeter cette demande ?"><input type="hidden" name="action" value="pwreset_reject">' . csrf_field() . '<input type="hidden" name="rid" value="' . (int)$r['id'] . '"><button class="mini ghost">Rejeter</button></form></td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '</div>';
+
+    /* --- Discussion interne de l'équipe (staff <-> staff) --- */
+    ensure_staff_msgs();
+    $me = (string)($_SESSION['admin']['username'] ?? '?');
+    $feed = db()->query('SELECT id,author,body,created_at FROM staff_messages ORDER BY id DESC LIMIT 40')->fetchAll();
+    echo '<div class="panel"><div class="ph"><h3>👥 Discussion de l\'équipe</h3><span class="muted sm" style="margin-left:auto">visible par tout le staff</span></div>';
+    echo '<form method="post" class="js" data-reload><input type="hidden" name="action" value="smsg_post">' . csrf_field() . '<textarea name="body" rows="2" maxlength="2000" required placeholder="Écris un message à l\'équipe…" style="width:100%"></textarea><button style="margin-top:8px">💬 Publier</button></form>';
+    if (!$feed) echo '<div class="empty">Aucun message pour l\'instant. Lance la discussion !</div>';
+    else {
+        echo '<div class="stafffeed">';
+        foreach ($feed as $m) {
+            $mine = ($m['author'] === $me);
+            echo '<div class="smsg' . ($mine ? ' mine' : '') . '"><div class="sm-head"><b>' . h((string)$m['author']) . '</b><span class="sm-date">' . h(date('d/m H:i', strtotime((string)$m['created_at']))) . '</span>';
+            if ($mine || my_rank() >= 7) echo '<form method="post" class="js" data-reload style="display:inline;margin-left:8px" data-confirm="Supprimer ce message ?"><input type="hidden" name="action" value="smsg_delete">' . csrf_field() . '<input type="hidden" name="id" value="' . (int)$m['id'] . '"><button class="mini ghost">✕</button></form>';
+            echo '</div><div class="sm-body">' . nl2br(h((string)$m['body'])) . '</div></div>';
+        }
+        echo '</div>';
+    }
+    echo '</div>';
+    // marque le fil comme lu pour ce staff
+    if ($feed) { $maxId = (int)$feed[0]['id']; db()->prepare('INSERT INTO staff_seen (username,last_id) VALUES (?,?) ON DUPLICATE KEY UPDATE last_id=GREATEST(last_id,VALUES(last_id))')->execute([$me, $maxId]); }
+
+    /* --- Historique récent (traité) --- */
+    $done = db()->query("SELECT username,subject,handled_by,handled_at FROM contact_messages WHERE status='handled' ORDER BY handled_at DESC LIMIT 10")->fetchAll();
+    if ($done) {
+        echo '<div class="panel"><div class="ph"><h3>🗂️ Messages traités (récents)</h3></div><table class="clean"><tr><th>De</th><th>Sujet</th><th>Traité par</th><th>Quand</th></tr>';
+        foreach ($done as $m) echo '<tr><td>' . h((string)($m['username'] ?: '—')) . '</td><td class="muted">' . h((string)($m['subject'] ?: '—')) . '</td><td>' . h((string)$m['handled_by']) . '</td><td class="sm muted">' . h($m['handled_at'] ? date('d/m H:i', strtotime((string)$m['handled_at'])) : '—') . '</td></tr>';
+        echo '</table></div>';
+    }
+}
+
 function page_moderation(): void {
     page_title('Modération', 'Bannissements et journal des actions');
     $prefill = trim($_GET['ban'] ?? '');
     echo '<div class="panel"><div class="ph"><h3>🚫 Bannir</h3></div><form method="post" class="js row" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="ban_add">
         <label>Type<select name="type"><option value="USER_ID">Joueur (nom)</option><option value="IP_ADDRESS">Adresse IP</option><option value="MACHINE_ID">Machine ID</option></select></label>
-        <label style="flex:1">Cible (nom ou IP)<input name="value" value="' . h($prefill) . '" required></label>
+        <label style="flex:1">Cible (nom ou IP)<input name="value" list="dl_pseudos" autocomplete="off" value="' . h($prefill) . '" required></label>
         <label>Durée (jours · 0 = définitif)<input type="number" name="days" value="0" style="width:110px"></label>
         <label style="flex:1">Motif<input name="message" value="Comportement inapproprié"></label><button>🚫 Bannir</button></form></div>';
     echo '<div class="panel"><div class="ph"><h3>Bannissements actifs</h3></div>';
@@ -1502,7 +1728,7 @@ function page_moderation(): void {
     echo '</div>';
     // --- Logs de chat ---
     $cu = trim($_GET['cu'] ?? '');
-    echo '<div class="panel"><div class="ph"><h3>💬 Logs de chat</h3><form method="get" class="srch"><input type="hidden" name="p" value="moderation"><input name="cu" value="' . h($cu) . '" placeholder="🔍 Filtrer par joueur..."><button class="mini">OK</button></form></div>';
+    echo '<div class="panel"><div class="ph"><h3>💬 Logs de chat</h3><form method="get" class="srch"><input type="hidden" name="p" value="moderation"><input name="cu" list="dl_pseudos" autocomplete="off" value="' . h($cu) . '" placeholder="🔍 Filtrer par joueur..."><button class="mini">OK</button></form></div>';
     $sql = 'SELECT c.timestamp,c.chat_type,c.message,u.username,r.name AS room FROM room_chatlogs c LEFT JOIN users u ON u.id=c.user_id LEFT JOIN rooms r ON r.id=c.room_id';
     if ($cu !== '') { $st = db()->prepare($sql . ' WHERE u.username LIKE ? ORDER BY c.timestamp DESC LIMIT 100'); $st->execute(['%' . $cu . '%']); $logs = $st->fetchAll(); }
     else { $logs = db()->query($sql . ' ORDER BY c.timestamp DESC LIMIT 100')->fetchAll(); }
@@ -1531,7 +1757,7 @@ function page_moderation(): void {
     // --- Débloquer l'inventaire ---
     echo '<div class="panel"><div class="ph"><h3>🧹 Débloquer un inventaire</h3></div>';
     echo '<p class="muted sm">Objet coincé dans la main (jukebox, etc.) impossible à poser/supprimer ? Vide la « main » du joueur. Il devra <b>se reconnecter</b> ensuite.</p>';
-    echo '<form method="post" class="js row" data-reload data-confirm="Vider les objets en main de ce joueur ?"><input type="hidden" name="action" value="clear_hand">' . csrf_field() . '<label style="flex:1">Nom du joueur<input name="username" required></label><button class="mini warn">🧹 Vider la main</button></form></div>';
+    echo '<form method="post" class="js row" data-reload data-confirm="Vider les objets en main de ce joueur ?"><input type="hidden" name="action" value="clear_hand">' . csrf_field() . '<label style="flex:1">Nom du joueur<input name="username" list="dl_pseudos" autocomplete="off" required></label><button class="mini warn">🧹 Vider la main</button></form></div>';
 
     echo '<div class="panel"><div class="ph"><h3>💬 Alertes en jeu</h3></div><p class="muted">Les annonces aux joueurs connectés se font <b>en jeu</b> avec ton compte admin : tape <code>:alert Ton message</code> dans le chat, ou utilise l\'outil de modération intégré.</p></div>';
 }
@@ -1698,7 +1924,7 @@ function page_server(): void {
     $mData = is_file($mf) ? (json_decode((string)@file_get_contents($mf), true) ?: []) : [];
     $mOn = !empty($mData['on']);
     echo '<div class="panel"><div class="ph"><h3>🚧 Mode maintenance</h3><span class="rk ' . ($mOn ? 'red' : 'green') . '" style="margin-left:auto">' . ($mOn ? 'ACTIVÉ' : 'Inactif') . '</span></div>';
-    echo '<p class="sub">Ferme le site public avec une page « Hôtel en maintenance » (503). Le staff (rang 5+) et l\'admin gardent l\'accès. Fonctionne même si l\'émulateur ou MySQL sont arrêtés.</p>';
+    echo '<p class="sub">Ferme le site public <b>et le jeu</b> (<code>/client.php</code>) avec une page « Hôtel en maintenance » (503). Le staff (rang 5+) et l\'admin gardent l\'accès. Fonctionne même si l\'émulateur ou MySQL sont arrêtés.</p>';
     if ($mOn) {
         echo '<p class="hint">Activé par <b>' . h((string)($mData['by'] ?? '?')) . '</b>' . (!empty($mData['message']) ? ' · « ' . h((string)$mData['message']) . ' »' : '') . (!empty($mData['eta']) ? ' · retour estimé : ' . h((string)$mData['eta']) : '') . '</p>';
         echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="maint_off"><button class="bigok">✅ Rouvrir le site</button></form>';
@@ -1890,7 +2116,7 @@ function page_access(): void {
     echo '<p class="hint" style="font-size:13px">Rang minimum requis pour chaque onglet. <b>5</b> = Super Hobba · <b>6</b> = Modérateur · <b>7</b> = Administrateur. « Accueil » et « Recherche » restent toujours accessibles. Page réservée au rang 7.</p>';
     echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="tabperm_update">';
     $nav = admin_nav();
-    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Site & contenus' => '📰', 'Administration' => '⚙️'];
+    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Site & contenus' => '📰', 'Messagerie' => '💬', 'Administration' => '⚙️'];
     foreach (nav_groups() as $gl => $keys) {
         if ($gl === '') continue;
         echo '<div class="panel"><div class="ph"><h3>' . ($gicons[$gl] ?? '📁') . ' ' . h($gl) . '</h3></div><table class="clean"><tr><th>Onglet</th><th style="width:280px">Rang minimum</th></tr>';
@@ -2074,6 +2300,9 @@ a{color:inherit}
 .sub{color:var(--mut)}.muted{color:var(--mut)}.sm{font-size:12px}
 h3{font-size:15px;margin:0}h3.sec{margin:22px 0 10px;color:var(--mut);font-size:13px;text-transform:uppercase;letter-spacing:1px}
 code{background:var(--bg);padding:2px 7px;border-radius:6px;color:var(--acc);font-size:12px;border:1px solid var(--line);font-family:var(--mono)}
+.alertbar{display:block;background:linear-gradient(#f7a838,#ef8f13);color:#fff;font-size:13.5px;font-weight:600;padding:13px 18px;border-radius:14px;margin-bottom:16px;box-shadow:0 3px 10px rgba(239,143,19,.28);text-shadow:0 1px 0 rgba(0,0,0,.15)}
+.alertbar:hover{filter:brightness(1.05);text-decoration:none}
+.alertbar b{font-weight:800}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));grid-gap:14px;gap:14px;margin-bottom:18px}
 .stat{display:flex;align-items:center;background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:16px 18px}
 .stat .ic{font-size:24px;width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:var(--soft)}
@@ -2177,6 +2406,15 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
 .subtabs>a{margin:0 8px 8px 0;padding:8px 15px;border-radius:10px;background:var(--panel);border:1px solid var(--line2);color:var(--mut);font-weight:700;font-size:12.5px;text-decoration:none;white-space:nowrap}
 .subtabs>a:hover{color:var(--text);border-color:var(--acc)}
 .subtabs>a.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.subtabs .nbadge{display:inline-block;background:#e5484d;color:#fff;font-size:10.5px;font-weight:800;min-width:16px;text-align:center;padding:1px 5px;border-radius:9px;margin-left:2px}
+.side nav a .sidebadge{margin-left:auto;background:#e5484d;color:#fff;font-size:10.5px;font-weight:800;min-width:18px;text-align:center;padding:1px 6px;border-radius:9px}
+.stafffeed{margin-top:14px;max-height:420px;overflow-y:auto}
+.stafffeed .smsg{border:1px solid var(--line2);border-radius:10px;padding:9px 12px;margin-bottom:8px;background:var(--panel)}
+.stafffeed .smsg.mine{border-left:3px solid var(--acc);background:var(--soft)}
+.stafffeed .sm-head{display:flex;align-items:center;font-size:11.5px;color:var(--mut)}
+.stafffeed .sm-head b{color:var(--txt)}
+.stafffeed .sm-date{margin-left:8px}
+.stafffeed .sm-body{margin-top:4px;font-size:13px;color:var(--txt);line-height:1.5;white-space:pre-wrap}
 /* Tableau de bord : colonnes asymétriques + actions rapides */
 .dcols{display:grid;grid-template-columns:1.7fr 1fr;grid-gap:16px;gap:16px}
 @media(max-width:900px){.dcols{grid-template-columns:1fr}}
@@ -2188,7 +2426,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
 .logbox{max-height:230px;overflow:auto;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;font:12px/1.5 var(--mono);color:var(--mut);white-space:pre-wrap;word-break:break-word;margin:0}
 </style></head><body>
 <aside class="side"><div class="brand"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="width:100%;max-width:180px;height:auto;display:block;margin:0 auto 4px;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated"><small>ADMINISTRATION</small></div><nav><?php
-    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Site & contenus' => '📰', 'Administration' => '⚙️'];
+    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Site & contenus' => '📰', 'Messagerie' => '💬', 'Administration' => '⚙️'];
     foreach (nav_groups() as $grpLabel => $keys) {
         $visible = array_filter($keys, fn($k) => isset($nav[$k]) && tab_allowed($k));
         if (!$visible) continue;
@@ -2198,7 +2436,8 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
         }
         $first = reset($visible);
         $cur = in_array($p, $visible, true);
-        echo '<a class="' . ($cur ? 'on' : '') . '" href="?p=' . $first . '"><span class="i">' . ($gicons[$grpLabel] ?? '📁') . '</span><span>' . h($grpLabel) . '</span></a>';
+        $gb = ($grpLabel === 'Messagerie') ? messages_badge() : 0;
+        echo '<a class="' . ($cur ? 'on' : '') . '" href="?p=' . $first . '"><span class="i">' . ($gicons[$grpLabel] ?? '📁') . '</span><span>' . h($grpLabel) . '</span>' . ($gb > 0 ? '<span class="sidebadge">' . $gb . '</span>' : '') . '</a>';
     }
     ?></nav><div class="foot">
     <label class="thsel">🎨 Thème<select onchange="setTheme(this.value)"><?php foreach (THEMES as $k => $tt) echo '<option value="' . $k . '"' . ($k === $tk ? ' selected' : '') . '>' . $tt[1] . ' ' . h($tt[0]) . '</option>'; ?></select></label>
@@ -2216,11 +2455,19 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
     foreach (nav_groups() as $gl => $keys) {
         if ($gl === '' || !in_array($p, $keys, true)) continue;
         echo '<div class="subtabs">';
-        foreach ($keys as $k) { if (!isset($nav[$k]) || !tab_allowed($k)) continue; [$ic, $lbl] = $nav[$k]; echo '<a class="' . ($p === $k ? 'on' : '') . '" href="?p=' . $k . '"><span>' . $ic . '</span> ' . h($lbl) . '</a>'; }
+        foreach ($keys as $k) { if (!isset($nav[$k]) || !tab_allowed($k)) continue; [$ic, $lbl] = $nav[$k]; $bdg = ($k === 'messages') ? messages_badge() : 0; echo '<a class="' . ($p === $k ? 'on' : '') . '" href="?p=' . $k . '"><span>' . $ic . '</span> ' . h($lbl) . ($bdg > 0 ? ' <span class="nbadge">' . $bdg . '</span>' : '') . '</a>'; }
         echo '</div>';
         break;
     }
     if ($flash) echo '<script>window.__flash=' . json_encode($flash) . ';</script>';
+    // Liste d'autocomplétion des pseudos, disponible pour tous les champs (list="dl_pseudos")
+    echo pseudo_datalist();
+}
+/* Datalist des pseudos joueurs (rendu une seule fois par page). */
+function pseudo_datalist(): string {
+    static $done = false; if ($done) return ''; $done = true;
+    try { $o = ''; foreach (db()->query("SELECT username FROM users ORDER BY username LIMIT 500") as $r) $o .= '<option value="' . h((string)$r['username']) . '">'; return '<datalist id="dl_pseudos">' . $o . '</datalist>'; }
+    catch (Throwable $e) { return ''; }
 }
 function render_footer(): void { ?>
 </div></div><div id="toasts"></div>

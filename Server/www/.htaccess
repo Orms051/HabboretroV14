@@ -9,3 +9,9 @@ DirectoryIndex index.php index.html
 
 # Pas de listing de dossier
 Options -Indexes
+
+# Anciennes adresses d'aide Habbo (/help, /help/75, /help/36…) -> Centre d'aide du site
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^help(/.*)?$ /?p=help [R=301,L]
+</IfModule>

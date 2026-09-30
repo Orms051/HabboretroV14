@@ -29,6 +29,18 @@ function parse_fr_date(?string $s): string { $s = trim((string)$s); if (preg_mat
 function csrf(): string { if (empty($_SESSION['scsrf'])) $_SESSION['scsrf'] = bin2hex(random_bytes(16)); return $_SESSION['scsrf']; }
 function csrf_ok(): bool { $t = (string)($_POST['csrf'] ?? ''); return $t !== '' && !empty($_SESSION['scsrf']) && hash_equals((string)$_SESSION['scsrf'], $t); }
 function hash_pw(string $pw): string { return password_hash($pw, PASSWORD_ARGON2ID, ['memory_cost' => 65536, 'time_cost' => 2, 'threads' => 1]); }
+/* ---- Anti-bruteforce connexion (fichier, par IP+contexte ; 5 échecs / 15 min => blocage 10 min) ---- */
+function throttle_file(string $ctx): string { return sys_get_temp_dir() . '/retro14_thr_' . preg_replace('/[^a-z]/', '', $ctx) . '_' . md5((string)($_SERVER['REMOTE_ADDR'] ?? 'cli')) . '.json'; }
+function throttle_blocked(string $ctx): int { $d = @json_decode((string)@file_get_contents(throttle_file($ctx)), true); $u = (int)($d['until'] ?? 0); $now = time(); return $u > $now ? $u - $now : 0; }
+function throttle_fail(string $ctx): void { $f = throttle_file($ctx); $now = time(); $d = @json_decode((string)@file_get_contents($f), true) ?: []; if ((int)($d['first'] ?? 0) < $now - 900) $d = ['first' => $now, 'fails' => 0, 'until' => 0]; $d['fails'] = (int)($d['fails'] ?? 0) + 1; if ($d['fails'] >= 5) $d['until'] = $now + 600; @file_put_contents($f, json_encode($d), LOCK_EX); }
+function throttle_ok(string $ctx): void { @unlink(throttle_file($ctx)); }
+/* ---- File des demandes de réinitialisation de mot de passe (traitée par le staff dans l'admin) ---- */
+function ensure_pw_resets(): void { db()->exec("CREATE TABLE IF NOT EXISTS password_resets (id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(64) NOT NULL, message VARCHAR(500) NOT NULL DEFAULT '', ip VARCHAR(45) NOT NULL DEFAULT '', status ENUM('pending','done','rejected') NOT NULL DEFAULT 'pending', handled_by VARCHAR(64) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, handled_at DATETIME NULL, INDEX(status)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); }
+/* ---- Messages du formulaire Contact (boîte de réception admin) ---- */
+function ensure_contact_msgs(): void { db()->exec("CREATE TABLE IF NOT EXISTS contact_messages (id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(64) NOT NULL DEFAULT '', subject VARCHAR(120) NOT NULL DEFAULT '', message VARCHAR(1000) NOT NULL, ip VARCHAR(45) NOT NULL DEFAULT '', status ENUM('new','handled') NOT NULL DEFAULT 'new', handled_by VARCHAR(64) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, handled_at DATETIME NULL, INDEX(status)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); }
+/* ---- Messages reçus par le joueur (envoyés par le staff) ---- */
+function ensure_user_msgs(): void { db()->exec("CREATE TABLE IF NOT EXISTS user_messages (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, from_staff VARCHAR(64) NOT NULL DEFAULT '', subject VARCHAR(120) NOT NULL DEFAULT '', body VARCHAR(2000) NOT NULL, read_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(user_id), INDEX(read_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); }
+function unread_msgs(int $uid): int { if ($uid <= 0) return 0; try { ensure_user_msgs(); $st = db()->prepare('SELECT COUNT(*) FROM user_messages WHERE user_id=? AND read_at IS NULL'); $st->execute([$uid]); return (int)$st->fetchColumn(); } catch (Throwable $e) { return 0; } }
 function me(): ?array { return $_SESSION['site_user'] ?? null; }
 function redirect(string $to) { header('Location: ' . $to); exit; }
 
@@ -36,7 +48,7 @@ $p = $_GET['p'] ?? 'home';
 $err = null; $ok = null;
 
 /* ---- Déconnexion ---- */
-if ($p === 'logout') { unset($_SESSION['site_user']); redirect('?p=home'); }
+if ($p === 'logout') { unset($_SESSION['site_user'], $_SESSION['admin']); session_regenerate_id(true); redirect('?p=home'); }
 
 /* ---- Mode maintenance (fichier, marche même si MySQL est éteint) ----
    Le staff (rang >= 5) et la page de connexion passent outre pour pouvoir désactiver. */
@@ -68,6 +80,7 @@ if ($p === 'register' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([$u, hash_pw($pw), DEFAULT_FIGURE, $sex, 'Nouveau sur ' . HOTEL . ' !', 100, $u . '@' . HOTEL . '.local', $bd]);
                 $id = (int)db()->lastInsertId();
                 session_regenerate_id(true);
+                unset($_SESSION['admin']); // purge une éventuelle identité admin résiduelle
                 $_SESSION['site_user'] = ['id' => $id, 'username' => $u];
                 redirect('?p=home&welcome=1');
             }
@@ -79,17 +92,56 @@ if ($p === 'register' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 /* ---- Connexion ---- */
 if ($p === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_ok()) { $err = 'Session expirée, réessaie.'; }
+    elseif (($w = throttle_blocked('site')) > 0) { $err = 'Trop de tentatives. Réessaie dans ' . (int)ceil($w / 60) . ' min.'; }
     else {
         $st = db()->prepare('SELECT id,username,password FROM users WHERE username=?'); $st->execute([trim($_POST['username'] ?? '')]);
         $u = $st->fetch();
         if ($u && password_verify((string)($_POST['password'] ?? ''), $u['password'])) {
+            throttle_ok('site');
             session_regenerate_id(true);
+            unset($_SESSION['admin']); // purge une éventuelle identité admin d'un autre compte
             $_SESSION['site_user'] = ['id' => (int)$u['id'], 'username' => $u['username']];
             redirect('?p=home');
         }
+        throttle_fail('site');
         $err = 'Nom ou mot de passe incorrect.';
     }
     $p = 'home';
+}
+
+/* ---- Demande de réinitialisation de mot de passe (file traitée par le staff) ---- */
+if ($p === 'forgot' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!csrf_ok()) { $_SESSION['forgot_err'] = 'Session expirée, réessaie.'; }
+    elseif (($w = throttle_blocked('forgot')) > 0) { $_SESSION['forgot_err'] = 'Trop de demandes. Réessaie dans ' . (int)ceil($w / 60) . ' min.'; }
+    else {
+        $ru = trim($_POST['username'] ?? '');
+        $rm = mb_substr(trim($_POST['message'] ?? ''), 0, 500);
+        if (!preg_match('/^[A-Za-z0-9_\-=?!@:.,]{3,20}$/', $ru)) { $_SESSION['forgot_err'] = 'Indique un pseudo valide (3 à 20 caractères).'; }
+        else {
+            try { ensure_pw_resets(); db()->prepare('INSERT INTO password_resets (username,message,ip) VALUES (?,?,?)')->execute([$ru, $rm, (string)($_SERVER['REMOTE_ADDR'] ?? '')]); } catch (Throwable $e) {}
+            throttle_fail('forgot');           // limite l'envoi en masse (5 / 15 min)
+            $_SESSION['forgot_done'] = true;    // message générique : ne révèle pas si le compte existe
+        }
+    }
+    redirect('?p=forgot');
+}
+
+/* ---- Message via le formulaire Contact (boîte de réception staff) ---- */
+if ($p === 'contact' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!csrf_ok()) { $_SESSION['contact_err'] = 'Session expirée, réessaie.'; }
+    elseif (($w = throttle_blocked('contact')) > 0) { $_SESSION['contact_err'] = 'Trop de messages envoyés. Réessaie dans ' . (int)ceil($w / 60) . ' min.'; }
+    else {
+        $cu = trim($_POST['username'] ?? (me()['username'] ?? ''));
+        $csub = mb_substr(trim($_POST['subject'] ?? ''), 0, 120);
+        $cmsg = mb_substr(trim($_POST['message'] ?? ''), 0, 1000);
+        if (mb_strlen($cmsg) < 5) { $_SESSION['contact_err'] = 'Ton message est trop court.'; }
+        else {
+            try { ensure_contact_msgs(); db()->prepare('INSERT INTO contact_messages (username,subject,message,ip) VALUES (?,?,?,?)')->execute([mb_substr($cu, 0, 64), $csub, $cmsg, (string)($_SERVER['REMOTE_ADDR'] ?? '')]); } catch (Throwable $e) {}
+            throttle_fail('contact');       // limite l'envoi en masse (5 / 15 min)
+            $_SESSION['contact_done'] = true;
+        }
+    }
+    redirect('?p=contact');
 }
 
 /* ---- Modifier son motto depuis sa page perso ---- */
@@ -184,6 +236,9 @@ function render(string $p, ?string $err): void {
         case 'club':      view_club();         break;
         case 'community': view_community();     break;
         case 'help':      view_help();         break;
+        case 'contact':   view_contact();      break;
+        case 'forgot':    view_forgot();       break;
+        case 'messages':  view_messages();     break;
         default:          view_home($err);
     }
     foot();
@@ -239,6 +294,7 @@ function view_home(?string $err): void {
         echo '      <label>Nom Habbo</label><input name="username" required autofocus>';
         echo '      <label>Mot de passe</label><input name="password" type="password" required>';
         echo '      <button class="hbtn green">C\'est parti !</button>';
+        echo '      <a class="forgot-link" href="?p=forgot">🔑 Mot de passe oublié&nbsp;?</a>';
         echo '    </form>';
         echo '  </div>';
         echo '</div>';
@@ -585,33 +641,158 @@ function help_cats(): array {
             ['Comment jouer à SnowStorm ?', "Dans <b>SnowStorm</b>, ramasse ou fabrique des boules de neige et vise les adversaires tout en esquivant les leurs. Chaque touche rapporte des points."],
             ['Où voir les classements ?', "Rendez-vous sur l'onglet <b>Jeux</b> du site : les meilleurs joueurs de BattleBall et SnowStorm y sont classés, avec leurs points."],
         ]],
-        ['securite', '🛡️', 'Sécurité & règles', [
-            ['Comment protéger mon compte ?', "Ne partage <b>jamais</b> ton mot de passe, même avec quelqu'un qui se présente comme modérateur. Le staff ne te demandera jamais ton mot de passe."],
-            ['Comment signaler un abus ?', "Préviens un <b>membre du staff</b> présent en jeu, ou utilise les outils de modération de l'hôtel. Décris précisément qui, où et ce qui s'est passé."],
-            ['Les règles de l\'hôtel', "Respecte les autres, pas d'insultes, pas de spam, pas d'arnaque. Amuse-toi et aide les nouveaux : un hôtel sympa, c'est grâce à toi !"],
+        ['securite', '🛡️', 'Conseils de sécurité', [
+            ['Comment protéger mon compte ?', "Ne partage <b>jamais</b> ton mot de passe, même avec quelqu'un qui se présente comme modérateur. Le staff ne te demandera <b>jamais</b> ton mot de passe."],
+            ['Comment signaler un abus ?', "Préviens un <b>membre du staff</b> présent en jeu, ou utilise le bouton d'aide en jeu. Décris précisément qui, où et ce qui s'est passé."],
+            ['On me demande mes informations personnelles', "Ne donne jamais ton nom, ton adresse, ton numéro de téléphone ni ton mot de passe à un autre Habbo. En cas de doute, préviens le staff."],
+        ]],
+        ['regles', '📜', 'Règles de l\'hôtel', [
+            ['Le règlement en bref', "Respecte les autres, <b>pas d'insultes</b>, pas de spam, pas d'arnaque. Amuse-toi et aide les nouveaux : un hôtel sympa, c'est grâce à toi !"],
+            ['Ce qui est interdit', "Insultes et harcèlement, contenu choquant, usurpation d'identité (staff compris), publicité pour d'autres hôtels, triche et arnaques aux mobis/crédits."],
+            ['Que risque-t-on ?', "Selon la gravité : avertissement, exclusion temporaire (mute/kick) puis <b>bannissement</b>. Les décisions du staff s'appliquent à tout l'hôtel."],
         ]],
     ];
 }
 function view_help(): void {
     $cats = help_cats();
-    echo '<div class="panel"><div class="panel-h blue">Centre d\'aide ' . HOTEL . '</div><div class="panel-b"><p class="helpintro">Bienvenue dans l\'aide de l\'hôtel. Choisis une catégorie, puis clique sur une question pour voir la réponse.</p></div></div>';
-    echo '<div class="cols">';
+    $palette = ['blue', 'purple', 'orange', 'green', 'blue', 'purple', 'green', 'orange'];
 
-    // Sommaire des catégories
-    echo '<div class="side"><div class="panel"><div class="panel-h orange">Catégories</div><div class="panel-b"><ul class="helpnav">';
-    foreach ($cats as $c) echo '<li><a href="#' . $c[0] . '"><span>' . $c[1] . '</span> ' . h($c[2]) . '</a></li>';
-    echo '</ul></div></div></div>';
+    // Hero
+    echo '<div class="help-hero"><div class="hh-ico">?</div><div class="hh-txt"><h1>Centre d\'aide</h1><p>Trouve vite une réponse : choisis un thème ci-dessous, ou parcours les questions fréquentes.</p></div></div>';
 
-    // Articles
-    echo '<div class="main">';
-    foreach ($cats as $c) {
-        echo '<a id="' . $c[0] . '"></a><div class="panel"><div class="panel-h green">' . $c[1] . ' ' . h($c[2]) . '</div><div class="panel-b">';
+    // Cartes de catégories
+    echo '<div class="help-cards">';
+    foreach ($cats as $i => $c) {
+        $col = $palette[$i % count($palette)];
+        $nb = count($c[3]);
+        echo '<a class="hcard ' . $col . '" href="#' . $c[0] . '"><span class="hc-ico">' . $c[1] . '</span>'
+           . '<span class="hc-body"><b>' . h($c[2]) . '</b><small>' . $nb . ' article' . ($nb > 1 ? 's' : '') . '</small></span></a>';
+    }
+    echo '</div>';
+
+    // Sections d'articles
+    foreach ($cats as $i => $c) {
+        $col = $palette[$i % count($palette)];
+        echo '<section class="help-sec" id="' . $c[0] . '"><div class="hs-head ' . $col . '"><span class="hs-badge">' . $c[1] . '</span><h2>' . h($c[2]) . '</h2></div><div class="hs-body">';
         foreach ($c[3] as $qa) {
             echo '<details class="faqd"><summary>' . h($qa[0]) . '</summary><div class="faqa">' . $qa[1] . '</div></details>';
         }
-        echo '</div></div>';
+        echo '</div></section>';
     }
+
+    // Pied : encore besoin d'aide ?
+    echo '<div class="help-foot"><div><b>Tu n\'as pas trouvé ta réponse ?</b><p>L\'équipe de l\'hôtel est là pour t\'aider.</p></div>'
+       . '<div class="hf-btns"><a class="hbtn" href="?p=contact">Contacter l\'équipe</a><a class="hbtn grey" href="?p=forgot">Mot de passe oublié</a></div></div>';
+}
+
+/* -------- Contacter l'équipe -------- */
+function view_contact(): void {
+    $staff = [];
+    try { $staff = db()->query('SELECT username,sex,`rank` FROM users WHERE `rank`>=5 ORDER BY `rank` DESC, username')->fetchAll(); } catch (Throwable $e) {}
+    $done = !empty($_SESSION['contact_done']); unset($_SESSION['contact_done']);
+    $cerr = (string)($_SESSION['contact_err'] ?? ''); unset($_SESSION['contact_err']);
+    $meName = me()['username'] ?? '';
+    echo '<div class="help-hero"><div class="hh-ico">✉</div><div class="hh-txt"><h1>Contacter l\'équipe</h1><p>Besoin d\'aide ? Écris-nous, ou joins l\'équipe en jeu.</p></div></div>';
+
+    if ($done) echo '<div class="fmsg ok">✅ <b>Message envoyé !</b> L\'équipe le lira depuis l\'administration et te répondra en jeu dès que possible.</div>';
+    elseif ($cerr !== '') echo '<div class="fmsg err">⚠️ ' . h($cerr) . '</div>';
+
+    echo '<div class="cols">';
+
+    echo '<div class="main">';
+    // Formulaire d'envoi de message
+    echo '<div class="panel"><div class="panel-h blue">✍️ Écrire à l\'équipe</div><div class="panel-b">';
+    echo '<form method="post" action="?p=contact"><input type="hidden" name="csrf" value="' . h(csrf()) . '">';
+    echo '<label>Ton pseudo</label><input name="username" maxlength="20" value="' . h($meName) . '" placeholder="Ton pseudo Habbo"' . ($meName !== '' ? ' readonly' : ' required') . '>';
+    echo '<label>Sujet (facultatif)</label><input name="subject" maxlength="100" placeholder="Ex : problème dans une salle, question sur le Club…">';
+    echo '<label>Ton message</label><textarea name="message" rows="4" maxlength="1000" required placeholder="Explique ta demande le plus clairement possible."></textarea>';
+    echo '<button class="hbtn blue big" type="submit">Envoyer le message</button>';
+    echo '</form>';
+    echo '</div></div>';
+
+    echo '<div class="panel"><div class="panel-h green">🆘 De l\'aide tout de suite</div><div class="panel-b">';
+    echo '<ol class="hcsteps">';
+    echo '<li>En jeu, clique sur le <b>point d\'interrogation</b> pour ouvrir le menu d\'aide.</li>';
+    echo '<li>Utilise <b>« Obtenir de l\'aide en direct »</b> pour appeler un membre de l\'équipe.</li>';
+    echo '<li>Ou adresse-toi directement à un <b>modérateur/administrateur</b> présent dans une salle.</li>';
+    echo '</ol>';
+    echo '<p class="tip">Tu peux aussi consulter le <a href="?p=help">Centre d\'aide</a> : la plupart des questions y trouvent une réponse.</p>';
+    echo '</div></div>';
+
+    echo '<div class="panel"><div class="panel-h orange">🔑 Mot de passe oublié</div><div class="panel-b">';
+    echo '<p class="tip">Sur cet hôtel privé, la récupération se fait <b>à la main</b> : contacte un membre du staff (rang Modérateur ou Administrateur) qui pourra réinitialiser ton mot de passe. Ne communique jamais ton mot de passe à qui que ce soit.</p>';
+    echo '</div></div>';
+    echo '</div>'; // .main
+
+    echo '<div class="side"><div class="panel"><div class="panel-h purple">L\'équipe</div><div class="panel-b">';
+    if (!$staff) echo '<p class="tip">Aucun membre du staff pour le moment.</p>';
+    else { echo '<div class="hcgifts" style="grid-template-columns:1fr">'; foreach ($staff as $s) echo av_mini((string)$s['username'], (string)$s['sex']); echo '</div>'; }
+    echo '</div></div></div>';
     echo '</div>';
+}
+
+/* -------- Mot de passe oublié -------- */
+function view_forgot(): void {
+    $staff = [];
+    try { $staff = db()->query('SELECT username,sex,`rank` FROM users WHERE `rank`>=5 ORDER BY `rank` DESC, username')->fetchAll(); } catch (Throwable $e) {}
+    $done = !empty($_SESSION['forgot_done']); unset($_SESSION['forgot_done']);
+    $ferr = (string)($_SESSION['forgot_err'] ?? ''); unset($_SESSION['forgot_err']);
+    echo '<div class="help-hero orange"><div class="hh-ico">🔑</div><div class="hh-txt"><h1>Mot de passe oublié ?</h1><p>Pas de panique ! Sur ' . HOTEL . ', la réinitialisation se fait <b>à la main</b> par l\'équipe.</p></div></div>';
+
+    if ($done) echo '<div class="fmsg ok">✅ <b>Demande envoyée !</b> Un membre de l\'équipe va la traiter et te communiquera un mot de passe provisoire. Repasse voir le staff en jeu ou via la page Contact.</div>';
+    elseif ($ferr !== '') echo '<div class="fmsg err">⚠️ ' . h($ferr) . '</div>';
+
+    echo '<div class="cols">';
+
+    echo '<div class="main">';
+    // Formulaire de demande
+    echo '<div class="panel"><div class="panel-h orange">Demander une réinitialisation</div><div class="panel-b">';
+    echo '<form method="post" action="?p=forgot"><input type="hidden" name="csrf" value="' . h(csrf()) . '">';
+    echo '<label>Ton pseudo Habbo</label><input name="username" maxlength="20" placeholder="Ton pseudo exact" required>';
+    echo '<label>Un indice pour l\'équipe (facultatif)</label><input name="message" maxlength="200" placeholder="Ex : date de création, dernier mobi acheté, un ami…">';
+    echo '<button class="hbtn orange big" type="submit">Envoyer ma demande</button>';
+    echo '</form>';
+    echo '<p class="tip" style="margin-top:10px">Donne un indice qui prouve que le compte est bien le tien : ça accélère le traitement par le staff.</p>';
+    echo '</div></div>';
+
+    echo '<div class="panel"><div class="panel-h green">Comment ça marche</div><div class="panel-b"><ol class="hcsteps">';
+    echo '<li>Tu envoies ta demande avec ton <b>pseudo exact</b> ci-dessus.</li>';
+    echo '<li>Un <b>modérateur ou administrateur</b> vérifie et te fixe un <b>mot de passe provisoire</b>.</li>';
+    echo '<li>Tu te connectes avec ce mot de passe, puis tu le <b>changes aussitôt</b>.</li>';
+    echo '</ol>';
+    echo '<p class="tip">Tu peux aussi joindre l\'équipe en jeu (bouton d\'aide) ou via la page <a href="?p=contact">Contact</a>.</p>';
+    echo '</div></div>';
+
+    echo '<div class="panel"><div class="panel-h red">⚠️ Sécurité</div><div class="panel-b">';
+    echo '<p class="tip">Un membre de l\'équipe ne te demandera <b>jamais</b> ton mot de passe. Ne le communique à personne, même à quelqu\'un qui prétend faire partie du staff.</p>';
+    echo '</div></div>';
+    echo '</div>'; // .main
+
+    echo '<div class="side"><div class="panel"><div class="panel-h purple">L\'équipe</div><div class="panel-b">';
+    if (!$staff) echo '<p class="tip">Aucun membre du staff pour le moment.</p>';
+    else { echo '<div class="hcgifts" style="grid-template-columns:1fr">'; foreach ($staff as $s) echo av_mini((string)$s['username'], (string)$s['sex']); echo '</div>'; }
+    echo '</div></div>';
+    echo '<div class="panel"><div class="panel-h orange">Déjà ton mot de passe ?</div><div class="panel-b center"><a class="hbtn green" href="?p=login">Se connecter</a></div></div>';
+    echo '</div>';
+    echo '</div>';
+}
+
+/* -------- Mes messages (reçus du staff) -------- */
+function view_messages(): void {
+    $u = me();
+    echo '<div class="help-hero"><div class="hh-ico">✉</div><div class="hh-txt"><h1>Mes messages</h1><p>Les messages de l\'équipe de l\'hôtel.</p></div></div>';
+    if (!$u) { echo '<div class="panel"><div class="panel-b center"><p class="tip">Connecte-toi pour voir tes messages.</p><a class="hbtn green" href="?p=home">Se connecter</a></div></div>'; return; }
+    ensure_user_msgs();
+    $list = db()->prepare('SELECT id,from_staff,subject,body,read_at,created_at FROM user_messages WHERE user_id=? ORDER BY id DESC'); $list->execute([(int)$u['id']]); $msgs = $list->fetchAll();
+    try { db()->prepare('UPDATE user_messages SET read_at=NOW() WHERE user_id=? AND read_at IS NULL')->execute([(int)$u['id']]); } catch (Throwable $e) {}
+    if (!$msgs) { echo '<div class="panel"><div class="panel-b center"><p class="tip">📭 Tu n\'as aucun message pour le moment.</p></div></div>'; return; }
+    echo '<div class="msglist">';
+    foreach ($msgs as $m) {
+        $new = empty($m['read_at']);
+        echo '<div class="msgcard' . ($new ? ' unread' : '') . '"><div class="mc-head"><span class="mc-from">👤 ' . h((string)($m['from_staff'] ?: 'Équipe')) . '</span>' . ($new ? '<span class="mc-new">Nouveau</span>' : '') . '<span class="mc-date">' . h(date('d/m/Y H:i', strtotime((string)$m['created_at']))) . '</span></div>';
+        if (trim((string)$m['subject']) !== '') echo '<div class="mc-subj">' . h((string)$m['subject']) . '</div>';
+        echo '<div class="mc-body">' . nl2br(h((string)$m['body'])) . '</div></div>';
+    }
     echo '</div>';
 }
 
@@ -794,6 +975,7 @@ function head(string $pg): void {
     $credits = null; $rank = 0;
     if ($u) { try { $st = db()->prepare('SELECT credits,`rank` FROM users WHERE id=?'); $st->execute([(int)$u['id']]); if ($row = $st->fetch()) { $credits = (int)$row['credits']; $rank = (int)$row['rank']; } } catch (Throwable $e) {} }
     $isStaff = $rank >= 5; // modérateurs + admins
+    $unread = $u ? unread_msgs((int)$u['id']) : 0;
     $tabs = [
         'home'     => ['Accueil', '?p=home'],
         'play'     => ['Hôtel', '?p=play'],
@@ -844,6 +1026,23 @@ nav.tabs a[href="/admin/"]:hover{background:#f7a838}
 .panel-h.green{background:linear-gradient(#8fc94a,#6ba62f)}
 .panel-h.purple{background:linear-gradient(#a87fce,#7d52a8)}
 .panel-h.grey{background:linear-gradient(#9a9a9a,#7a7a7a)}
+.panel-h.red{background:linear-gradient(#e0577a,#c23a5c)}
+.fmsg{border-radius:11px;padding:14px 16px;margin-bottom:16px;font-size:13px;border:1px solid}
+.fmsg.ok{background:#eef7e2;border-color:#bfe08f;color:#3f6b16}
+.fmsg.err{background:#fdeaee;border-color:#f0b6c2;color:#a33}
+.forgot-link{display:block;text-align:center;margin-top:9px;font-size:11.5px;font-weight:700;color:#8a857a}
+.forgot-link:hover{color:#2f6f9f;text-decoration:underline}
+.msgbadge{display:inline-block;background:#e0577a;color:#fff;font-size:10px;font-weight:800;min-width:15px;text-align:center;padding:0 5px;border-radius:9px;vertical-align:1px}
+.msglist>*+*{margin-top:12px}
+.msgcard{border:1px solid #e2ddcd;border-radius:11px;background:#fff;padding:14px 16px;box-shadow:0 2px 6px rgba(0,0,0,.05)}
+.msgcard.unread{border-left:4px solid #4a92c8;background:#f4f9fd}
+.msgcard .mc-head{display:flex;align-items:center;font-size:12px;color:#8a857a}
+.msgcard .mc-head>*+*{margin-left:8px}
+.msgcard .mc-from{font-weight:700;color:#2f6f9f}
+.msgcard .mc-new{background:#4a92c8;color:#fff;font-weight:700;font-size:10px;padding:1px 7px;border-radius:8px}
+.msgcard .mc-date{margin-left:auto}
+.msgcard .mc-subj{font-weight:700;color:#3a3a3a;margin-top:6px}
+.msgcard .mc-body{color:#5b5b5b;font-size:13px;margin-top:5px;line-height:1.5}
 .panel-b{padding:14px}
 .panel-b.center{text-align:center}
 .hotel .panel-b{padding:0}
@@ -861,8 +1060,9 @@ nav.tabs a[href="/admin/"]:hover{background:#f7a838}
 .hbtn.big{font-size:15px;padding:13px}
 /* Formulaires */
 label{display:block;font-weight:700;color:#6b6b6b;margin:10px 0 3px;font-size:12px}
-input[type=text],input:not([type]),input[type=password]{width:100%;border:1px solid #cfc6ad;background:#fbfaf5;border-radius:7px;padding:9px 10px;font:inherit}
-input:focus{outline:none;border-color:#4a92c8;background:#fff}
+input[type=text],input:not([type]),input[type=password],textarea{width:100%;border:1px solid #cfc6ad;background:#fbfaf5;border-radius:7px;padding:9px 10px;font:inherit}
+textarea{resize:vertical;min-height:84px}
+input:focus,textarea:focus{outline:none;border-color:#4a92c8;background:#fff}
 .sexpick{display:flex}
 .sx{flex:1;border:1px solid #cfc6ad;border-radius:7px;padding:9px;text-align:center;cursor:pointer;font-weight:700;color:#5b5b5b;margin:0}
 .sx input{margin-right:5px}
@@ -988,6 +1188,44 @@ input:focus{outline:none;border-color:#4a92c8;background:#fff}
 .faqd[open] summary{background:#eef4fa;border-bottom:1px solid #e2ddcd}
 .faqa{padding:12px 14px;color:#5b5b5b;font-size:12.5px}
 .faqa b{color:#3a3a3a}
+/* --- Centre d'aide / Contact / Mot de passe : refonte soignée --- */
+.help-hero{display:flex;align-items:center;background:linear-gradient(135deg,#4a92c8,#2f6f9f);border-radius:14px;padding:22px 24px;color:#fff;box-shadow:0 4px 14px rgba(47,111,159,.25);margin-bottom:18px}
+.help-hero>*+*{margin-left:18px}
+.help-hero.green{background:linear-gradient(135deg,#8fc94a,#6ba62f);box-shadow:0 4px 14px rgba(107,166,47,.25)}
+.help-hero.orange{background:linear-gradient(135deg,#f7a838,#ef8f13);box-shadow:0 4px 14px rgba(239,143,19,.25)}
+.help-hero .hh-ico{flex:0 0 auto;width:58px;height:58px;border-radius:50%;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:700;box-shadow:inset 0 0 0 2px rgba(255,255,255,.35)}
+.help-hero h1{font-size:22px;margin:0 0 4px;text-shadow:0 1px 0 rgba(0,0,0,.15)}
+.help-hero p{margin:0;font-size:13px;color:#eef5fb}
+.help-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));grid-gap:12px;gap:12px;margin-bottom:22px}
+.hcard{display:flex;align-items:center;background:#fff;border:1px solid #e2ddcd;border-left-width:5px;border-radius:11px;padding:12px;box-shadow:0 2px 6px rgba(0,0,0,.06)}
+.hcard>*+*{margin-left:12px}
+.hcard:hover{text-decoration:none;box-shadow:0 5px 14px rgba(0,0,0,.13);transform:translateY(-1px)}
+.hcard .hc-ico{flex:0 0 auto;width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:23px}
+.hcard .hc-body{display:flex;flex-direction:column;min-width:0}
+.hcard .hc-body b{font-size:13.5px;color:#3a3a3a;line-height:1.2}
+.hcard .hc-body small{font-size:11px;color:#8a857a;margin-top:2px}
+.hcard.blue{border-left-color:#2f6f9f}.hcard.blue .hc-ico{background:#e7f1f9}
+.hcard.purple{border-left-color:#7d52a8}.hcard.purple .hc-ico{background:#f2ecfa}
+.hcard.orange{border-left-color:#ef8f13}.hcard.orange .hc-ico{background:#fdefdb}
+.hcard.green{border-left-color:#6ba62f}.hcard.green .hc-ico{background:#eef7e2}
+.help-sec{border:1px solid #d7d0bd;border-radius:11px;overflow:hidden;margin-bottom:16px;background:#fff}
+.help-sec .hs-head{display:flex;align-items:center;padding:11px 14px;color:#fff}
+.help-sec .hs-head>*+*{margin-left:10px}
+.help-sec .hs-head.blue{background:linear-gradient(#4a92c8,#2f6f9f)}
+.help-sec .hs-head.purple{background:linear-gradient(#a87fce,#7d52a8)}
+.help-sec .hs-head.orange{background:linear-gradient(#f7a838,#ef8f13)}
+.help-sec .hs-head.green{background:linear-gradient(#8fc94a,#6ba62f)}
+.help-sec .hs-badge{flex:0 0 auto;width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;font-size:16px}
+.help-sec .hs-head h2{font-size:14px;margin:0;text-shadow:0 1px 0 rgba(0,0,0,.2)}
+.help-sec .hs-body{padding:14px}
+.help-sec .faqd:last-child{margin-bottom:0}
+.help-foot{display:flex;align-items:center;justify-content:space-between;background:#fbfaf5;border:1px dashed #cfc6ad;border-radius:11px;padding:16px 18px}
+.help-foot>*+*{margin-left:16px}
+.help-foot b{font-size:14px;color:#3a3a3a}.help-foot p{margin:2px 0 0;font-size:12px;color:#6b6b6b}
+.help-foot .hf-btns{display:flex;flex:0 0 auto}
+.help-foot .hf-btns>*+*{margin-left:8px}
+.help-foot .hbtn{width:auto;margin:0;white-space:nowrap}
+@media(max-width:560px){.help-hero{flex-direction:column;text-align:center}.help-hero>*+*{margin-left:0;margin-top:12px}.help-foot{flex-direction:column;text-align:center}.help-foot>*+*{margin-left:0;margin-top:12px}}
 /* Habbo Club */
 .panel-h.hcdark{background:linear-gradient(#3a3a3a,#111);display:flex;align-items:center}
 .hclogo{height:40px;width:auto;vertical-align:middle;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated}
@@ -1034,6 +1272,7 @@ footer.foot{text-align:center;color:#8a857a;font-size:11px;margin-top:16px}
       <div class="uinfo">
         Salut <b><?= h($u['username']) ?></b><?= $isStaff ? ' &middot; <a class="adminlink" href="/admin/">🛠 Administration</a>' : '' ?><br>
         <span class="cr"><?= $credits !== null ? $credits : 0 ?> crédits</span> &middot;
+        <a href="?p=messages">✉ Messages<?= $unread > 0 ? ' <span class="msgbadge">' . $unread . '</span>' : '' ?></a> &middot;
         <a href="?p=profile&u=<?= h(rawurlencode($u['username'])) ?>">Ma page</a> &middot;
         <a href="?p=logout">Déconnexion</a>
       </div>

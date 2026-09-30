@@ -6,6 +6,41 @@
  * Login natif par défaut ; SSO supporté via ?sso=<ticket> (déconseillé : ce
  * client v14 ne sauvegarde pas la tenue quand il est auto-connecté par SSO).
  */
+
+/* ---- Mode maintenance : ferme AUSSI l'accès direct au jeu ----
+   Exceptions : staff (rang 5+) connecté sur le site, ou ticket SSO valide (émis par une action admin). */
+$__mf = __DIR__ . '/maintenance.json';
+if (is_file($__mf)) {
+    $__mj = json_decode((string) @file_get_contents($__mf), true);
+    if (is_array($__mj) && !empty($__mj['on'])) {
+        $allow = false;
+        session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax', 'secure' => (($_SERVER['HTTPS'] ?? '') !== '')]);
+        @session_start();
+        $ssoRaw = isset($_GET['sso']) ? preg_replace('/[^a-f0-9]/i', '', (string) $_GET['sso']) : '';
+        try {
+            $pdo = new PDO('mysql:host=127.0.0.1;port=3306;dbname=v14;charset=utf8mb4', 'root', '', [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 2]);
+            if (!empty($_SESSION['site_user']['id'])) {
+                $st = $pdo->prepare('SELECT `rank` FROM users WHERE id=?'); $st->execute([(int) $_SESSION['site_user']['id']]);
+                if ((int) $st->fetchColumn() >= 5) $allow = true;
+            }
+            if (!$allow && $ssoRaw !== '') {
+                $st = $pdo->prepare('SELECT id FROM users WHERE sso_ticket=?'); $st->execute([$ssoRaw]);
+                if ($st->fetchColumn()) $allow = true;
+            }
+        } catch (Throwable $e) { /* base éteinte : personne ne joue de toute façon */ }
+        if (!$allow) {
+            http_response_code(503); header('Retry-After: 3600'); header('Content-Type: text/html; charset=utf-8');
+            $m = trim((string) ($__mj['message'] ?? '')); if ($m === '') $m = "L'Hôtel est momentanément fermé pour maintenance. Reviens vite !";
+            echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Habbo — Maintenance</title><link rel="icon" href="/web-gallery/v2/favicon.ico"></head>'
+               . '<body style="margin:0;background:#cfe3f2;color:#4a4a4a;font:14px/1.6 Verdana,Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px">'
+               . '<div style="max-width:480px"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="height:64px;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated">'
+               . '<h2 style="margin:18px 0 8px;color:#ef8f13">🛠️ Hôtel en maintenance</h2><p>' . htmlspecialchars($m, ENT_QUOTES, 'UTF-8') . '</p>'
+               . '<p style="margin-top:14px;font-size:12px;color:#8a857a">Merci de ta patience — reviens bientôt !</p></div></body></html>';
+            exit;
+        }
+    }
+}
+
 $httpHost = $_SERVER['HTTP_HOST'] ?? 'localhost';   // ex. "localhost" ou "25.x.x.x"
 $host = preg_replace('/:\d+$/', '', $httpHost);      // hôte sans port (socket jeu)
 $base = 'http://' . $httpHost;                        // base HTTP des assets
