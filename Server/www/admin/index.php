@@ -1839,19 +1839,37 @@ function pager(int $total, int $pg, string $base): void {
 }
 
 function page_access(): void {
-    page_title('Accès admin', 'Qui voit quoi : rang minimum requis pour chaque onglet');
-    echo '<p class="hint" style="font-size:13px">Choisis le rang minimum pour chaque onglet. <b>5 = Super Hobba</b>, <b>6 = Modérateur</b>, <b>7 = Administrateur</b>. « Accueil » est toujours visible. Cette page est réservée au rang 7.</p>';
-    echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="tabperm_update">';
-    echo '<div class="panel"><div class="ph"><h3>🔒 Accès par onglet</h3></div><table class="clean"><tr><th>Onglet</th><th>Rang minimum</th></tr>';
-    foreach (admin_nav() as $k => [$ic, $lbl]) {
-        if ($k === 'dashboard') continue;
-        $cur = tab_min($k);
-        echo '<tr><td>' . $ic . ' ' . h($lbl) . ' <code class="sm muted">' . h($k) . '</code></td><td><select name="rank_' . h($k) . '">';
-        foreach ([5 => '5 · Super Hobba et +', 6 => '6 · Modérateur et +', 7 => '7 · Administrateur seulement'] as $rv => $rl)
-            echo '<option value="' . $rv . '"' . ($cur === $rv ? ' selected' : '') . '>' . $rl . '</option>';
-        echo '</select></td></tr>';
+    page_title('Accès admin', 'Qui fait partie du staff, et quel rang minimum pour chaque onglet');
+
+    /* --- Comptes du staff --- */
+    $staff = db()->query('SELECT id,username,`rank`,last_online FROM users WHERE `rank`>=5 ORDER BY `rank` DESC, username')->fetchAll();
+    echo '<div class="panel"><div class="ph"><h3>👮 Comptes du staff (' . count($staff) . ')</h3><a class="lnk" href="?p=users">Gérer les rangs →</a></div>';
+    if (!$staff) echo '<div class="empty">Aucun compte staff (rang 5+).</div>';
+    else {
+        echo '<table class="clean"><tr><th>Joueur</th><th>Rang</th><th>Dernière connexion</th><th></th></tr>';
+        foreach ($staff as $s) { $seen = (int)$s['last_online'] > 0 ? date('d/m/Y H:i', (int)$s['last_online']) : '—'; echo '<tr><td><b>' . h($s['username']) . '</b></td><td>' . rank_badge((int)$s['rank']) . '</td><td class="sm muted">' . $seen . '</td><td><a class="mini ghost" href="?p=user&id=' . (int)$s['id'] . '">Fiche →</a></td></tr>'; }
+        echo '</table>';
     }
-    echo '</table><button style="margin-top:12px">💾 Enregistrer les accès</button></div></form>';
+    echo '</div>';
+
+    /* --- Accès par onglet, groupé par section --- */
+    echo '<p class="hint" style="font-size:13px">Rang minimum requis pour chaque onglet. <b>5</b> = Super Hobba · <b>6</b> = Modérateur · <b>7</b> = Administrateur. « Accueil » et « Recherche » restent toujours accessibles. Page réservée au rang 7.</p>';
+    echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="tabperm_update">';
+    $nav = admin_nav();
+    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Site & contenus' => '📰', 'Administration' => '⚙️'];
+    foreach (nav_groups() as $gl => $keys) {
+        if ($gl === '') continue;
+        echo '<div class="panel"><div class="ph"><h3>' . ($gicons[$gl] ?? '📁') . ' ' . h($gl) . '</h3></div><table class="clean"><tr><th>Onglet</th><th style="width:280px">Rang minimum</th></tr>';
+        foreach ($keys as $k) {
+            if (!isset($nav[$k])) continue; [$ic, $lbl] = $nav[$k]; $cur = tab_min($k);
+            echo '<tr><td>' . $ic . ' ' . h($lbl) . ' <code class="sm muted">' . h($k) . '</code></td><td><select name="rank_' . h($k) . '">';
+            foreach ([5 => '5 · Super Hobba et +', 6 => '6 · Modérateur et +', 7 => '7 · Administrateur seulement'] as $rv => $rl)
+                echo '<option value="' . $rv . '"' . ($cur === $rv ? ' selected' : '') . '>' . $rl . '</option>';
+            echo '</select></td></tr>';
+        }
+        echo '</table></div>';
+    }
+    echo '<button style="margin-bottom:20px">💾 Enregistrer les accès</button></form>';
 }
 
 function page_audit(): void {
