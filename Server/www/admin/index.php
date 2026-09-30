@@ -2198,6 +2198,13 @@ function pickBadge(c){var e=document.getElementById('badgecode');if(e){e.value=c
 function toggleGrp(btn){var g=btn.parentNode;g.classList.toggle('open');try{var o=JSON.parse(localStorage.getItem('r14nav')||'{}');o[g.getAttribute('data-g')]=g.classList.contains('open');localStorage.setItem('r14nav',JSON.stringify(o));}catch(e){}}
 (function(){try{var o=JSON.parse(localStorage.getItem('r14nav')||'{}');var l=document.querySelectorAll('.navgrp');for(var i=0;i<l.length;i++){var g=l[i];if(g.getAttribute('data-cur'))continue;var k=g.getAttribute('data-g');if(k in o){if(o[k])g.classList.add('open');else g.classList.remove('open');}}}catch(e){}})();
 if(window.__flash)toast(window.__flash,true);
+/* Avertissement si un formulaire a des changements non enregistrés (exclut recherche/filtres) */
+var __dirty=false;
+function __chk(el){var f=el&&el.closest?el.closest('form'):null;if(!f)return false;if(f.classList.contains('srch')||f.classList.contains('tb-search'))return false;if(el.classList&&el.classList.contains('filt'))return false;return true;}
+document.addEventListener('input',function(e){if(__chk(e.target))__dirty=true;});
+document.addEventListener('change',function(e){if(__chk(e.target))__dirty=true;});
+document.addEventListener('submit',function(){__dirty=false;},true);
+window.addEventListener('beforeunload',function(e){if(__dirty){e.preventDefault();e.returnValue='';}});
 document.addEventListener('submit',function(e){
   var f=e.target;if(!f.classList.contains('js'))return;e.preventDefault();
   if(f.dataset.confirm!==undefined&&!confirm(f.dataset.confirm))return;
