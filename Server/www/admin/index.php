@@ -97,6 +97,9 @@ function admin_db_down(): void {
     echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Habbo · Admin</title><style>body{font:14px/1.6 Segoe UI,Arial,sans-serif;background:#20262e;color:#e6ebf2;display:grid;place-items:center;height:100vh;margin:0}.box{background:#2b333d;border:1px solid #3a444f;border-radius:14px;padding:30px 34px;max-width:440px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.4)}h1{font-size:20px;margin:0 0 10px}p{color:#aeb8c4;margin:8px 0}b{color:#ffcf3f}a{color:#6fb1ff}</style></head><body><div class="box"><h1>🛠 La base de données est éteinte</h1><p>Le panneau d\'administration a besoin de la base pour fonctionner.</p><p>Lance le serveur (fichier <b>START</b> dans le dossier du jeu), attends « Base prête ! », puis <a href="?p=dashboard">recharge cette page</a>.</p></div></body></html>';
 }
 function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+/* Dates à la française (le champ HTML type=date n'est pas géré par Basilisk/Goanna) */
+function fr_date(?string $iso): string { if ($iso && preg_match('/^(\d{4})-(\d{2})-(\d{2})/', (string)$iso, $m)) return $m[3] . '/' . $m[2] . '/' . $m[1]; return (string)$iso; }
+function parse_fr_date(?string $s): string { $s = trim((string)$s); if (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})$#', $s, $m)) return sprintf('%04d-%02d-%02d', (int)$m[3], (int)$m[2], (int)$m[1]); if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $s)) return $s; return '1990-01-01'; }
 function csrf(): string { if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16)); return $_SESSION['csrf']; }
 function csrf_field(): string { return '<input type="hidden" name="csrf" value="' . h(csrf()) . '">'; }
 function csrf_check(): void { if (($_POST['csrf'] ?? '') !== ($_SESSION['csrf'] ?? '')) { http_response_code(400); exit('CSRF invalide.'); } }
@@ -192,7 +195,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 db()->prepare('UPDATE users SET rank=?, credits=?, motto=? WHERE id=?')->execute([max(1, min(7, (int)$_POST['rank'])), (int)$_POST['credits'], trim($_POST['motto'] ?? ''), (int)$_POST['id']]);
                 $msg = '✅ Joueur mis à jour.'; break;
             case 'user_details':
-                $bd = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_POST['birthday'] ?? '')) ? (string)$_POST['birthday'] : '1990-01-01';
+                $bd = parse_fr_date($_POST['birthday'] ?? '');
                 $sx = ($_POST['sex'] ?? 'M') === 'F' ? 'F' : 'M';
                 db()->prepare('UPDATE users SET email=?, birthday=?, sex=?, motto=? WHERE id=?')->execute([trim($_POST['email'] ?? ''), $bd, $sx, trim($_POST['motto'] ?? ''), (int)$_POST['id']]);
                 $msg = '✅ Détails du joueur enregistrés.'; break;
@@ -210,7 +213,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($u === '' || strlen($np) < 4) { $ok = false; $msg = '❌ Nom vide ou mot de passe trop court.'; break; }
                 $st = db()->prepare('SELECT id FROM users WHERE username=?'); $st->execute([$u]);
                 if ($st->fetch()) { $ok = false; $msg = '❌ Ce nom existe déjà.'; break; }
-                $bd = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_POST['birthday'] ?? '')) ? (string)$_POST['birthday'] : '1990-01-01';
+                $bd = parse_fr_date($_POST['birthday'] ?? '');
                 db()->prepare('INSERT INTO users (username,password,rank,credits,email,birthday,motto,sex) VALUES (?,?,?,?,?,?,?,?)')->execute([$u, make_hash($np), max(1, min(7, (int)($_POST['rank'] ?? 1))), 100, $u . '@retro14.local', $bd, 'Nouveau Habbo', 'M']);
                 $msg = '✅ Compte "' . $u . '" créé.'; break;
             case 'user_credits':
@@ -1210,7 +1213,7 @@ function page_user(): void {
         <div class="row" style="margin-top:6px;gap:6px;align-items:center"><span class="muted sm">Rang rapide :</span>' . uquick($id, 'user_rank', 'rank', 1, '👤 Joueur') . uquick($id, 'user_rank', 'rank', 6, '🛡️ Modérateur') . uquick($id, 'user_rank', 'rank', 7, '⭐ Admin') . '<form method="post" class="js" data-reload data-confirm="Vider la main (objets non posés) de ' . h($u['username']) . ' ?" style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="clear_hand"><input type="hidden" name="username" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '"><button class="mini ghost">🎒 Vider la main</button></form></div></div>';
     echo '<div class="panel"><div class="ph"><h3>ℹ️ Détails (modifiables)</h3></div>
         <form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="user_details"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">
-        <div class="row"><label style="flex:1">E-mail<input name="email" value="' . h($u['email']) . '"></label><label>Naissance<input type="date" name="birthday" value="' . h($u['birthday']) . '"></label><label>Sexe<select name="sex"><option value="M"' . ($u['sex'] !== 'F' ? ' selected' : '') . '>Garçon</option><option value="F"' . ($u['sex'] === 'F' ? ' selected' : '') . '>Fille</option></select></label></div>
+        <div class="row"><label style="flex:1">E-mail<input name="email" value="' . h($u['email']) . '"></label><label>Naissance<input name="birthday" placeholder="JJ/MM/AAAA" value="' . h(fr_date($u['birthday'])) . '"></label><label>Sexe<select name="sex"><option value="M"' . ($u['sex'] !== 'F' ? ' selected' : '') . '>Garçon</option><option value="F"' . ($u['sex'] === 'F' ? ' selected' : '') . '>Fille</option></select></label></div>
         <label style="margin-top:8px">Mission<input name="motto" value="' . h($u['motto']) . '"></label>
         <button style="margin-top:10px">💾 Enregistrer les détails</button></form>
         <table class="clean" style="margin-top:12px">
@@ -1290,7 +1293,7 @@ function page_users(): void {
     $q = trim($_GET['q'] ?? ''); $pg = cur_page(); $off = ($pg - 1) * PER_PAGE;
     page_title('Joueurs', 'Gère les comptes, rangs, crédits et mots de passe');
     echo '<div class="panel"><div class="ph"><h3>➕ Créer un compte</h3></div><form method="post" class="js row" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="user_create">
-        <label>Nom<input name="username" required></label><label>Mot de passe<input name="newpass" required></label><label>Anniversaire<input type="date" name="birthday" value="1990-01-01"></label><label>Rang<select name="rank">' . rank_options(1) . '</select></label><button>Créer</button>
+        <label>Nom<input name="username" required></label><label>Mot de passe<input name="newpass" required></label><label>Anniversaire<input name="birthday" placeholder="JJ/MM/AAAA" value="01/01/1990"></label><label>Rang<select name="rank">' . rank_options(1) . '</select></label><button>Créer</button>
         <span class="muted sm" style="align-self:center">Rangs 1→6 (6 = Admin). Kepler n\'a pas de rang « HabboX ».</span></form></div>';
 
     echo '<div class="panel"><div class="ph"><h3>👥 Comptes</h3><form method="get" class="srch"><input type="hidden" name="p" value="users"><input name="q" value="' . h($q) . '" placeholder="🔍 Nom du joueur..."><button class="mini">OK</button></form></div>';
@@ -2104,7 +2107,7 @@ label>input,label>select,label>textarea{margin-top:4px}
 input[type=checkbox]{margin-top:0;margin-right:6px}
 #toasts>*+*{margin-top:8px}
 /* Barre supérieure */
-.topbar{display:flex;align-items:center;padding:12px 36px;border-bottom:1px solid var(--line2);background:var(--panel);position:sticky;top:0;z-index:20}
+.topbar{display:flex;align-items:center;min-height:60px;flex:0 0 auto;padding:0 36px;border-bottom:1px solid var(--line2);background:var(--panel);position:sticky;top:0;z-index:20}
 .tb-crumb{font-size:14px;color:var(--mut);white-space:nowrap}
 .tb-crumb b{color:var(--txt)}
 .tb-sec{opacity:.85}

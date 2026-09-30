@@ -23,6 +23,8 @@ function db(): PDO {
     return $p;
 }
 function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+/* Date de naissance à la française (JJ/MM/AAAA) — type=date non géré par Basilisk/Goanna */
+function parse_fr_date(?string $s): string { $s = trim((string)$s); if (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})$#', $s, $m)) return sprintf('%04d-%02d-%02d', (int)$m[3], (int)$m[2], (int)$m[1]); if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $s)) return $s; return '1990-01-01'; }
 function csrf(): string { if (empty($_SESSION['scsrf'])) $_SESSION['scsrf'] = bin2hex(random_bytes(16)); return $_SESSION['scsrf']; }
 function csrf_ok(): bool { return ($_POST['csrf'] ?? '') === ($_SESSION['scsrf'] ?? ''); }
 function hash_pw(string $pw): string { return password_hash($pw, PASSWORD_ARGON2ID, ['memory_cost' => 65536, 'time_cost' => 2, 'threads' => 1]); }
@@ -53,7 +55,7 @@ if ($p === 'register' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_ok()) { $err = 'Session expirée, réessaie.'; }
     else {
         $u = trim($_POST['username'] ?? ''); $pw = (string)($_POST['password'] ?? ''); $sex = ($_POST['sex'] ?? 'M') === 'F' ? 'F' : 'M';
-        $bd = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_POST['birthday'] ?? '')) ? (string)$_POST['birthday'] : '1990-01-01';
+        $bd = parse_fr_date($_POST['birthday'] ?? '');
         if ((int)($_POST['captcha'] ?? -1) !== (int)($_SESSION['reg_captcha'] ?? -2)) $err = 'Réponse au calcul anti-robot incorrecte.';
         elseif (!preg_match('/^[A-Za-z0-9_\-=?!@:.,]{3,20}$/', $u)) $err = 'Nom invalide (3-20 caractères, lettres/chiffres).';
         elseif (strlen($pw) < 4) $err = 'Mot de passe trop court (4 min).';
@@ -333,7 +335,7 @@ function view_register(?string $err): void {
     echo '    <label class="sx"><input type="radio" name="sex" value="M" checked><span>Garçon</span></label>';
     echo '    <label class="sx"><input type="radio" name="sex" value="F"><span>Fille</span></label>';
     echo '  </div>';
-    echo '  <label>Date de naissance</label><input name="birthday" type="date" value="1990-01-01" required>';
+    echo '  <label>Date de naissance</label><input name="birthday" placeholder="JJ/MM/AAAA" value="01/01/1990" required>';
     $a = random_int(1, 9); $b = random_int(1, 9); $_SESSION['reg_captcha'] = $a + $b;
     echo '  <label>Anti-robot : combien font ' . $a . ' + ' . $b . ' ?</label><input name="captcha" type="number" inputmode="numeric" placeholder="Ta réponse" required>';
     echo '  <button class="hbtn green big">Créer et jouer &raquo;</button>';
