@@ -496,6 +496,284 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'news_delete':
                 ensure_news();
                 db()->prepare('DELETE FROM site_news WHERE id=?')->execute([(int)$_POST['id']]); $msg = '🗑️ Actualité supprimée.'; break;
+            /* --- Gestion du Site (v2) : carrousel + réglages accueil --- */
+            case 'carousel_save':
+                ensure_carousel_admin();
+                $slot = max(1, min(4, (int)($_POST['slot'] ?? 0)));
+                $active = isset($_POST['active']) ? 1 : 0;
+                db()->prepare('INSERT INTO site_carousel (slot,title,image,body,link,active) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE title=VALUES(title),image=VALUES(image),body=VALUES(body),link=VALUES(link),active=VALUES(active)')
+                    ->execute([$slot, mb_substr(trim((string)($_POST['title'] ?? '')), 0, 120), mb_substr(trim((string)($_POST['image'] ?? '')), 0, 255), mb_substr(trim((string)($_POST['body'] ?? '')), 0, 400), mb_substr(trim((string)($_POST['link'] ?? '')), 0, 255), $active]);
+                $msg = '🎠 Emplacement carrousel #' . $slot . ' enregistré.'; break;
+            case 'site_setting':
+                $allowed = ['site.infobus', 'site.safety_slogan', 'site.games_prog',
+                    'site.home_besoin', 'site.home_bienvenue', 'site.home_securite',
+                    'site.home_trax', 'site.home_club', 'site.home_homes', 'site.home_activation'];
+                $key = (string)($_POST['key'] ?? '');
+                if (!in_array($key, $allowed, true)) { $ok = false; $msg = '❌ Réglage inconnu.'; break; }
+                $val = mb_substr(trim((string)($_POST['value'] ?? '')), 0, 400);
+                db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute([$key, $val]);
+                $msg = '✅ Réglage « ' . $key . ' » enregistré.'; break;
+            case 'sitepage_save': {
+                ensure_site_pages_admin();
+                $slug = preg_replace('/[^a-z0-9_]/', '', (string)($_POST['slug'] ?? ''));
+                if ($slug === '') { $ok = false; $msg = '❌ Page inconnue.'; break; }
+                $exists = (int) db()->query("SELECT COUNT(*) FROM site_pages WHERE slug=" . db()->quote($slug))->fetchColumn();
+                if (!$exists) { $ok = false; $msg = '❌ Page inexistante.'; break; }
+                $mode   = in_array(($_POST['mode'] ?? ''), ['meta','draft','publish','unpublish','republish','publish_draft','discard_draft'], true) ? $_POST['mode'] : 'meta';
+                $ptitle = mb_substr(trim((string)($_POST['title'] ?? '')), 0, 160);
+                $phist  = isset($_POST['is_historical']) ? 1 : 0;
+                $who    = (string)($_SESSION['admin']['username'] ?? '?');
+                if ($mode === 'publish_draft') {
+                    $cur = db()->prepare('SELECT body_draft FROM site_pages WHERE slug=?'); $cur->execute([$slug]); $bd = (string)$cur->fetchColumn();
+                    if (trim($bd) === '') { $ok = false; $msg = '❌ Aucun brouillon à publier.'; break; }
+                    db()->prepare('UPDATE site_pages SET body_html=?, status=?, body_draft=NULL, edited_by=? WHERE slug=?')->execute([sanitize_html($bd), 'published', $who, $slug]);
+                    $msg = '✅ Brouillon publié. La page publique est à jour.';
+                    admin_log('sitepage_save', $slug . ' (publish_draft)'); break;
+                }
+                if ($mode === 'discard_draft') {
+                    db()->prepare('UPDATE site_pages SET body_draft=NULL, edited_by=? WHERE slug=?')->execute([$who, $slug]);
+                    $msg = '↩️ Brouillon annulé. La version publiée est conservée.';
+                    admin_log('sitepage_save', $slug . ' (discard_draft)'); break;
+                }
+                if ($mode === 'unpublish') {
+                    db()->prepare('UPDATE site_pages SET title=?, is_historical=?, status=?, edited_by=? WHERE slug=?')->execute([$ptitle, $phist, 'draft', $who, $slug]);
+                    $msg = '🚫 Page « ' . $slug . ' » dépubliée (non visible sur le site, contenu conservé).';
+                } elseif ($mode === 'republish') {
+                    db()->prepare('UPDATE site_pages SET title=?, is_historical=?, status=?, edited_by=? WHERE slug=?')->execute([$ptitle, $phist, 'published', $who, $slug]);
+                    $msg = '✅ Page « ' . $slug . ' » republiée.';
+                } elseif ($mode === 'draft') { // sauvegarde complète du corps (legacy)
+                    db()->prepare('UPDATE site_pages SET title=?, is_historical=?, body_draft=?, edited_by=? WHERE slug=?')->execute([$ptitle, $phist, sanitize_html((string)($_POST['body_html'] ?? '')), $who, $slug]);
+                    $msg = '📝 Brouillon enregistré.';
+                } elseif ($mode === 'publish') { // sauvegarde complète du corps (legacy)
+                    db()->prepare('UPDATE site_pages SET title=?, body_html=?, is_historical=?, status=?, body_draft=NULL, edited_by=? WHERE slug=?')->execute([$ptitle, sanitize_html((string)($_POST['body_html'] ?? '')), $phist, 'published', $who, $slug]);
+                    $msg = '✅ Page « ' . $slug . ' » publiée.';
+                } else { // meta : titre + archive seulement, sans toucher au contenu
+                    db()->prepare('UPDATE site_pages SET title=?, is_historical=?, edited_by=? WHERE slug=?')->execute([$ptitle, $phist, $who, $slug]);
+                    $msg = '💾 Infos de la page enregistrées.';
+                }
+                admin_log('sitepage_save', $slug . ' (' . $mode . ')');
+                break;
+            }
+            case 'sitepage_block_save': {
+                ensure_site_pages_admin();
+                $slug = preg_replace('/[^a-z0-9_]/', '', (string)($_POST['slug'] ?? ''));
+                $st = db()->prepare('SELECT body_html, body_draft, status FROM site_pages WHERE slug=?'); $st->execute([$slug]); $row = $st->fetch();
+                if (!$row) { $ok = false; $msg = '❌ Page inexistante.'; break; }
+                $mode = in_array(($_POST['mode'] ?? ''), ['draft','publish'], true) ? $_POST['mode'] : 'draft';
+                $idx  = (int)($_POST['block'] ?? -1);
+                $btitle = trim(strip_tags((string)($_POST['block_title'] ?? '')));
+                $bbody  = sanitize_html((string)($_POST['block_body'] ?? ''));
+                // On part du brouillon s'il existe, sinon de la version publiée.
+                $base = ($row['body_draft'] !== null && trim((string)$row['body_draft']) !== '') ? (string)$row['body_draft'] : (string)$row['body_html'];
+                $updated = sitepage_block_apply($base, $idx, $btitle, $bbody);
+                $updated = sanitize_html($updated);
+                $who = (string)($_SESSION['admin']['username'] ?? '?');
+                if ($mode === 'publish') {
+                    db()->prepare('UPDATE site_pages SET body_html=?, status=?, body_draft=NULL, edited_by=? WHERE slug=?')->execute([$updated, 'published', $who, $slug]);
+                    $msg = '✅ Bloc publié. La page publique est à jour.';
+                } else {
+                    db()->prepare('UPDATE site_pages SET body_draft=?, edited_by=? WHERE slug=?')->execute([$updated, $who, $slug]);
+                    $msg = '📝 Bloc enregistré en brouillon. Utilise « Aperçu » pour le voir avant publication.';
+                }
+                admin_log('sitepage_block_save', $slug . ' #' . $idx . ' (' . $mode . ')');
+                break;
+            }
+            case 'sitepage_arrange': {
+                ensure_site_pages_admin();
+                $slug = preg_replace('/[^a-z0-9_]/', '', (string)($_POST['slug'] ?? ''));
+                $st = db()->prepare('SELECT body_html, body_draft FROM site_pages WHERE slug=?'); $st->execute([$slug]); $row = $st->fetch();
+                if (!$row) { $ok = false; $msg = '❌ Page inexistante.'; break; }
+                $op = (string)($_POST['op'] ?? '');
+                $base = ($row['body_draft'] !== null && trim((string)$row['body_draft']) !== '') ? (string)$row['body_draft'] : (string)$row['body_html'];
+                $idx = (int)($_POST['block'] ?? -1);
+                if ($op === 'up' || $op === 'down') $upd = sitepage_block_move($base, $idx, $op);
+                elseif ($op === 'tozone') $upd = sitepage_block_tozone($base, $idx, (int)($_POST['zone'] ?? -1));
+                elseif ($op === 'add') $upd = sitepage_block_add($base, (int)($_POST['zone'] ?? 0), preg_replace('/[^a-z]/', '', (string)($_POST['tpl'] ?? 'illustre')), (int)($_POST['pos'] ?? -1));
+                else { $ok = false; $msg = '❌ Opération inconnue.'; break; }
+                $upd = sanitize_html($upd);
+                db()->prepare('UPDATE site_pages SET body_draft=?, edited_by=? WHERE slug=?')->execute([$upd, (string)($_SESSION['admin']['username'] ?? '?'), $slug]);
+                admin_log('sitepage_arrange', $slug . ' ' . $op);
+                $msg = '🧩 Disposition mise à jour (brouillon). Utilise « Prévisualiser » puis « Publier ».';
+                break;
+            }
+            case 'site_page_create': {
+                ensure_site_pages_admin();
+                $title = mb_substr(trim((string)($_POST['title'] ?? '')), 0, 160);
+                if ($title === '') { $ok = false; $msg = '❌ Titre requis.'; break; }
+                $tab = preg_replace('/[^a-z]/', '', (string)($_POST['parent_tab'] ?? 'home')); if ($tab === '') $tab = 'home';
+                $base = strtolower(preg_replace('/[^a-z0-9]+/', '_', iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $title) ?: $title));
+                $base = trim(preg_replace('/_+/', '_', $base), '_'); if ($base === '') $base = 'article';
+                $base = mb_substr($base, 0, 50);
+                $slug = $base; $i = 2;
+                while ((int)db()->query('SELECT COUNT(*) FROM site_pages WHERE slug=' . db()->quote($slug))->fetchColumn() > 0) { $slug = $base . '_' . $i; $i++; }
+                $body = '<table class="content-2col" width="100%" cellpadding="0" cellspacing="0"><tbody><tr>'
+                      . '<td valign="top" style="width: 740px;" class="habboPage-col"><div class="v3box blue"><div class="v3box-top"><h3>' . h($title) . '</h3></div><div class="v3box-content"><div class="v3box-body"><p>Nouveau texte à modifier.</p></div></div><div class="v3box-bottom"><div></div></div></div></td>'
+                      . '<td valign="top" style="width: 200px;" class="habboPage-col rightmost"><div class="v3box orange"><div class="v3box-top"><h3>Encadré</h3></div><div class="v3box-content"><div class="v3box-body"><p>…</p></div></div><div class="v3box-bottom"><div></div></div></div></td>'
+                      . '</tr></tbody></table>';
+                db()->prepare('INSERT INTO site_pages (slug,parent_tab,title,body_html,source_ref,is_historical,status,edited_by) VALUES (?,?,?,?,?,0,?,?)')
+                    ->execute([$slug, $tab, $title, $body, 'créé dans l\'admin', 'draft', (string)($_SESSION['admin']['username'] ?? '?')]);
+                admin_log('site_page_create', $slug);
+                redirect('?p=sitemgr&edit=' . $slug);
+            }
+            case 'page_pin': {
+                ensure_site_pages_admin();
+                $slug = preg_replace('/[^a-z0-9_]/', '', (string)($_POST['slug'] ?? ''));
+                $val = (int)!!($_POST['val'] ?? 0);
+                db()->prepare('UPDATE site_pages SET pinned=? WHERE slug=?')->execute([$val, $slug]);
+                $msg = $val ? '📌 Page épinglée.' : '📌 Page retirée des favoris.'; break;
+            }
+            /* --- Modération des Habbo Homes --- */
+            case 'hm_report_status': {
+                ensure_home_admin();
+                $sid = (int)($_POST['id'] ?? 0);
+                $status = in_array(($_POST['status'] ?? ''), ['new', 'progress', 'handled'], true) ? $_POST['status'] : 'new';
+                db()->prepare('UPDATE home_reports SET status=?, handled_by=? WHERE id=?')->execute([$status, (string)($_SESSION['admin']['username'] ?? '?'), $sid]);
+                admin_log('hm_report_status', '#' . $sid . ' → ' . $status); $msg = '✅ Signalement mis à jour.'; break;
+            }
+            case 'hm_home_hide': {
+                ensure_home_admin();
+                $uid = (int)($_POST['user_id'] ?? 0); $val = (int)!!($_POST['val'] ?? 0);
+                $reason = mb_substr(trim((string)($_POST['reason'] ?? '')), 0, 255);
+                db()->prepare('INSERT INTO home_pages (user_id,hidden) VALUES (?,?) ON DUPLICATE KEY UPDATE hidden=VALUES(hidden)')->execute([$uid, $val]);
+                admin_log('hm_home_hide', 'user#' . $uid . ' hidden=' . $val . ($reason ? ' · ' . $reason : ''));
+                $msg = $val ? '🚫 Home masquée.' : '✅ Home rétablie.'; break;
+            }
+            case 'hm_home_lock': {
+                ensure_home_admin();
+                $uid = (int)($_POST['user_id'] ?? 0); $val = (int)!!($_POST['val'] ?? 0);
+                $reason = mb_substr(trim((string)($_POST['reason'] ?? '')), 0, 255);
+                db()->prepare('INSERT INTO home_pages (user_id,edit_locked) VALUES (?,?) ON DUPLICATE KEY UPDATE edit_locked=VALUES(edit_locked)')->execute([$uid, $val]);
+                admin_log('hm_home_lock', 'user#' . $uid . ' locked=' . $val . ($reason ? ' · ' . $reason : ''));
+                $msg = $val ? '🔒 Édition bloquée.' : '🔓 Édition débloquée.'; break;
+            }
+            case 'hm_gb_hide': {
+                ensure_home_admin();
+                $mid = (int)($_POST['mid'] ?? 0); $val = (int)!!($_POST['val'] ?? 0);
+                $reason = mb_substr(trim((string)($_POST['reason'] ?? '')), 0, 255);
+                db()->prepare('UPDATE home_guestbook SET hidden=? WHERE id=?')->execute([$val, $mid]);
+                admin_log('hm_gb_hide', 'msg#' . $mid . ' hidden=' . $val . ($reason ? ' · ' . $reason : ''));
+                $msg = $val ? '🚫 Message masqué.' : '✅ Message rétabli.'; break;
+            }
+            case 'hm_item_del': {
+                ensure_home_admin();
+                $iid = (int)($_POST['item_id'] ?? 0);
+                $reason = mb_substr(trim((string)($_POST['reason'] ?? '')), 0, 255);
+                db()->prepare('DELETE FROM home_items WHERE id=?')->execute([$iid]);
+                admin_log('hm_item_del', 'item#' . $iid . ($reason ? ' · ' . $reason : ''));
+                $msg = '🗑️ Élément retiré de la Home.'; break;
+            }
+            case 'hm_asset_toggle': {
+                ensure_home_admin();
+                $kind = ($_POST['kind'] ?? '') === 'bg' ? 'bg' : 'sticker';
+                $res = basename((string)($_POST['resource'] ?? ''));
+                $val = (int)!!($_POST['val'] ?? 0); // 1 = désactiver
+                if ($res === '') { $ok = false; $msg = '❌ Ressource vide.'; break; }
+                if ($val) db()->prepare('INSERT IGNORE INTO home_assets_disabled (kind,resource) VALUES (?,?)')->execute([$kind, $res]);
+                else db()->prepare('DELETE FROM home_assets_disabled WHERE kind=? AND resource=?')->execute([$kind, $res]);
+                admin_log('hm_asset_toggle', $kind . '/' . $res . ' disabled=' . $val);
+                $msg = $val ? '🚫 Ressource retirée du catalogue.' : '✅ Ressource réactivée.'; break;
+            }
+            case 'site_news_save': {
+                ensure_site_news_admin();
+                $id = (int)($_POST['id'] ?? 0);
+                $title = mb_substr(trim((string)($_POST['title'] ?? '')), 0, 150);
+                if ($title === '') { $ok = false; $msg = '❌ Titre requis.'; break; }
+                $summary = mb_substr(trim((string)($_POST['summary'] ?? '')), 0, 255);
+                $body = sanitize_html((string)($_POST['body'] ?? ''));
+                $image = mb_substr(trim((string)($_POST['image'] ?? '')), 0, 255);
+                $cat = mb_substr(trim((string)($_POST['category'] ?? 'À la une')), 0, 40);
+                $status = in_array(($_POST['status'] ?? 'published'), ['published','draft'], true) ? $_POST['status'] : 'published';
+                $date = trim((string)($_POST['created_at'] ?? ''));
+                $dt = preg_match('/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2})?/', $date) ? str_replace('T', ' ', $date) : date('Y-m-d H:i:s');
+                if (strlen($dt) === 10) $dt .= ' 12:00:00';
+                $who = (string)($_SESSION['admin']['username'] ?? '?');
+                if ($id > 0) {
+                    db()->prepare('UPDATE site_news SET title=?, summary=?, body=?, image=?, category=?, status=?, created_at=? WHERE id=?')
+                        ->execute([$title, $summary, $body, $image, $cat, $status, $dt, $id]);
+                    $msg = '📰 Actualité mise à jour.';
+                } else {
+                    db()->prepare('INSERT INTO site_news (title,summary,body,image,category,color,author,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+                        ->execute([$title, $summary, $body, $image, $cat, 'blue', $who, $status, $dt]);
+                    $id = (int)db()->lastInsertId();
+                    $msg = $status === 'published' ? '✅ Actualité publiée. Elle apparaît dans « Quoi de neuf ? ».' : '📝 Actualité enregistrée en brouillon.';
+                }
+                admin_log('site_news_save', '#' . $id . ' ' . $title);
+                break;
+            }
+            case 'site_news_delete': {
+                ensure_site_news_admin();
+                db()->prepare('DELETE FROM site_news WHERE id=?')->execute([(int)($_POST['id'] ?? 0)]);
+                admin_log('site_news_delete', '#' . (int)($_POST['id'] ?? 0));
+                $msg = '🗑️ Actualité supprimée.'; break;
+            }
+            /* --- Pages et navigation (arborescence éditable) --- */
+            case 'nav_tab_save': {
+                ensure_site_nav_admin();
+                $k = preg_replace('/[^a-z0-9_]/', '', (string)($_POST['tab_key'] ?? ''));
+                if ($k === '') { $ok = false; $msg = '❌ Onglet inconnu.'; break; }
+                db()->prepare('UPDATE site_nav_tabs SET label=?, icon=?, section_label=?, visible=? WHERE tab_key=?')
+                    ->execute([mb_substr(trim((string)($_POST['label'] ?? '')), 0, 40), mb_substr(trim((string)($_POST['icon'] ?? '')), 0, 60), mb_substr(trim((string)($_POST['section_label'] ?? '')), 0, 60), isset($_POST['visible']) ? 1 : 0, $k]);
+                admin_log('nav_tab_save', $k); $msg = '🧭 Onglet « ' . $k . ' » enregistré.'; break;
+            }
+            case 'nav_item_save': {
+                ensure_site_nav_admin();
+                $id = (int)($_POST['id'] ?? 0);
+                $tk = preg_replace('/[^a-z0-9_]/', '', (string)($_POST['tab_key'] ?? ''));
+                $lbl = mb_substr(trim((string)($_POST['label'] ?? '')), 0, 80);
+                $rt = mb_substr(trim((string)($_POST['route'] ?? '')), 0, 255);
+                $tg = in_array(($_POST['target'] ?? ''), ['', '_blank'], true) ? (string)$_POST['target'] : '';
+                if ($tk === '' || $lbl === '') { $ok = false; $msg = '❌ Onglet parent et libellé requis.'; break; }
+                if ($id > 0) { db()->prepare('UPDATE site_nav_items SET tab_key=?, label=?, route=?, target=? WHERE id=?')->execute([$tk, $lbl, $rt, $tg, $id]); $msg = '🔗 Entrée mise à jour.'; }
+                else { $mx = (int) db()->query('SELECT COALESCE(MAX(ord),0)+10 FROM site_nav_items WHERE tab_key=' . db()->quote($tk))->fetchColumn(); db()->prepare('INSERT INTO site_nav_items (tab_key,label,route,target,ord,visible,archived) VALUES (?,?,?,?,?,1,0)')->execute([$tk, $lbl, $rt, $tg, $mx]); $msg = '➕ Entrée ajoutée.'; }
+                admin_log('nav_item_save', $tk . '/' . $lbl); break;
+            }
+            case 'nav_move': {
+                ensure_site_nav_admin();
+                $kind = ($_POST['kind'] ?? '') === 'tab' ? 'tab' : 'item';
+                $dir = ($_POST['dir'] ?? '') === 'up' ? 'up' : 'down';
+                if ($kind === 'tab') {
+                    $k = preg_replace('/[^a-z0-9_]/', '', (string)($_POST['key'] ?? ''));
+                    $cur = db()->query('SELECT ord FROM site_nav_tabs WHERE tab_key=' . db()->quote($k))->fetchColumn();
+                    if ($cur === false) { $ok = false; $msg = '❌ Onglet inconnu.'; break; }
+                    $op = $dir === 'up' ? '<' : '>'; $ordr = $dir === 'up' ? 'DESC' : 'ASC';
+                    $nb = db()->query("SELECT tab_key,ord FROM site_nav_tabs WHERE ord $op $cur ORDER BY ord $ordr LIMIT 1")->fetch();
+                    if ($nb) { db()->prepare('UPDATE site_nav_tabs SET ord=? WHERE tab_key=?')->execute([$nb['ord'], $k]); db()->prepare('UPDATE site_nav_tabs SET ord=? WHERE tab_key=?')->execute([$cur, $nb['tab_key']]); }
+                } else {
+                    $id = (int)($_POST['id'] ?? 0);
+                    $row = db()->query('SELECT tab_key,ord FROM site_nav_items WHERE id=' . $id)->fetch();
+                    if (!$row) { $ok = false; $msg = '❌ Entrée inconnue.'; break; }
+                    $op = $dir === 'up' ? '<' : '>'; $ordr = $dir === 'up' ? 'DESC' : 'ASC';
+                    $nb = db()->query("SELECT id,ord FROM site_nav_items WHERE tab_key=" . db()->quote($row['tab_key']) . " AND ord $op " . (int)$row['ord'] . " ORDER BY ord $ordr LIMIT 1")->fetch();
+                    if ($nb) { db()->prepare('UPDATE site_nav_items SET ord=? WHERE id=?')->execute([$nb['ord'], $id]); db()->prepare('UPDATE site_nav_items SET ord=? WHERE id=?')->execute([$row['ord'], $nb['id']]); }
+                }
+                admin_log('nav_move', $kind . ' ' . $dir); $msg = '↕️ Ordre modifié.'; break;
+            }
+            case 'nav_flag': {
+                ensure_site_nav_admin();
+                $kind = ($_POST['kind'] ?? '') === 'tab' ? 'tab' : 'item';
+                $field = ($_POST['field'] ?? '') === 'archived' ? 'archived' : 'visible';
+                $val = (int)!!($_POST['val'] ?? 0);
+                if ($kind === 'tab') { $k = preg_replace('/[^a-z0-9_]/', '', (string)($_POST['key'] ?? '')); db()->prepare("UPDATE site_nav_tabs SET $field=? WHERE tab_key=?")->execute([$val, $k]); }
+                else { db()->prepare("UPDATE site_nav_items SET $field=? WHERE id=?")->execute([$val, (int)($_POST['id'] ?? 0)]); }
+                admin_log('nav_flag', "$kind $field=$val"); $msg = '✅ Mis à jour.'; break;
+            }
+            case 'media_upload': {
+                $f = $_FILES['file'] ?? null;
+                if (!$f || ($f['error'] ?? 1) !== 0) { $ok = false; $msg = '❌ Aucun fichier reçu.'; break; }
+                $info = @getimagesize($f['tmp_name']);
+                $allowed = [IMAGETYPE_GIF => 'gif', IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png', IMAGETYPE_WEBP => 'webp'];
+                if (!$info || !isset($allowed[$info[2]])) { $ok = false; $msg = '❌ Format non supporté (GIF/JPG/PNG/WEBP seulement).'; break; }
+                if (($f['size'] ?? 0) > 5 * 1024 * 1024) { $ok = false; $msg = '❌ Fichier trop lourd (max 5 Mo).'; break; }
+                $base = preg_replace('/[^A-Za-z0-9._-]/', '_', pathinfo((string)$f['name'], PATHINFO_FILENAME));
+                $base = $base === '' ? 'img' : mb_substr($base, 0, 60);
+                $dir = dirname(__DIR__) . '/web-gallery/v2/pages_img';
+                if (!is_dir($dir)) @mkdir($dir, 0777, true);
+                $name = $base . '.' . $allowed[$info[2]]; $i = 1;
+                while (is_file($dir . '/' . $name)) { $name = $base . '_' . $i . '.' . $allowed[$info[2]]; $i++; }
+                if (!@move_uploaded_file($f['tmp_name'], $dir . '/' . $name)) { $ok = false; $msg = '❌ Échec de l\'enregistrement.'; break; }
+                admin_log('media_upload', $name);
+                $msg = '🖼️ Image importée : /web-gallery/v2/pages_img/' . $name; break;
+            }
             /* --- Codes promo (vouchers) --- */
             case 'voucher_add':
                 $code = strtoupper(trim($_POST['code'] ?? '')); if ($code === '') { $ok = false; $msg = '❌ Code vide.'; break; }
@@ -667,6 +945,8 @@ switch ($p) {
     case 'bots': page_bots(); break;
     case 'users': page_users(); break;
     case 'messages': page_messages(); break;
+    case 'sitemgr': page_sitemgr(); break;
+    case 'homemod': page_homemod(); break;
     case 'user': page_user(); break;
     case 'badges': page_badges(); break;
     case 'ranks': page_ranks(); break;
@@ -687,21 +967,21 @@ render_footer();
 
 /* ============ ACCÈS AUX ONGLETS PAR RANG ============ */
 function admin_nav(): array {
-    return ['dashboard' => ['🏠', 'Accueil'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur']];
+    return ['dashboard' => ['🏠', 'Accueil'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur']];
 }
 function tab_default_rank(string $tab): int {
-    $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7];
+    $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6];
     return $d[$tab] ?? MIN_RANK;
 }
 function nav_groups(): array {
     return [
         '' => ['dashboard', 'search'],
-        'Joueurs & modération' => ['users', 'badges', 'ranks', 'moderation', 'audit', 'commandes'],
+        'Gestion du Site' => ['sitemgr', 'news'],
+        'Joueurs & modération' => ['users', 'badges', 'ranks', 'moderation', 'homemod', 'audit', 'commandes'],
         'Catalogue & mobis' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax'],
         'Hôtel & animations' => ['rooms', 'models', 'bots', 'games', 'gamemaps', 'events', 'recycler', 'vouchers', 'bus'],
-        'Site & contenus' => ['news', 'textes'],
         'Messagerie' => ['messages'],
-        'Administration' => ['settings', 'access', 'mysql', 'server'],
+        'Administration' => ['settings', 'textes', 'access', 'mysql', 'server'],
     ];
 }
 function ensure_tab_perms(): void {
@@ -714,10 +994,1098 @@ function tab_perms(): array {
 }
 function tab_min(string $tab): int { $m = tab_perms(); return $m[$tab] ?? tab_default_rank($tab); }
 function tab_allowed(string $tab): bool { return (int)($_SESSION['admin']['rank'] ?? 0) >= tab_min($tab); }
+/* ---- Gestion du Site (v2) : carrousel + réglages accueil ---- */
+function ensure_carousel_admin(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS site_carousel (slot TINYINT NOT NULL PRIMARY KEY, title VARCHAR(120) NOT NULL DEFAULT '', image VARCHAR(255) NOT NULL DEFAULT '', body VARCHAR(400) NOT NULL DEFAULT '', link VARCHAR(255) NOT NULL DEFAULT '', active TINYINT NOT NULL DEFAULT 1) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+function site_setting_get(string $k, string $def = ''): string {
+    try { $st = db()->prepare('SELECT value FROM settings WHERE setting=?'); $st->execute([$k]); $v = $st->fetchColumn(); return $v === false ? $def : (string)$v; } catch (Throwable $e) { return $def; }
+}
+function col_exists(string $table, string $col): bool {
+    $st = db()->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?');
+    $st->execute([$table, $col]); return (int)$st->fetchColumn() > 0;
+}
+function ensure_site_pages_admin(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS site_pages (slug VARCHAR(60) NOT NULL PRIMARY KEY, parent_tab VARCHAR(20) NOT NULL DEFAULT 'home', title VARCHAR(160) NOT NULL DEFAULT '', body_html MEDIUMTEXT NULL, source_ref VARCHAR(255) NOT NULL DEFAULT '', missing_note TEXT NULL, is_historical TINYINT NOT NULL DEFAULT 0, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    if (!col_exists('site_pages', 'status'))     db()->exec("ALTER TABLE site_pages ADD COLUMN status VARCHAR(12) NOT NULL DEFAULT 'published'");
+    if (!col_exists('site_pages', 'body_draft')) db()->exec("ALTER TABLE site_pages ADD COLUMN body_draft MEDIUMTEXT NULL");
+    if (!col_exists('site_pages', 'edited_by'))  db()->exec("ALTER TABLE site_pages ADD COLUMN edited_by VARCHAR(64) NOT NULL DEFAULT ''");
+    if (!col_exists('site_pages', 'pinned'))     db()->exec("ALTER TABLE site_pages ADD COLUMN pinned TINYINT NOT NULL DEFAULT 0");
+}
+function ensure_site_news_admin(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS site_news (id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(150) NOT NULL, category VARCHAR(40) NOT NULL DEFAULT 'À la une', color VARCHAR(10) NOT NULL DEFAULT 'blue', body TEXT NOT NULL, author VARCHAR(255) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    if (!col_exists('site_news', 'summary')) db()->exec("ALTER TABLE site_news ADD COLUMN summary VARCHAR(255) NOT NULL DEFAULT ''");
+    if (!col_exists('site_news', 'image'))   db()->exec("ALTER TABLE site_news ADD COLUMN image VARCHAR(255) NOT NULL DEFAULT ''");
+    if (!col_exists('site_news', 'status'))  db()->exec("ALTER TABLE site_news ADD COLUMN status VARCHAR(12) NOT NULL DEFAULT 'published'");
+    if (!col_exists('site_news', 'pub_at'))  db()->exec("ALTER TABLE site_news ADD COLUMN pub_at DATETIME NULL");
+}
+
+/* Nettoyeur HTML : garde la mise en page 2007 (.v3box, tables) mais retire tout script/handler dangereux. */
+function sanitize_html(string $html): string {
+    if (trim($html) === '') return '';
+    $allowedTags = ['p','br','h2','h3','h4','h5','strong','b','em','i','u','s','ul','ol','li','a','img','table','thead','tbody','tr','td','th','div','span','hr','blockquote'];
+    $allowedAttr = [
+        'a'   => ['href','target','rel','title','class'],
+        'img' => ['src','alt','title','width','height','align','vspace','hspace','border','class','style'],
+        'td'  => ['colspan','rowspan','valign','align','width','height','class','style'],
+        'th'  => ['colspan','rowspan','valign','align','width','height','class','style'],
+        'tr'  => ['valign','align','class','style'],
+        'table'=>['width','height','border','cellpadding','cellspacing','align','class','style'],
+        '*'   => ['class','style'],
+    ];
+    $doc = new DOMDocument();
+    libxml_use_internal_errors(true);
+    $doc->loadHTML('<?xml encoding="utf-8"?><div id="__root__">' . $html . '</div>', LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
+    $root = $doc->getElementById('__root__');
+    if (!$root) return '';
+    $walk = function (DOMNode $node) use (&$walk, $allowedTags, $allowedAttr) {
+        foreach (iterator_to_array($node->childNodes) as $child) {
+            if ($child->nodeType === XML_ELEMENT_NODE) {
+                /** @var DOMElement $child */
+                $tag = strtolower($child->tagName);
+                if (!in_array($tag, $allowedTags, true)) {
+                    // déballer : remonter les enfants puis supprimer la balise interdite
+                    while ($child->firstChild) $child->parentNode->insertBefore($child->firstChild, $child);
+                    $child->parentNode->removeChild($child);
+                    continue;
+                }
+                $allow = array_merge($allowedAttr['*'] ?? [], $allowedAttr[$tag] ?? []);
+                foreach (iterator_to_array($child->attributes) as $attr) {
+                    $an = strtolower($attr->name); $av = $attr->value;
+                    $bad = !in_array($an, $allow, true) || str_starts_with($an, 'on');
+                    if (($an === 'href' || $an === 'src') && preg_match('/^\s*javascript:/i', $av)) $bad = true;
+                    if ($an === 'style' && preg_match('/expression\s*\(|javascript:|url\s*\(\s*["\']?\s*javascript:/i', $av)) $bad = true;
+                    if ($bad) $child->removeAttribute($attr->name);
+                }
+                if ($tag === 'a' && $child->getAttribute('target') === '_blank') $child->setAttribute('rel', 'noopener');
+                $walk($child);
+            } elseif ($child->nodeType === XML_COMMENT_NODE) {
+                $child->parentNode->removeChild($child);
+            }
+        }
+    };
+    $walk($root);
+    $out = '';
+    foreach ($root->childNodes as $c) $out .= $doc->saveHTML($c);
+    return trim($out);
+}
+function ensure_site_nav_admin(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS site_nav_tabs (tab_key VARCHAR(20) NOT NULL PRIMARY KEY, label VARCHAR(40) NOT NULL DEFAULT '', icon VARCHAR(60) NOT NULL DEFAULT '', section_label VARCHAR(60) NOT NULL DEFAULT '', ord SMALLINT NOT NULL DEFAULT 0, visible TINYINT NOT NULL DEFAULT 1, archived TINYINT NOT NULL DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("CREATE TABLE IF NOT EXISTS site_nav_items (id INT AUTO_INCREMENT PRIMARY KEY, tab_key VARCHAR(20) NOT NULL, label VARCHAR(80) NOT NULL DEFAULT '', route VARCHAR(255) NOT NULL DEFAULT '', target VARCHAR(20) NOT NULL DEFAULT '', ord SMALLINT NOT NULL DEFAULT 0, visible TINYINT NOT NULL DEFAULT 1, archived TINYINT NOT NULL DEFAULT 0, INDEX(tab_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+function ensure_home_admin(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS home_pages (user_id INT NOT NULL PRIMARY KEY, background VARCHAR(255) NOT NULL DEFAULT '', published TINYINT NOT NULL DEFAULT 1, hidden TINYINT NOT NULL DEFAULT 0, edit_locked TINYINT NOT NULL DEFAULT 0, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("CREATE TABLE IF NOT EXISTS home_items (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, type VARCHAR(24) NOT NULL, resource VARCHAR(160) NOT NULL DEFAULT '', x SMALLINT NOT NULL DEFAULT 0, y SMALLINT NOT NULL DEFAULT 0, z SMALLINT NOT NULL DEFAULT 0, style VARCHAR(40) NOT NULL DEFAULT '', content TEXT NULL, INDEX(user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("CREATE TABLE IF NOT EXISTS home_guestbook (id INT AUTO_INCREMENT PRIMARY KEY, owner_id INT NOT NULL, author_id INT NOT NULL, author_name VARCHAR(64) NOT NULL DEFAULT '', message VARCHAR(255) NOT NULL DEFAULT '', hidden TINYINT NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(owner_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("CREATE TABLE IF NOT EXISTS home_assets_disabled (kind VARCHAR(8) NOT NULL, resource VARCHAR(160) NOT NULL, PRIMARY KEY (kind,resource)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("CREATE TABLE IF NOT EXISTS home_reports (id INT AUTO_INCREMENT PRIMARY KEY, target_type VARCHAR(12) NOT NULL, target_id INT NOT NULL, owner_id INT NOT NULL DEFAULT 0, reporter_id INT NOT NULL, reporter_name VARCHAR(64) NOT NULL DEFAULT '', reason VARCHAR(40) NOT NULL DEFAULT '', detail VARCHAR(400) NOT NULL DEFAULT '', status VARCHAR(12) NOT NULL DEFAULT 'new', handled_by VARCHAR(64) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(status), INDEX(owner_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+function sitemgr_sections(): array {
+    return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
+}
+function sitemgr_style(): void {
+    static $done = false; if ($done) return; $done = true;
+    echo <<<'CSS'
+<style>
+.smwrap{max-width:1100px}
+.smwrap .sm-nav{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 16px}
+.smwrap .sm-nav a{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border-radius:9px;text-decoration:none;color:var(--txt);border:1px solid var(--line2);background:var(--panel);font-size:13px;transition:.12s}
+.smwrap .sm-nav a:hover{border-color:var(--acc)}
+.smwrap .sm-nav a.on{background:var(--acc);color:#fff;border-color:var(--acc);font-weight:600}
+.smwrap .sm-crumb{font-size:12px;color:var(--mut);margin:0 0 12px}
+.smwrap .sm-crumb b{color:var(--txt)}
+.smwrap .sm-crumb a{color:var(--mut)}
+.smwrap .card{background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:16px 18px;margin:0 0 14px}
+.smwrap .card>h3{margin:0 0 4px;font-size:15px;display:flex;align-items:center;gap:8px}
+.smwrap .card>.sub{color:var(--mut);font-size:12px;margin:0 0 12px}
+.smwrap .sm-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;border:1px solid var(--line2);background:var(--panel);color:var(--txt);cursor:pointer;text-decoration:none;font-size:13px;line-height:1}
+.smwrap .sm-btn:hover{border-color:var(--acc)}
+.smwrap .sm-btn.primary{background:var(--acc);color:#fff;border-color:var(--acc)}
+.smwrap .sm-btn.danger{color:var(--red);border-color:var(--red)}
+.smwrap .sm-btn.sq{padding:6px 9px}
+.smwrap .sm-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:14px}
+.smwrap .sm-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px}
+.smwrap .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;border:1px solid var(--line2);color:var(--mut)}
+.smwrap .pill.on{color:var(--green);border-color:var(--green)}
+.smwrap .pill.off{color:var(--red);border-color:var(--red)}
+.smwrap .pill.draft{color:#e3a008;border-color:#e3a008}
+.smwrap .grid3{display:flex;flex-wrap:wrap;gap:8px}
+.smwrap input[type=text],.smwrap input:not([type]),.smwrap select,.smwrap textarea{background:var(--panel2);border:1px solid var(--line2);border-radius:7px;padding:7px 9px;color:var(--txt);font:inherit;width:100%}
+.smwrap label{font-size:12px;color:var(--mut);display:block}
+.smwrap label input,.smwrap label select{margin-top:3px}
+/* Zones / blocs */
+.smwrap .zcols{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.smwrap .zcol{flex:1 1 240px;min-width:230px;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:10px}
+.smwrap .zhead{display:flex;align-items:center;justify-content:space-between;font-weight:600;font-size:13px;margin:0 0 8px;padding-bottom:6px;border-bottom:1px solid var(--line2)}
+.smwrap .zhead .zw{color:var(--mut);font-weight:400;font-size:11px}
+.smwrap .blk{background:var(--panel);border:1px solid var(--line2);border-radius:9px;padding:9px 11px;margin:0 0 8px}
+.smwrap .blk h4{margin:0;font-size:13px}
+.smwrap .blk .prev{color:var(--mut);font-size:11px;margin:2px 0 7px;line-height:1.4}
+.smwrap .blk .brow{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.smwrap .addhere{display:block;text-align:center;border:1px dashed var(--line2);border-radius:8px;padding:7px;color:var(--mut);text-decoration:none;font-size:12px;margin:0 0 8px}
+.smwrap .addhere:hover{border-color:var(--acc);color:var(--acc)}
+.smwrap .loc{background:var(--soft);border:1px solid var(--line2);border-radius:8px;padding:8px 12px;font-size:13px;margin:0 0 12px}
+.smwrap table.lst{width:100%;border-collapse:collapse;font-size:13px}
+.smwrap table.lst td{padding:6px 0;border-top:1px solid var(--line2)}
+/* Galerie de contenus */
+.smwrap .cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(224px,1fr));gap:13px}
+.smwrap .ccard{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line2);border-radius:13px;overflow:hidden;text-decoration:none;color:var(--txt);transition:.14s}
+.smwrap .ccard:hover{border-color:var(--acc);transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.14)}
+.smwrap .cthumb{height:104px;display:flex;align-items:center;justify-content:center;overflow:hidden;border-bottom:1px solid var(--line2);position:relative}
+.smwrap .cthumb img{width:100%;height:100%;object-fit:cover}
+.smwrap .cthumb .ph{font-size:34px}
+.smwrap .cthumb .cstat{position:absolute;top:7px;right:7px}
+.smwrap .cbody{padding:11px 13px;display:flex;flex-direction:column;gap:6px;flex:1}
+.smwrap .ctag{align-self:flex-start;font-size:10px;padding:2px 8px;border-radius:20px;background:var(--soft);color:var(--acc);font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+.smwrap .ctitle{font-weight:700;font-size:13.5px;line-height:1.3}
+.smwrap .cexc{font-size:11px;color:var(--mut);line-height:1.45;flex:1}
+.smwrap .cfoot{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;color:var(--mut);border-top:1px solid var(--line2);padding-top:8px;margin-top:3px}
+.smwrap .cfoot .cedit{color:var(--acc);font-weight:700}
+.smwrap .cpill{font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;color:#fff;backdrop-filter:blur(2px)}
+.smwrap .cpill.pub{background:rgba(18,168,90,.92)}
+.smwrap .cpill.unp{background:rgba(229,72,77,.92)}
+.smwrap .cpill.dft{background:rgba(227,160,8,.95)}
+.smwrap .cpill.arc{background:rgba(120,120,130,.92)}
+.smwrap .cnores{color:var(--mut);font-size:13px;padding:14px 2px}
+/* Accueil admin : gros boutons + 2 colonnes */
+.smwrap .bigbtns{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:0 0 16px}
+.smwrap .bigbtn{display:flex;flex-direction:column;gap:3px;padding:16px 18px;border-radius:14px;border:1px solid var(--line2);background:var(--panel);text-decoration:none;color:var(--txt);transition:.14s}
+.smwrap .bigbtn:hover{border-color:var(--acc);transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.14)}
+.smwrap .bigbtn .bi{font-size:26px}
+.smwrap .bigbtn .bt{font-weight:700;font-size:14.5px}
+.smwrap .bigbtn .bd{font-size:11.5px;color:var(--mut)}
+.smwrap .twocol{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+@media(max-width:820px){.smwrap .twocol{grid-template-columns:1fr}}
+.smwrap .chkline{font-size:13px}
+.smwrap .chkline b{color:var(--acc)}
+</style>
+CSS;
+}
+function sitemgr_subnav(string $cur): void {
+    echo '<div class="sm-nav">';
+    foreach (sitemgr_sections() as $k => $v) {
+        $on = ($k === $cur);
+        echo '<a href="?p=sitemgr&sec=' . $k . '" class="' . ($on ? 'on' : '') . '"><span>' . $v[0] . '</span> ' . h($v[1]) . '</a>';
+    }
+    echo '</div>';
+}
+/* ===================== Modération des Habbo Homes ===================== */
+function hm_uname(int $id): string {
+    static $c = []; if (isset($c[$id])) return $c[$id];
+    try { $s = db()->prepare('SELECT username FROM users WHERE id=?'); $s->execute([$id]); return $c[$id] = (string)$s->fetchColumn(); } catch (Throwable $e) { return $c[$id] = '#' . $id; }
+}
+function hm_asset_files(string $kind): array {
+    $dir = dirname(__DIR__) . '/c_images/myhabbo/' . ($kind === 'bg' ? 'backgrounds2' : 'stickers');
+    if (!is_dir($dir)) return [];
+    $out = [];
+    foreach (scandir($dir) as $f) { if ($f === '.' || $f === '..') continue; if (preg_match('/\.(gif|png|jpg|jpeg)$/i', $f) && is_file($dir . '/' . $f)) $out[] = $f; }
+    sort($out, SORT_NATURAL | SORT_FLAG_CASE); return $out;
+}
+function hm_disabled(string $kind): array {
+    try { $s = db()->prepare('SELECT resource FROM home_assets_disabled WHERE kind=?'); $s->execute([$kind]); $o = []; foreach ($s->fetchAll() as $r) $o[$r['resource']] = 1; return $o; } catch (Throwable $e) { return []; }
+}
+function hm_reason_action(string $action, array $fields, string $label, string $cls = 'sm-btn'): string {
+    $h = '<details style="display:inline-block;margin:0 3px 3px 0"><summary class="' . $cls . '" style="list-style:none;display:inline-block">' . h($label) . '</summary>'
+       . '<form method="post" class="js" data-reload style="margin-top:5px;display:flex;gap:5px">' . csrf_field() . '<input type="hidden" name="action" value="' . h($action) . '">';
+    foreach ($fields as $k => $v) $h .= '<input type="hidden" name="' . h((string)$k) . '" value="' . h((string)$v) . '">';
+    $h .= '<input name="reason" placeholder="motif (journalisé)" style="width:180px"><button class="sm-btn primary">Confirmer</button></form></details>';
+    return $h;
+}
+function page_homemod(): void {
+    ensure_home_admin(); sitemgr_style();
+    $sec = preg_replace('/[^a-z]/', '', (string)($_GET['sec'] ?? 'reports')); if ($sec === '') $sec = 'reports';
+    $nnew = (int) db()->query("SELECT COUNT(*) FROM home_reports WHERE status='new'")->fetchColumn();
+    page_title('Modération des Habbo Homes', 'Signalements, recherche de Home et catalogue des ressources. Masquer une Home (public) et bloquer son édition sont deux actions distinctes.');
+    echo '<div class="smwrap">';
+    echo '<div class="sm-nav">';
+    foreach (['reports' => '🚩 Signalements' . ($nnew ? ' (' . $nnew . ')' : ''), 'search' => '🔎 Rechercher une Home', 'catalog' => '🗂️ Catalogue de ressources'] as $k => $lbl)
+        echo '<a href="?p=homemod&sec=' . $k . '" class="' . ($k === $sec ? 'on' : '') . '">' . $lbl . '</a>';
+    echo '</div>';
+    if ($sec === 'search') hm_view_search();
+    elseif ($sec === 'catalog') hm_view_catalog();
+    else hm_view_reports();
+    echo '</div>';
+}
+function hm_view_reports(): void {
+    $st = preg_replace('/[^a-z]/', '', (string)($_GET['st'] ?? ''));
+    echo '<div class="card"><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">';
+    foreach (['' => 'Tous', 'new' => 'Nouveaux', 'progress' => 'En cours', 'handled' => 'Traités'] as $k => $l)
+        echo '<a class="sm-btn' . ($st === $k ? ' primary' : '') . '" href="?p=homemod&sec=reports' . ($k ? '&st=' . $k : '') . '">' . h($l) . '</a>';
+    echo '</div>';
+    $sql = 'SELECT * FROM home_reports' . ($st !== '' ? ' WHERE status=' . db()->quote($st) : '') . ' ORDER BY (status="new") DESC, id DESC LIMIT 100';
+    $rows = db()->query($sql)->fetchAll();
+    if (!$rows) { echo '<p class="sub" style="padding:6px 0">Aucun signalement' . ($st ? ' (' . h($st) . ')' : '') . '.</p></div>'; return; }
+    $pill = ['new' => '<span class="pill off">Nouveau</span>', 'progress' => '<span class="pill draft">En cours</span>', 'handled' => '<span class="pill on">Traité</span>'];
+    echo '<table class="lst"><tr class="sub"><td>Date</td><td>Cible</td><td>Propriétaire</td><td>Motif</td><td>Statut</td><td style="text-align:right">Actions</td></tr>';
+    foreach ($rows as $r) {
+        $owner = hm_uname((int)$r['owner_id']);
+        $cible = $r['target_type'] === 'gb' ? 'Message #' . (int)$r['target_id'] : 'Home';
+        echo '<tr><td class="sub">' . h(substr((string)$r['created_at'], 0, 16)) . '</td>'
+           . '<td>' . h($cible) . '</td>'
+           . '<td><a href="/v2/?p=home/' . h(rawurlencode($owner)) . '" target="_blank">' . h($owner) . ' ↗</a></td>'
+           . '<td>' . h((string)$r['reason']) . ($r['detail'] !== '' ? '<div class="sub">' . h((string)$r['detail']) . '</div>' : '') . '<div class="sub" style="font-size:10px">signalé par ' . h((string)$r['reporter_name']) . '</div></td>'
+           . '<td>' . ($pill[$r['status']] ?? h((string)$r['status'])) . '</td><td style="text-align:right">';
+        // statut rapide
+        echo '<form method="post" class="js" data-reload style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="hm_report_status"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><select name="status" onchange="this.form.requestSubmit?this.form.requestSubmit():this.form.submit()"><option value="new"' . ($r['status'] === 'new' ? ' selected' : '') . '>Nouveau</option><option value="progress"' . ($r['status'] === 'progress' ? ' selected' : '') . '>En cours</option><option value="handled"' . ($r['status'] === 'handled' ? ' selected' : '') . '>Traité</option></select></form> ';
+        if ($r['target_type'] === 'gb') echo hm_reason_action('hm_gb_hide', ['mid' => (int)$r['target_id'], 'val' => 1], 'Masquer le message');
+        echo hm_reason_action('hm_home_hide', ['user_id' => (int)$r['owner_id'], 'val' => 1], 'Masquer la Home', 'sm-btn danger');
+        echo hm_reason_action('hm_home_lock', ['user_id' => (int)$r['owner_id'], 'val' => 1], 'Bloquer l\'édition');
+        echo '</td></tr>';
+    }
+    echo '</table></div>';
+}
+function hm_view_search(): void {
+    $q = trim((string)($_GET['q'] ?? ''));
+    echo '<form method="get" class="card" style="display:flex;gap:6px;align-items:flex-end"><input type="hidden" name="p" value="homemod"><input type="hidden" name="sec" value="search">'
+       . '<label style="flex:1">Pseudo du Habbo<input name="q" value="' . h($q) . '" placeholder="Nom exact ou partiel…"></label><button class="sm-btn primary">Rechercher</button></form>';
+    if ($q === '') return;
+    $us = db()->prepare('SELECT id,username FROM users WHERE username LIKE ? ORDER BY username LIMIT 20'); $us->execute(['%' . $q . '%']);
+    $users = $us->fetchAll();
+    if (!$users) { echo '<div class="card"><p class="sub">Aucun Habbo trouvé pour « ' . h($q) . ' ».</p></div>'; return; }
+    foreach ($users as $u) {
+        $uid = (int)$u['id'];
+        $hp = db()->prepare('SELECT hidden,edit_locked FROM home_pages WHERE user_id=?'); $hp->execute([$uid]); $home = $hp->fetch() ?: ['hidden' => 0, 'edit_locked' => 0];
+        $hidden = (int)$home['hidden']; $locked = (int)$home['edit_locked'];
+        echo '<div class="card"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>' . h((string)$u['username']) . '</b>'
+           . ($hidden ? ' <span class="pill off">masquée</span>' : ' <span class="pill on">visible</span>')
+           . ($locked ? ' <span class="pill draft">édition bloquée</span>' : '')
+           . '<a class="sm-btn" href="/v2/?p=home/' . h(rawurlencode((string)$u['username'])) . '" target="_blank" style="margin-left:auto">Consulter la Home ↗</a></div>';
+        echo '<div class="sm-actions">';
+        echo hm_reason_action('hm_home_hide', ['user_id' => $uid, 'val' => $hidden ? 0 : 1], $hidden ? 'Rétablir la Home' : 'Masquer la Home', $hidden ? 'sm-btn' : 'sm-btn danger');
+        echo hm_reason_action('hm_home_lock', ['user_id' => $uid, 'val' => $locked ? 0 : 1], $locked ? 'Débloquer l\'édition' : 'Bloquer l\'édition');
+        echo '</div>';
+        // Livre d'or
+        $gs = db()->prepare('SELECT id,author_name,message,hidden,created_at FROM home_guestbook WHERE owner_id=? ORDER BY id DESC LIMIT 20'); $gs->execute([$uid]); $gb = $gs->fetchAll();
+        if ($gb) {
+            echo '<div style="margin-top:8px"><b class="sub">Livre d\'or</b><table class="lst">';
+            foreach ($gb as $m) echo '<tr><td>' . h((string)$m['message']) . ' <span class="sub">— ' . h((string)$m['author_name']) . ' · ' . h(substr((string)$m['created_at'], 0, 10)) . ((int)$m['hidden'] ? ' · <span style="color:var(--red)">masqué</span>' : '') . '</span></td><td style="text-align:right">' . hm_reason_action('hm_gb_hide', ['mid' => (int)$m['id'], 'val' => (int)$m['hidden'] ? 0 : 1], (int)$m['hidden'] ? 'Rétablir' : 'Masquer') . '</td></tr>';
+            echo '</table></div>';
+        }
+        // Éléments de la Home (pour retirer un élément problématique)
+        $it = db()->prepare('SELECT id,type,resource FROM home_items WHERE user_id=? ORDER BY z,id'); $it->execute([$uid]); $items = $it->fetchAll();
+        if ($items) {
+            echo '<div style="margin-top:8px"><b class="sub">Éléments de la Home</b><div class="grid3" style="margin-top:4px">';
+            foreach ($items as $i) {
+                $lbl = $i['type'] === 'sticker' ? 'Sticker : ' . h((string)$i['resource']) : h((string)$i['type']);
+                echo '<span class="pill">' . $lbl . ' ' . hm_reason_action('hm_item_del', ['item_id' => (int)$i['id']], 'retirer', 'sm-btn danger sq') . '</span>';
+            }
+            echo '</div></div>';
+        }
+        echo '</div>';
+    }
+}
+function hm_view_catalog(): void {
+    $kind = ($_GET['kind'] ?? '') === 'bg' ? 'bg' : 'sticker';
+    $q = trim((string)($_GET['q'] ?? ''));
+    $disabled = hm_disabled($kind);
+    echo '<div class="card"><div class="sub" style="margin-bottom:6px">Retirer une ressource du catalogue la masque dans l\'éditeur des joueurs, <b>sans casser</b> les Homes qui l\'utilisent déjà.</div>';
+    echo '<form method="get" style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap"><input type="hidden" name="p" value="homemod"><input type="hidden" name="sec" value="catalog">'
+       . '<label>Type<select name="kind"><option value="sticker"' . ($kind === 'sticker' ? ' selected' : '') . '>Stickers</option><option value="bg"' . ($kind === 'bg' ? ' selected' : '') . '>Fonds</option></select></label>'
+       . '<label style="flex:1">Rechercher un fichier<input name="q" value="' . h($q) . '" placeholder="nom du fichier…"></label><button class="sm-btn primary">Chercher</button></form>';
+    // Désactivés
+    if ($disabled) { echo '<div style="margin-top:8px"><b class="sub">Retirés du catalogue (' . count($disabled) . ')</b><div class="grid3" style="margin-top:4px">';
+        foreach (array_keys($disabled) as $f) echo '<span class="pill off">' . h($f) . ' <form method="post" class="js" data-reload style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="hm_asset_toggle"><input type="hidden" name="kind" value="' . $kind . '"><input type="hidden" name="resource" value="' . h($f) . '"><input type="hidden" name="val" value="0"><button class="sm-btn sq">réactiver</button></form></span>';
+        echo '</div></div>'; }
+    // Résultats recherche
+    if ($q !== '') {
+        $files = array_values(array_filter(hm_asset_files($kind), fn($f) => stripos($f, $q) !== false));
+        echo '<div style="margin-top:10px"><b class="sub">' . count($files) . ' fichier(s)</b><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">';
+        foreach (array_slice($files, 0, 60) as $f) {
+            $off = isset($disabled[$f]);
+            echo '<div style="width:92px;text-align:center;border:1px solid var(--line2);border-radius:6px;padding:4px' . ($off ? ';opacity:.45' : '') . '"><img src="/c_images/myhabbo/' . ($kind === 'bg' ? 'backgrounds2' : 'stickers') . '/' . h(rawurlencode($f)) . '" style="max-width:100%;max-height:52px;object-fit:contain"><div class="sub" style="font-size:9px;word-break:break-all">' . h($f) . '</div>'
+               . '<form method="post" class="js" data-reload><input type="hidden" name="action" value="hm_asset_toggle"><input type="hidden" name="kind" value="' . $kind . '"><input type="hidden" name="resource" value="' . h($f) . '"><input type="hidden" name="val" value="' . ($off ? '0' : '1') . '">' . csrf_field() . '<button class="sm-btn sq" style="margin-top:3px">' . ($off ? 'réactiver' : 'retirer') . '</button></form></div>';
+        }
+        if (count($files) > 60) echo '<div class="sub">… affine ta recherche (60 max affichés).</div>';
+        echo '</div></div>';
+    }
+    echo '</div>';
+}
+function page_sitemgr(): void {
+    ensure_site_pages_admin(); ensure_site_nav_admin(); ensure_carousel_admin();
+    // ---- Mode édition d'une page de contenu ----
+    $edit = preg_replace('/[^a-z0-9_]/', '', (string)($_GET['edit'] ?? ''));
+    if ($edit !== '') { sitemgr_style(); echo '<div class="smwrap">'; sitemgr_page_editor($edit); echo '</div>'; return; }
+    $sec = preg_replace('/[^a-z]/', '', (string)($_GET['sec'] ?? 'overview')); if ($sec === '') $sec = 'overview';
+    page_title('Gestion du Site', 'Gère tout le site 2007 sans écrire de code.');
+    sitemgr_style();
+    echo '<div class="smwrap">';
+    sitemgr_subnav($sec);
+    switch ($sec) {
+        case 'allcontent': sitemgr_allcontent(); break;
+        case 'pagesnav': sitemgr_pagesnav(); break;
+        case 'news': sitemgr_news(); break;
+        case 'carousel': sitemgr_carousel(); break;
+        case 'accueil': case 'blocs': sitemgr_accueil(); break;
+        case 'events': sitemgr_events(); break;
+        case 'media': sitemgr_media(); break;
+        case 'settings': sitemgr_settings(); break;
+        case 'history': sitemgr_history(); break;
+        default: sitemgr_overview(); break;
+    }
+    echo '</div>';
+}
+function sp_tablabel(string $k): string {
+    static $m = ['home' => 'Accueil', 'register' => 'Habbo Hotel', 'community' => 'Communauté', 'events' => 'Events', 'games' => 'Jeux', 'shop' => 'Boutique', 'mobile' => 'Mobile', 'credits' => 'Crédits', 'club' => 'Habbo Club', 'help' => 'Aide'];
+    return $m[$k] ?? ucfirst($k);
+}
+function sitemgr_page_editor(string $edit): void {
+    ensure_site_pages_admin();
+    $st = db()->prepare('SELECT * FROM site_pages WHERE slug=?'); $st->execute([$edit]); $pg = $st->fetch();
+    if (!$pg) { echo '<div class="warn">Page introuvable.</div>'; return; }
+    $hasDraft = isset($pg['body_draft']) && trim((string)$pg['body_draft']) !== '';
+    $content  = $hasDraft ? (string)$pg['body_draft'] : (string)$pg['body_html'];
+    $status   = $pg['status'] ?? 'published';
+    $parent   = (string)($pg['parent_tab'] ?: 'home');
+    $crumb    = 'Gestion du Site › ' . h(sp_tablabel($parent)) . ' › <b>' . h((string)$pg['title']) . '</b>';
+    $block    = isset($_GET['block']) && $_GET['block'] !== '' ? (int)$_GET['block'] : null;
+
+    $mdir = dirname(__DIR__) . '/web-gallery/v2/pages_img';
+    $media = is_dir($mdir) ? array_values(array_filter(scandir($mdir), fn($f) => !in_array($f, ['.', '..'], true) && is_file($mdir . '/' . $f))) : [];
+    $blocks = sitepage_blocks($content);
+
+    /* ============ Vue : éditer UN bloc ============ */
+    if ($block !== null && isset($blocks[$block])) {
+        $b = $blocks[$block];
+        page_title('Modifier un bloc', 'Choisis ce que tu veux changer : le titre, le texte, les images ou les liens. La présentation du site est conservée.');
+        echo '<p class="muted sm" style="margin:0 0 8px">' . $crumb . ' › <b>Bloc : ' . (h($b['title']) ?: ('n°' . ($block + 1))) . '</b></p>';
+        echo '<p style="margin:0 0 10px"><a href="?p=sitemgr&edit=' . h($edit) . '">← Revenir à la liste des blocs</a></p>';
+
+        echo '<form method="post" class="js" data-reload id="blkform"><div class="panel">' . csrf_field()
+           . '<input type="hidden" name="action" value="sitepage_block_save"><input type="hidden" name="slug" value="' . h($edit) . '">'
+           . '<input type="hidden" name="block" value="' . $block . '"><input type="hidden" name="mode" id="blkmode" value="draft">'
+           . '<input type="hidden" name="block_body" id="blkbody">';
+        echo '<label style="display:block;margin-bottom:10px"><b>Titre du bloc</b><br><input name="block_title" value="' . h($b['title']) . '" style="width:100%"></label>';
+
+        // Barre d'outils (libellés texte lisibles)
+        echo '<b>Texte du bloc</b><div style="display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 0;padding:6px;border:1px solid var(--line2);border-bottom:0;border-radius:6px 6px 0 0;background:var(--panel2)">';
+        $tb = [
+            ['wzBlock(\'P\')', 'Paragraphe'], ['wzBlock(\'H3\')', 'Titre'], ['wzCmd(\'bold\')', 'Gras'],
+            ['wzCmd(\'italic\')', 'Italique'], ['wzCmd(\'insertUnorderedList\')', 'Liste à puces'],
+            ['wzCmd(\'insertOrderedList\')', 'Liste numérotée'], ['wzLink()', 'Ajouter un lien'], ['wzUnlink()', 'Retirer le lien'],
+        ];
+        foreach ($tb as $t) echo '<button type="button" onclick="' . h($t[0]) . '" style="padding:5px 11px;border:1px solid var(--line2);border-radius:5px;background:var(--panel);color:var(--txt);cursor:pointer;font-size:12px">' . h($t[1]) . '</button>';
+        echo '</div>';
+        echo '<div id="wz" contenteditable="true" oninput="wzSync()" style="min-height:160px;border:1px solid var(--line2);border-radius:0 0 6px 6px;padding:12px;background:#fff;color:#222;font:12px/1.5 Verdana,Arial,sans-serif">' . $b['body'] . '</div>';
+
+        // Images du bloc
+        echo '<div id="blkimgs" style="margin-top:12px"></div>';
+        // Liens du bloc
+        echo '<div id="blklinks" style="margin-top:12px"></div>';
+
+        // Bibliothèque (pour « Remplacer l\'image »)
+        echo '<div id="wzmedia" data-target="" style="display:none;margin-top:8px;padding:8px;border:1px solid var(--line2);border-radius:6px;max-height:220px;overflow:auto"><div class="row" style="justify-content:space-between"><b class="muted sm">Choisis l\'image de remplacement</b><a href="?p=sitemgr&sec=media" target="_blank" class="muted sm">+ Importer une image ↗</a></div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">';
+        foreach ($media as $f) echo '<img src="/web-gallery/v2/pages_img/' . h($f) . '" alt="" title="' . h($f) . '" onclick="wzPick(\'/web-gallery/v2/pages_img/' . h($f) . '\')" style="width:70px;height:48px;object-fit:contain;border:1px solid var(--line2);border-radius:4px;cursor:pointer;background:#fff">';
+        if (!$media) echo '<span class="muted sm">Aucune image. Importe-les dans la rubrique « Médias ».</span>';
+        echo '</div></div>';
+
+        echo '<div class="row" style="gap:6px;margin-top:14px">'
+           . '<a class="chip" href="?p=sitemgr&edit=' . h($edit) . '" style="padding:7px 12px;border:1px solid var(--line2);border-radius:6px;text-decoration:none">Annuler</a>'
+           . '<button type="submit" onclick="document.getElementById(\'blkmode\').value=\'draft\'">Enregistrer le brouillon</button>'
+           . '<a class="chip" href="/v2/?p=' . h($edit) . '&preview=1" target="_blank" style="padding:7px 12px;border:1px solid var(--line2);border-radius:6px;text-decoration:none">Prévisualiser ↗</a>'
+           . '<button type="submit" onclick="document.getElementById(\'blkmode\').value=\'publish\'" style="background:var(--acc);color:#fff;border-color:var(--acc);margin-left:auto">Publier les modifications</button>'
+           . '</div>';
+        echo '</div></form>';
+
+        echo <<<'JS'
+<script>
+function wzEl(){return document.getElementById('wz');}
+function wzSync(){var e=wzEl();document.getElementById('blkbody').value=e.innerHTML;wzBuildPanels();}
+function wzFocus(){wzEl().focus();}
+function wzCmd(c){wzFocus();document.execCommand(c,false,null);wzSync();}
+function wzBlock(t){wzFocus();document.execCommand('formatBlock',false,t);wzSync();}
+function wzLink(){var u=prompt('Page de destination (ex. ?p=club, ?p=home/Pseudo, ou https://…) :','?p=');if(u){wzFocus();document.execCommand('createLink',false,u);wzSync();}}
+function wzUnlink(){wzFocus();document.execCommand('unlink',false,null);wzSync();}
+var wzTarget=null;
+function wzReplace(i){wzTarget=i;var m=document.getElementById('wzmedia');m.style.display='block';m.scrollIntoView({block:'nearest'});}
+function wzPick(src){if(wzTarget!=null){var imgs=wzEl().querySelectorAll('img');if(imgs[wzTarget]){imgs[wzTarget].setAttribute('src',src);}}document.getElementById('wzmedia').style.display='none';wzTarget=null;wzSync();}
+function wzSetLinkText(i,v){var as=wzEl().querySelectorAll('a');if(as[i])as[i].textContent=v;document.getElementById('blkbody').value=wzEl().innerHTML;}
+function wzSetLinkHref(i,v){var as=wzEl().querySelectorAll('a');if(as[i])as[i].setAttribute('href',v);document.getElementById('blkbody').value=wzEl().innerHTML;}
+function wzBuildPanels(){
+  var e=wzEl();
+  var imgs=e.querySelectorAll('img');var ic=document.getElementById('blkimgs');
+  if(imgs.length){var h='<b>Images de ce bloc</b><div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px">';
+    for(var i=0;i<imgs.length;i++){h+='<div style="text-align:center;border:1px solid var(--line2);border-radius:6px;padding:6px"><img src="'+imgs[i].getAttribute('src')+'" style="max-width:90px;max-height:60px;object-fit:contain;background:#fff"><br><button type="button" onclick="wzReplace('+i+')" style="margin-top:4px;padding:4px 9px;border:1px solid var(--line2);border-radius:5px;background:var(--panel);color:var(--txt);cursor:pointer;font-size:12px">Remplacer l\'image</button></div>';}
+    h+='</div>';ic.innerHTML=h;}else ic.innerHTML='';
+  var as=e.querySelectorAll('a');var lc=document.getElementById('blklinks');
+  if(as.length){var h2='<b>Liens de ce bloc</b><div style="margin-top:6px">';
+    for(var j=0;j<as.length;j++){var tx=(as[j].textContent||'').replace(/"/g,'&quot;');var hr=(as[j].getAttribute('href')||'').replace(/"/g,'&quot;');
+      h2+='<div class="row" style="gap:6px;margin-bottom:4px"><label style="flex:1">Texte du lien<input value="'+tx+'" oninput="wzSetLinkText('+j+',this.value)"></label><label style="flex:1">Page de destination<input value="'+hr+'" oninput="wzSetLinkHref('+j+',this.value)" placeholder="?p=club ou https://…"></label></div>';}
+    h2+='</div>';lc.innerHTML=h2;}else lc.innerHTML='';
+}
+var wzDirty=false;
+(function(){wzSync();wzDirty=false;var f=document.getElementById('blkform');
+  if(f){f.addEventListener('submit',function(){wzSync();wzDirty=false;},true);}
+  wzEl().addEventListener('input',function(){wzDirty=true;});
+  window.addEventListener('beforeunload',function(ev){if(wzDirty){ev.preventDefault();ev.returnValue='';}});
+})();
+</script>
+JS;
+        return;
+    }
+
+    /* ============ Vue : zones + blocs de la page ============ */
+    $zones = sitepage_zones($content);
+    page_title('Page : ' . h((string)$pg['title']), 'Choisis où agir : « Modifier » un bloc, le déplacer, ou « Ajouter ici » un contenu à un emplacement précis. La présentation du site est conservée.');
+    echo '<p class="sm-crumb">' . $crumb . '</p>';
+
+    // Barre d'état + actions
+    $pill = $status === 'published' ? '<span class="pill on">Publiée</span>' : '<span class="pill off">Dépubliée</span>';
+    if ($hasDraft) $pill .= ' <span class="pill draft">brouillon en attente</span>';
+    echo '<div class="loc"><div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">' . $pill
+       . '<a class="sm-btn ghost" href="?p=sitemgr&sec=pagesnav">← Pages et navigation</a>'
+       . '<a class="sm-btn ghost" href="/v2/?p=' . h($edit) . '" target="_blank">Voir la page ↗</a>'
+       . '<a class="sm-btn ghost" href="/v2/?p=' . h($edit) . '&preview=1" target="_blank">👁️ Prévisualiser ↗</a>';
+    if ($hasDraft) {
+        echo '<form method="post" class="js" data-reload style="display:inline"><input type="hidden" name="action" value="sitepage_save"><input type="hidden" name="slug" value="' . h($edit) . '"><input type="hidden" name="title" value="' . h((string)$pg['title']) . '"><input type="hidden" name="mode" value="publish_draft">' . csrf_field() . '<button class="sm-btn primary">✅ Publier le brouillon</button></form>';
+        echo '<form method="post" class="js" data-reload style="display:inline" onsubmit="return confirm(\'Annuler le brouillon et revenir à la version publiée ?\')"><input type="hidden" name="action" value="sitepage_save"><input type="hidden" name="slug" value="' . h($edit) . '"><input type="hidden" name="title" value="' . h((string)$pg['title']) . '"><input type="hidden" name="mode" value="discard_draft">' . csrf_field() . '<button class="sm-btn danger">↩️ Annuler le brouillon</button></form>';
+    }
+    echo '</div></div>';
+    if (!empty($pg['missing_note'])) echo '<div class="card" style="border-color:#e3a008"><b>Images d\'origine indisponibles</b> à remplacer dans les blocs concernés :<div class="sub" style="white-space:pre-wrap;margin-top:4px">' . h((string)$pg['missing_note']) . '</div></div>';
+
+    $tpls = ['illustre' => 'Bloc illustré', 'annonce' => 'Annonce', 'aide' => 'Aide', 'liste' => 'Liste'];
+    $tplSel = '<select name="tpl">'; foreach ($tpls as $tk => $tl) $tplSel .= '<option value="' . $tk . '">' . h($tl) . '</option>'; $tplSel .= '</select>';
+
+    echo '<div class="card"><h3>🗂️ Emplacements de la page</h3><div class="sub">Les colonnes correspondent au vrai modèle de cette page. Déplacer ou ajouter met à jour un brouillon : prévisualise puis publie.</div>';
+    if (!$zones) echo '<p class="sub">Aucune zone détectée (format particulier).</p>';
+    echo '<div class="zcols">';
+    foreach ($zones as $z) {
+        $zi = (int)$z['zidx'];
+        echo '<div class="zcol"><div class="zhead"><span>' . h($z['label']) . '</span>' . ($z['width'] ? '<span class="zw">' . (int)$z['width'] . ' px</span>' : '') . '</div>';
+        // Ajouter en tête
+        echo sitemgr_addhere($edit, $zi, 0, $tplSel);
+        $pos = 0;
+        foreach ($z['blocks'] as $bk) {
+            $bidx = (int)$bk['bidx'];
+            $name = $bk['title'] !== '' ? $bk['title'] : ('Bloc n°' . ($bidx + 1));
+            $prev = mb_strimwidth(trim(preg_replace('/\s+/', ' ', strip_tags($blocks[$bidx]['body'] ?? ''))), 0, 70, '…');
+            echo '<div class="blk"><h4>' . h($name) . '</h4><div class="prev">' . h($prev ?: '(bloc sans texte)') . ' · <span style="opacity:.7">Position ' . ($pos + 1) . '</span></div><div class="brow">';
+            echo '<a class="sm-btn sq" href="?p=sitemgr&edit=' . h($edit) . '&block=' . $bidx . '">✏️ Modifier</a>';
+            echo sitemgr_oprow($edit, $bidx, 'up', '↑', 'Monter');
+            echo sitemgr_oprow($edit, $bidx, 'down', '↓', 'Descendre');
+            if (count($zones) > 1) {
+                echo '<form method="post" class="js" data-reload style="display:inline"><input type="hidden" name="action" value="sitepage_arrange"><input type="hidden" name="slug" value="' . h($edit) . '"><input type="hidden" name="op" value="tozone"><input type="hidden" name="block" value="' . $bidx . '">' . csrf_field();
+                echo '<select name="zone" onchange="this.form.requestSubmit?this.form.requestSubmit():this.form.submit()" style="width:auto"><option value="">Déplacer vers…</option>';
+                foreach ($zones as $zz) if ((int)$zz['zidx'] !== $zi) echo '<option value="' . (int)$zz['zidx'] . '">' . h($zz['label']) . '</option>';
+                echo '</select></form>';
+            }
+            echo '</div></div>';
+            $pos++;
+            echo sitemgr_addhere($edit, $zi, $pos, $tplSel);
+        }
+        echo '</div>';
+    }
+    echo '</div></div>';
+
+    // Paramètres de la page
+    echo '<form method="post" class="js" data-reload><div class="card"><h3>⚙️ Paramètres de la page</h3>' . csrf_field()
+       . '<input type="hidden" name="action" value="sitepage_save"><input type="hidden" name="slug" value="' . h($edit) . '"><input type="hidden" name="mode" id="pgmeta" value="meta">';
+    echo '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end"><label style="flex:1;min-width:220px">Titre de la page<input name="title" value="' . h((string)$pg['title']) . '"></label>'
+       . '<label style="white-space:nowrap"><input type="checkbox" name="is_historical" ' . (((int)$pg['is_historical']) ? 'checked' : '') . '> Contenu d\'archive</label></div>';
+    echo '<div class="sm-actions"><button class="sm-btn primary" type="submit" onclick="document.getElementById(\'pgmeta\').value=\'meta\'">💾 Enregistrer les infos</button>';
+    if ($status === 'published') echo '<button class="sm-btn danger" type="submit" onclick="document.getElementById(\'pgmeta\').value=\'unpublish\';return confirm(\'Dépublier la page ? Elle ne sera plus visible sur le site (contenu conservé).\')" style="margin-left:auto">🚫 Dépublier la page</button>';
+    else echo '<button class="sm-btn primary" type="submit" onclick="document.getElementById(\'pgmeta\').value=\'republish\'" style="margin-left:auto">✅ Republier la page</button>';
+    echo '</div></div></form>';
+    // Épingler / retirer des favoris (accueil Gestion du Site)
+    $isPin = (int)($pg['pinned'] ?? 0) === 1;
+    echo '<form method="post" class="js" data-reload style="margin-top:-6px"><input type="hidden" name="action" value="page_pin"><input type="hidden" name="slug" value="' . h($edit) . '"><input type="hidden" name="val" value="' . ($isPin ? 0 : 1) . '">' . csrf_field()
+       . '<button class="sm-btn">' . ($isPin ? '📌 Retirer des favoris' : '📌 Épingler aux favoris') . '</button></form>';
+}
+function sitemgr_oprow(string $slug, int $bidx, string $op, string $sym, string $title): string {
+    return '<form method="post" class="js" data-reload style="display:inline"><input type="hidden" name="action" value="sitepage_arrange"><input type="hidden" name="slug" value="' . h($slug) . '"><input type="hidden" name="op" value="' . $op . '"><input type="hidden" name="block" value="' . $bidx . '">' . csrf_field() . '<button class="sm-btn sq" title="' . h($title) . '">' . $sym . '</button></form>';
+}
+function sitemgr_addhere(string $slug, int $zone, int $pos, string $tplSel): string {
+    $id = 'add_' . $zone . '_' . $pos;
+    $h = '<details class="addwrap" style="margin:0 0 8px"><summary class="addhere">+ Ajouter ici</summary>';
+    $h .= '<form method="post" class="js" data-reload style="display:flex;gap:6px;align-items:center;margin:6px 0 10px">' . csrf_field()
+        . '<input type="hidden" name="action" value="sitepage_arrange"><input type="hidden" name="slug" value="' . h($slug) . '"><input type="hidden" name="op" value="add"><input type="hidden" name="zone" value="' . $zone . '"><input type="hidden" name="pos" value="' . $pos . '">'
+        . $tplSel . '<button class="sm-btn">Ajouter</button></form></details>';
+    return $h;
+}
+/* ===== Édition bloc par bloc : découpage / réinjection des blocs .v3box ===== */
+function sp_loadfrag(string $html): array {
+    $doc = new DOMDocument(); libxml_use_internal_errors(true);
+    $doc->loadHTML('<?xml encoding="utf-8"?><div id="__r">' . $html . '</div>', LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
+    return [$doc, new DOMXPath($doc)];
+}
+function sp_blocknodes(DOMXPath $xp): DOMNodeList {
+    return $xp->query('//*[contains(concat(" ",normalize-space(@class)," ")," v3box ")]');
+}
+function sp_blockparts(DOMXPath $xp, DOMNode $n): array {
+    $h3 = $xp->query('.//*[contains(@class,"v3box-top")]//h3', $n)->item(0) ?: $xp->query('.//h3', $n)->item(0);
+    $body = $xp->query('.//*[contains(@class,"v3box-body")]', $n)->item(0) ?: $xp->query('.//*[contains(@class,"v3box-content")]', $n)->item(0);
+    return [$h3, $body];
+}
+/** Liste des blocs d'une page : [ ['idx','title','body'(html)] ... ]. */
+function sitepage_blocks(string $html): array {
+    if (trim($html) === '') return [];
+    [$doc, $xp] = sp_loadfrag($html);
+    $out = []; $i = 0;
+    foreach (sp_blocknodes($xp) as $n) {
+        [$h3, $body] = sp_blockparts($xp, $n);
+        $bh = '';
+        if ($body) foreach ($body->childNodes as $c) $bh .= $doc->saveHTML($c);
+        $out[] = ['idx' => $i, 'title' => $h3 ? trim($h3->textContent) : '', 'body' => trim($bh)];
+        $i++;
+    }
+    return $out;
+}
+/** Réinjecte titre + corps dans le bloc N et renvoie le HTML complet de la page. */
+function sitepage_block_apply(string $html, int $idx, string $title, string $body): string {
+    [$doc, $xp] = sp_loadfrag($html);
+    $nodes = sp_blocknodes($xp);
+    if ($idx < 0 || $idx >= $nodes->length) return $html;
+    $n = $nodes->item($idx);
+    [$h3, $bodyEl] = sp_blockparts($xp, $n);
+    if ($h3) { while ($h3->firstChild) $h3->removeChild($h3->firstChild); $h3->appendChild($doc->createTextNode($title)); }
+    if ($bodyEl) {
+        while ($bodyEl->firstChild) $bodyEl->removeChild($bodyEl->firstChild);
+        [$tmp, $txp] = sp_loadfrag($body);
+        $src = $tmp->getElementById('__r');
+        if ($src) foreach ($src->childNodes as $c) $bodyEl->appendChild($doc->importNode($c, true));
+    }
+    $root = $doc->getElementById('__r'); $out = '';
+    foreach ($root->childNodes as $c) $out .= $doc->saveHTML($c);
+    return trim($out);
+}
+
+/* ===== Zones (colonnes) d'une page + déplacement / ajout de blocs ===== */
+function sp_isv3box(DOMNode $n): bool {
+    return $n->nodeType === XML_ELEMENT_NODE && strpos(' ' . preg_replace('/\s+/', ' ', (string)$n->getAttribute('class')) . ' ', ' v3box ') !== false;
+}
+function sp_cols(DOMXPath $xp): array {
+    return iterator_to_array($xp->query('//td[contains(concat(" ",normalize-space(@class)," ")," habboPage-col ")]'));
+}
+function sp_output(DOMDocument $doc): string {
+    $root = $doc->getElementById('__r'); $out = '';
+    if ($root) foreach ($root->childNodes as $c) $out .= $doc->saveHTML($c);
+    return trim($out);
+}
+function sp_zone_label(int $i, int $n): string {
+    if ($n <= 1) return 'Pleine largeur';
+    if ($i === 0) return 'Colonne de gauche';
+    if ($i === $n - 1) return 'Colonne de droite';
+    return 'Colonne centrale' . ($n > 3 ? ' ' . $i : '');
+}
+/** Zones d'une page : chaque colonne réelle (td.habboPage-col) avec ses blocs (index global .v3box). */
+function sitepage_zones(string $html): array {
+    if (trim($html) === '') return [];
+    [$doc, $xp] = sp_loadfrag($html);
+    $allv = iterator_to_array(sp_blocknodes($xp));
+    $gidx = function ($node) use ($allv) { foreach ($allv as $i => $n) if ($n === $node) return $i; return -1; };
+    $cols = sp_cols($xp);
+    if (!$cols) {
+        $blocks = [];
+        foreach ($allv as $i => $n) { [$h3] = sp_blockparts($xp, $n); $blocks[] = ['bidx' => $i, 'title' => $h3 ? trim($h3->textContent) : '']; }
+        return [['zidx' => 0, 'label' => 'Pleine largeur', 'width' => 0, 'blocks' => $blocks]];
+    }
+    $zones = []; $zi = 0; $cnt = count($cols);
+    foreach ($cols as $c) {
+        $w = 0; if (preg_match('/width:\s*(\d+)/', $c->getAttribute('style'), $m)) $w = (int)$m[1];
+        $blocks = [];
+        foreach ($xp->query('.//*[contains(concat(" ",normalize-space(@class)," ")," v3box ")]', $c) as $n) {
+            [$h3] = sp_blockparts($xp, $n);
+            $blocks[] = ['bidx' => $gidx($n), 'title' => $h3 ? trim($h3->textContent) : ''];
+        }
+        $zones[] = ['zidx' => $zi, 'label' => sp_zone_label($zi, $cnt), 'width' => $w, 'blocks' => $blocks];
+        $zi++;
+    }
+    return $zones;
+}
+function sitepage_block_move(string $html, int $idx, string $dir): string {
+    [$doc, $xp] = sp_loadfrag($html);
+    $allv = iterator_to_array(sp_blocknodes($xp));
+    if ($idx < 0 || $idx >= count($allv)) return $html;
+    $node = $allv[$idx]; $parent = $node->parentNode;
+    if ($dir === 'up') {
+        $sib = $node->previousSibling;
+        while ($sib && !sp_isv3box($sib)) $sib = $sib->previousSibling;
+        if ($sib) $parent->insertBefore($node, $sib);
+    } else {
+        $sib = $node->nextSibling;
+        while ($sib && !sp_isv3box($sib)) $sib = $sib->nextSibling;
+        if ($sib) { $after = $sib->nextSibling; if ($after) $parent->insertBefore($node, $after); else $parent->appendChild($node); }
+    }
+    return sp_output($doc);
+}
+function sitepage_block_tozone(string $html, int $idx, int $zidx): string {
+    [$doc, $xp] = sp_loadfrag($html);
+    $allv = iterator_to_array(sp_blocknodes($xp)); $cols = sp_cols($xp);
+    if ($idx < 0 || $idx >= count($allv) || $zidx < 0 || $zidx >= count($cols)) return $html;
+    $cols[$zidx]->appendChild($allv[$idx]);
+    return sp_output($doc);
+}
+function sitepage_block_add(string $html, int $zidx, string $tpl, int $pos = -1): string {
+    [$doc, $xp] = sp_loadfrag($html);
+    $cols = sp_cols($xp);
+    $color = ['illustre' => 'blue', 'annonce' => 'orange', 'aide' => 'green', 'liste' => 'yellow'][$tpl] ?? 'blue';
+    $title = ['illustre' => 'Nouveau bloc', 'annonce' => 'Annonce', 'aide' => 'Aide', 'liste' => 'Liste'][$tpl] ?? 'Nouveau bloc';
+    $frag = '<div class="v3box ' . $color . '"><div class="v3box-top"><h3>' . $title . '</h3></div><div class="v3box-content"><div class="v3box-body"><p>Nouveau texte à modifier.</p></div></div><div class="v3box-bottom"><div></div></div></div>';
+    [$tmp] = sp_loadfrag($frag); $srcRoot = $tmp->getElementById('__r');
+    if (!$srcRoot || !$srcRoot->firstChild) return $html;
+    $newNode = $doc->importNode($srcRoot->firstChild, true);
+    if (!$cols) { $doc->getElementById('__r')->appendChild($newNode); return sp_output($doc); }
+    $zone = $cols[max(0, min($zidx, count($cols) - 1))];
+    $zblocks = []; foreach ($zone->childNodes as $cc) if (sp_isv3box($cc)) $zblocks[] = $cc;
+    if ($pos >= 0 && $pos < count($zblocks)) $zone->insertBefore($newNode, $zblocks[$pos]);
+    else $zone->appendChild($newNode);
+    return sp_output($doc);
+}
+
+/* ---- Vue d'ensemble : brouillons en attente + galerie des contenus ---- */
+function sp_sec_emoji(string $k): string {
+    static $m = ['home' => '🏠', 'register' => '🏨', 'community' => '👥', 'events' => '🎉', 'games' => '🎮', 'shop' => '🛍️', 'mobile' => '📱', 'credits' => '💰', 'club' => '⭐', 'help' => '❓'];
+    return $m[$k] ?? '📄';
+}
+/** Routes internes valides (?p=slug) pour le vérificateur de liens. */
+function sp_valid_routes(): array {
+    static $v = null;
+    if ($v === null) {
+        $v = ['home' => 1, 'register' => 1, 'community' => 1, 'events' => 1, 'games' => 1, 'shop' => 1, 'mobile' => 1, 'credits' => 1, 'club' => 1, 'help' => 1, 'me' => 1, 'apropos' => 1];
+        foreach (db()->query('SELECT slug FROM site_pages') as $r) $v[$r['slug']] = 1;
+    }
+    return $v;
+}
+/** Liens internes invalides dans les pages publiées : [ [slug, href] ... ]. */
+function sp_link_issues(int $limit = 20): array {
+    $valid = sp_valid_routes(); $out = [];
+    foreach (db()->query('SELECT slug,title,body_html FROM site_pages') as $r) {
+        if (!preg_match_all('/href="\?p=([^"&#]+)/i', (string)$r['body_html'], $mm)) continue;
+        foreach (array_unique($mm[1]) as $route) {
+            $base = explode('/', $route)[0];
+            if ($base === 'home') continue; // ?p=home/<pseudo> dynamique
+            if (!isset($valid[$route]) && !isset($valid[$base])) { $out[] = [$r['slug'], $r['title'], '?p=' . $route]; if (count($out) >= $limit) return $out; }
+        }
+    }
+    return $out;
+}
+function sitemgr_overview(): void {
+    ensure_site_news_admin();
+    $rows = db()->query('SELECT slug,parent_tab,title,status,is_historical,body_draft,updated_at,pinned FROM site_pages ORDER BY updated_at DESC')->fetchAll();
+    $statpill = function ($r) {
+        $hasDr = $r['body_draft'] !== null && trim((string)$r['body_draft']) !== '';
+        if ($hasDr) return '<span class="pill draft">modifs non publiées</span>';
+        return ($r['status'] ?? 'published') === 'published' ? '<span class="pill on">Publiée</span>' : '<span class="pill off">Dépubliée</span>';
+    };
+
+    echo '<div class="twocol">';
+    // ---- Colonne gauche : favoris + derniers modifiés ----
+    echo '<div>';
+    $fav = array_values(array_filter($rows, fn($r) => (int)$r['pinned'] === 1));
+    echo '<div class="card"><h3>📌 Pages favorites</h3>';
+    if (!$fav) echo '<div class="sub">Aucune page épinglée. Depuis « Pages et navigation », clique 📌 sur une page pour l\'ajouter ici.</div>';
+    else { echo '<table class="lst">'; foreach ($fav as $r) echo '<tr><td><a href="?p=sitemgr&edit=' . h((string)$r['slug']) . '">' . h((string)$r['title']) . '</a> <span class="sub">· ' . h(sp_tablabel((string)$r['parent_tab'])) . '</span></td><td style="text-align:right">' . $statpill($r) . '</td></tr>'; echo '</table>'; }
+    echo '</div>';
+
+    echo '<div class="card"><h3>🕑 5 derniers contenus modifiés</h3><table class="lst">';
+    foreach (array_slice($rows, 0, 5) as $r) echo '<tr><td><a href="?p=sitemgr&edit=' . h((string)$r['slug']) . '">' . h((string)$r['title']) . '</a> <span class="sub">· ' . h(sp_tablabel((string)$r['parent_tab'])) . '</span></td><td class="sub" style="text-align:right;white-space:nowrap">' . h(substr((string)$r['updated_at'], 0, 10)) . '</td></tr>';
+    echo '</table></div>';
+    echo '</div>';
+
+    // ---- Colonne droite : brouillons + à vérifier ----
+    echo '<div>';
+    $drafts = array_values(array_filter($rows, fn($r) => $r['body_draft'] !== null && trim((string)$r['body_draft']) !== ''));
+    echo '<div class="card"><h3>📝 Brouillons en attente</h3>';
+    if (!$drafts) echo '<div class="sub">Aucun brouillon. Tes pages publiées sont à jour.</div>';
+    else { echo '<table class="lst">'; foreach ($drafts as $r) echo '<tr><td><a href="?p=sitemgr&edit=' . h((string)$r['slug']) . '">' . h((string)$r['title']) . '</a></td><td style="text-align:right"><a class="sm-btn sq" href="?p=sitemgr&edit=' . h((string)$r['slug']) . '">Publier…</a></td></tr>'; echo '</table>'; }
+    echo '</div>';
+
+    $missing = array_values(array_filter(db()->query('SELECT slug,title,missing_note FROM site_pages')->fetchAll(), fn($r) => $r['missing_note'] !== null && trim((string)$r['missing_note']) !== ''));
+    $links = sp_link_issues(50);
+    echo '<div class="card"><h3>🔎 À vérifier</h3>';
+    // Images manquantes : compteur + détails repliables
+    echo '<div class="chkline"><b>' . count($missing) . '</b> page(s) avec une image d\'origine manquante';
+    if ($missing) {
+        echo ' <details style="display:inline-block"><summary class="sm-btn sq" style="list-style:none;display:inline-block">Voir les détails</summary><div class="sub" style="margin-top:6px">';
+        foreach ($missing as $r) echo '<div><a href="?p=sitemgr&edit=' . h((string)$r['slug']) . '">' . h((string)$r['title']) . '</a></div>';
+        echo '</div></details>';
+    }
+    echo '</div>';
+    // Liens invalides : compteur + détails repliables
+    echo '<div class="chkline" style="margin-top:10px"><b>' . count($links) . '</b> lien(s) interne(s) à vérifier';
+    if ($links) {
+        echo ' <details style="display:inline-block"><summary class="sm-btn sq" style="list-style:none;display:inline-block">Voir les détails</summary><div class="sub" style="margin-top:6px">';
+        foreach ($links as $l) echo '<div><a href="?p=sitemgr&edit=' . h((string)$l[0]) . '">' . h((string)$l[1]) . '</a> → <code>' . h((string)$l[2]) . '</code></div>';
+        echo '</div></details>';
+    }
+    echo '</div>';
+    if (!$missing && !$links) echo '<div class="sub">Rien à signaler ✨</div>';
+    echo '</div>';
+    echo '</div>'; // right col
+    echo '</div>'; // twocol
+}
+/* ---- Tous les contenus : liste unifiée pages + actualités (inventaire complet) ---- */
+function sitemgr_allcontent(string $forceType = ''): void {
+    ensure_site_pages_admin(); ensure_site_nav_admin(); ensure_site_news_admin(); ensure_carousel_admin();
+    // Emplacements : routes du menu + liens du carrousel
+    $navRoutes = [];
+    foreach (db()->query('SELECT route FROM site_nav_items WHERE visible=1 AND archived=0') as $r)
+        if (preg_match('#\?p=([a-z0-9_]+)#', (string)$r['route'], $m)) $navRoutes[$m[1]][] = 1;
+    $carLinks = '';
+    foreach (db()->query('SELECT link FROM site_carousel WHERE active=1') as $r) $carLinks .= ' ' . (string)$r['link'];
+
+    $items = [];
+    // Pages / articles
+    foreach (db()->query('SELECT slug,parent_tab,title,status,is_historical,body_draft,updated_at FROM site_pages') as $r) {
+        $slug = (string)$r['slug'];
+        $inMenu = isset($navRoutes[$slug]);
+        $inCar  = strpos($carLinks, '?p=' . $slug) !== false;
+        $emp = [];
+        $emp[] = $inMenu ? 'Menu' : 'Hors menu';
+        $emp[] = 'Page complète';
+        if ($inCar) $emp[] = 'Carrousel';
+        $hasDr = $r['body_draft'] !== null && trim((string)$r['body_draft']) !== '';
+        $items[] = [
+            'type' => 'page', 'typeLbl' => (int)$r['is_historical'] ? 'Article (archive)' : 'Article/Page',
+            'title' => (string)$r['title'], 'tab' => (string)$r['parent_tab'], 'rub' => sp_tablabel((string)$r['parent_tab']),
+            'emp' => implode(' · ', $emp),
+            'status' => $hasDr ? 'draft_pending' : (string)($r['status'] ?? 'published'),
+            'date' => substr((string)$r['updated_at'], 0, 10),
+            'edit' => '?p=sitemgr&edit=' . h($slug), 'see' => '/v2/?p=' . h($slug),
+        ];
+    }
+    // Actualités
+    foreach (db()->query('SELECT id,title,category,status,created_at FROM site_news') as $r) {
+        $id = (int)$r['id'];
+        $inCar = strpos($carLinks, '?p=actu&id=' . $id) !== false || strpos($carLinks, '?p=actu&amp;id=' . $id) !== false;
+        $emp = ['Liste des actus (Quoi de neuf ?)']; if ($inCar) $emp[] = 'Carrousel';
+        $items[] = [
+            'type' => 'news', 'typeLbl' => 'Actualité',
+            'title' => (string)$r['title'], 'tab' => 'news', 'rub' => (string)($r['category'] ?: 'Actualités'),
+            'emp' => implode(' · ', $emp),
+            'status' => (string)($r['status'] ?? 'published'),
+            'date' => substr((string)$r['created_at'], 0, 10),
+            'edit' => '?p=sitemgr&sec=news&newsedit=' . $id, 'see' => '/v2/?p=actu&id=' . $id,
+        ];
+    }
+    usort($items, fn($a, $b) => strcmp($b['date'], $a['date']));
+
+    $statusLbl = ['published' => '<span class="pill on">Publié</span>', 'draft' => '<span class="pill draft">Brouillon</span>', 'draft_pending' => '<span class="pill draft">Modifs non publiées</span>'];
+    $tabs = []; foreach ($items as $it) if ($it['type'] === 'page') $tabs[$it['tab']] = $it['rub'];
+
+    page_title('Tous les contenus', 'Tout ce qui est écrit sur le site — actualités, articles et pages — au même endroit. Filtre, puis clique « Modifier ».');
+    echo '<div class="sm-actions" style="margin-bottom:12px"><a class="sm-btn primary" href="?p=sitemgr&sec=news&new=1">📰 Créer une actualité</a>'
+       . '<details style="display:inline-block"><summary class="sm-btn" style="list-style:none">📄 Créer un article</summary>'
+       . '<form method="post" style="display:flex;gap:6px;align-items:flex-end;margin-top:8px;flex-wrap:wrap">' . csrf_field() . '<input type="hidden" name="action" value="site_page_create">'
+       . '<label>Titre<input name="title" required></label><label>Rubrique<select name="parent_tab">';
+    foreach (['home', 'register', 'community', 'events', 'games', 'shop', 'mobile', 'credits', 'club', 'help'] as $tk) echo '<option value="' . $tk . '">' . h(sp_tablabel($tk)) . '</option>';
+    echo '</select></label><button class="sm-btn primary">Créer</button></form></details></div>';
+
+    // Filtres
+    echo '<div class="card"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">';
+    echo '<label style="flex:1;min-width:200px">Rechercher<input type="text" id="acq" placeholder="Titre…" oninput="acFilter()"></label>';
+    echo '<label>Type<select id="acty" onchange="acFilter()"><option value="">Tous</option><option value="news"' . ($forceType === 'news' ? ' selected' : '') . '>Actualités</option><option value="page"' . ($forceType === 'page' ? ' selected' : '') . '>Articles et pages</option></select></label>';
+    echo '<label>Rubrique<select id="acrub" onchange="acFilter()"><option value="">Toutes</option>';
+    foreach ($tabs as $tk => $tl) echo '<option value="' . h($tk) . '">' . h($tl) . '</option>';
+    echo '<option value="news">Actualités</option></select></label>';
+    echo '<label>Statut<select id="acst" onchange="acFilter()"><option value="">Tous</option><option value="published">Publié</option><option value="draft">Brouillon</option><option value="draft_pending">Modifs non publiées</option></select></label>';
+    echo '</div></div>';
+
+    echo '<div class="card" style="padding-top:6px"><table class="lst" id="actable"><tr class="sub"><td>Titre</td><td>Type</td><td>Rubrique</td><td>Emplacements</td><td>Statut</td><td>Modifié</td><td style="text-align:right">Actions</td></tr>';
+    foreach ($items as $it) {
+        echo '<tr class="acrow" data-ty="' . h($it['type']) . '" data-tab="' . h($it['tab']) . '" data-st="' . h($it['status']) . '" data-h="' . h(mb_strtolower($it['title'] . ' ' . $it['rub'])) . '">'
+           . '<td><b>' . h($it['title']) . '</b></td>'
+           . '<td class="sub">' . h($it['typeLbl']) . '</td>'
+           . '<td class="sub">' . h($it['rub']) . '</td>'
+           . '<td class="sub">' . h($it['emp']) . '</td>'
+           . '<td>' . ($statusLbl[$it['status']] ?? h($it['status'])) . '</td>'
+           . '<td class="sub" style="white-space:nowrap">' . h($it['date']) . '</td>'
+           . '<td style="text-align:right;white-space:nowrap"><a class="sm-btn sq" href="' . $it['edit'] . '">Modifier</a> <a class="sm-btn sq" href="' . $it['see'] . '" target="_blank">Voir ↗</a></td></tr>';
+    }
+    echo '</table><div class="cnores" id="acnores" style="display:none">Aucun contenu ne correspond aux filtres.</div></div>';
+    $jsForce = $forceType !== '' ? $forceType : '';
+    echo '<script>function acFilter(){var q=(document.getElementById("acq").value||"").toLowerCase().trim(),ty=document.getElementById("acty").value,rb=document.getElementById("acrub").value,st=document.getElementById("acst").value,n=0;document.querySelectorAll("#actable .acrow").forEach(function(r){var ok=(!q||r.getAttribute("data-h").indexOf(q)>-1)&&(!ty||r.getAttribute("data-ty")===ty)&&(!rb||r.getAttribute("data-tab")===rb)&&(!st||r.getAttribute("data-st")===st);r.style.display=ok?"":"none";if(ok)n++;});document.getElementById("acnores").style.display=n?"none":"block";}' . ($jsForce ? 'acFilter();' : '') . '</script>';
+}
+
+/* ---- Accueil du site : blocs + carrousel réunis (point 2) ---- */
+function sitemgr_accueil(): void {
+    page_title('Page : Accueil', 'Tous les éléments de la page d\'accueil au même endroit : son carrousel et ses blocs. La présentation du site est conservée.');
+    echo '<p class="sm-crumb">Gestion du Site › Pages du site › <b>Accueil</b></p>';
+    echo '<p style="margin:0 0 10px"><a class="sm-btn ghost" href="?p=sitemgr&sec=pagesnav">← Pages et navigation</a> <a class="sm-btn ghost" href="/v2/?p=home" target="_blank">Voir l\'accueil ↗</a></p>';
+    echo '<div class="card"><h3>🎠 Carrousel « À ne pas manquer »</h3><div class="sub">Les 4 diapositives affichées en haut de l\'accueil.</div>';
+    sitemgr_carousel_inner();
+    echo '</div>';
+    echo '<div class="card"><h3>🧱 Blocs de l\'accueil</h3><div class="sub">Textes des encadrés de l\'accueil. Les compteurs (joueurs en ligne, classements) et « Quoi de neuf ? » viennent automatiquement de la base.</div>';
+    sitemgr_blocs_inner();
+    echo '</div>';
+    echo '<div class="card"><h3>📰 « Quoi de neuf ? »</h3><div class="sub">Alimenté par les <a href="?p=sitemgr&sec=news">actualités publiées</a>. <a href="?p=sitemgr&sec=news&new=1">Créer une actualité →</a></div></div>';
+}
+
+/* ---- Pages et navigation : arborescence éditable (point 3) ---- */
+function sitemgr_pagesnav(): void {
+    $tabs = db()->query('SELECT * FROM site_nav_tabs ORDER BY ord,tab_key')->fetchAll();
+    $items = db()->query('SELECT * FROM site_nav_items ORDER BY tab_key,ord,id')->fetchAll();
+    $byTab = []; foreach ($items as $it) $byTab[$it['tab_key']][] = $it;
+    $pages = db()->query('SELECT slug,title FROM site_pages ORDER BY title')->fetchAll();
+    $icons = glob(dirname(__DIR__) . '/web-gallery/v2/images/navi/tab_icon_*.gif') ?: [];
+    $icons = array_map('basename', $icons);
+    $sel = (string)($_GET['sel'] ?? '');
+
+    echo '<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>Page d\'accueil</b><span class="sub" style="flex:1">Son carrousel et ses blocs sont réunis sur une seule page.</span><a class="sm-btn primary" href="?p=sitemgr&sec=accueil">🏠 Modifier l\'accueil</a> <a class="sm-btn" href="?p=sitemgr&sec=allcontent">🗂️ Voir tous les contenus</a></div></div>';
+    echo '<div class="warn" style="margin:0 0 10px">La barre jaune et le fil d\'Ariane du site se construisent automatiquement depuis ces données. <b>Masquer</b> une entrée la retire de la navigation <u>sans dépublier</u> sa page. Les pages hors menu restent accessibles dans « Tous les contenus ».</div>';
+    echo '<div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">';
+
+    /* ---- Colonne gauche : arbre ---- */
+    echo '<div style="flex:1;min-width:320px">';
+    foreach ($tabs as $t) {
+        $k = (string)$t['tab_key'];
+        $dim = ((int)$t['visible'] ? '' : 'opacity:.5;');
+        echo '<div class="panel" style="margin-bottom:8px;' . $dim . '"><div class="ph" style="gap:6px">'
+           . '<img src="/web-gallery/v2/images/navi/' . h((string)$t['icon']) . '" alt="" style="width:18px;height:18px;vertical-align:middle"> '
+           . '<b>' . h((string)$t['label']) . '</b> <span class="muted sm">(' . h($k) . ' · section « ' . h((string)$t['section_label']) . ' »)</span>'
+           . '<span style="margin-left:auto;display:flex;gap:3px">'
+           . sitemgr_navbtn('nav_move', ['kind' => 'tab', 'key' => $k, 'dir' => 'up'], '↑')
+           . sitemgr_navbtn('nav_move', ['kind' => 'tab', 'key' => $k, 'dir' => 'down'], '↓')
+           . sitemgr_navbtn('nav_flag', ['kind' => 'tab', 'key' => $k, 'field' => 'visible', 'val' => (int)!$t['visible']], (int)$t['visible'] ? '👁️' : '🚫')
+           . '<a class="chip" href="?p=sitemgr&sec=pagesnav&sel=tab-' . h($k) . '" style="padding:2px 7px;border:1px solid var(--line2);border-radius:5px;text-decoration:none">✏️</a>'
+           . '</span></div>';
+        echo '<div style="padding:2px 0">';
+        foreach ($byTab[$k] ?? [] as $it) {
+            if ((int)$it['archived']) continue;
+            $idim = ((int)$it['visible'] ? '' : 'opacity:.5;');
+            $routeTxt = $it['route'] !== '' ? h((string)$it['route']) : '<span class="muted">(section)</span>';
+            echo '<div class="row" style="align-items:center;gap:6px;padding:3px 4px;border-top:1px dashed var(--line2);' . $idim . '">'
+               . '<span style="flex:1">↳ <b>' . h((string)$it['label']) . '</b> <span class="muted sm">' . $routeTxt . '</span></span>'
+               . '<span style="display:flex;gap:3px">'
+               . sitemgr_navbtn('nav_move', ['kind' => 'item', 'id' => (int)$it['id'], 'dir' => 'up'], '↑')
+               . sitemgr_navbtn('nav_move', ['kind' => 'item', 'id' => (int)$it['id'], 'dir' => 'down'], '↓')
+               . sitemgr_navbtn('nav_flag', ['kind' => 'item', 'id' => (int)$it['id'], 'field' => 'visible', 'val' => (int)!$it['visible']], (int)$it['visible'] ? '👁️' : '🚫')
+               . sitemgr_navbtn('nav_flag', ['kind' => 'item', 'id' => (int)$it['id'], 'field' => 'archived', 'val' => 1], '🗄️')
+               . '<a class="chip" href="?p=sitemgr&sec=pagesnav&sel=item-' . (int)$it['id'] . '" style="padding:2px 7px;border:1px solid var(--line2);border-radius:5px;text-decoration:none">✏️</a>'
+               . '</span></div>';
+        }
+        echo '<div style="padding:4px"><a href="?p=sitemgr&sec=pagesnav&sel=new-' . h($k) . '" class="muted sm">➕ Ajouter une entrée dans « ' . h((string)$t['label']) .' »</a></div>';
+        echo '</div></div>';
+    }
+    echo '</div>';
+
+    /* ---- Colonne droite : propriétés ---- */
+    echo '<div style="flex:0 0 330px;max-width:100%">';
+    if (strpos($sel, 'tab-') === 0) {
+        $k = preg_replace('/[^a-z0-9_]/', '', substr($sel, 4));
+        $t = null; foreach ($tabs as $x) if ($x['tab_key'] === $k) $t = $x;
+        if ($t) {
+            echo '<form method="post" class="js" data-reload><div class="panel"><div class="ph"><h3>Onglet : ' . h($k) . '</h3></div>' . csrf_field()
+               . '<input type="hidden" name="action" value="nav_tab_save"><input type="hidden" name="tab_key" value="' . h($k) . '">'
+               . '<label style="display:block;margin-bottom:6px">Nom affiché<input name="label" value="' . h((string)$t['label']) . '"></label>'
+               . '<label style="display:block;margin-bottom:6px">Libellé de section (fil d\'Ariane / 1er mot barre jaune)<input name="section_label" value="' . h((string)$t['section_label']) . '"></label>'
+               . '<label style="display:block;margin-bottom:6px">Icône' . sitemgr_icon_select((string)$t['icon'], $icons) . '</label>'
+               . '<label style="display:block;margin-bottom:6px"><input type="checkbox" name="visible" ' . ((int)$t['visible'] ? 'checked' : '') . '> Visible dans la navigation</label>'
+               . '<button>💾 Enregistrer l\'onglet</button></div></form>';
+        }
+    } elseif (strpos($sel, 'item-') === 0) {
+        $id = (int)substr($sel, 5); $it = null; foreach ($items as $x) if ((int)$x['id'] === $id) $it = $x;
+        if ($it) echo sitemgr_item_form($it, $tabs, $pages);
+    } elseif (strpos($sel, 'new-') === 0) {
+        $k = preg_replace('/[^a-z0-9_]/', '', substr($sel, 4));
+        echo sitemgr_item_form(['id' => 0, 'tab_key' => $k, 'label' => '', 'route' => '', 'target' => '', 'visible' => 1], $tabs, $pages);
+    } else {
+        echo '<div class="panel"><p class="muted" style="padding:6px 0">Sélectionne un onglet ou une entrée (✏️) pour voir et modifier ses propriétés.</p></div>';
+    }
+    echo '</div></div>';
+}
+function sitemgr_navbtn(string $action, array $fields, string $label): string {
+    $h = '<form method="post" class="js" data-reload style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="' . h($action) . '">';
+    foreach ($fields as $k => $v) $h .= '<input type="hidden" name="' . h((string)$k) . '" value="' . h((string)$v) . '">';
+    return $h . '<button style="padding:2px 6px;font-size:12px" title="' . h($action) . '">' . $label . '</button></form>';
+}
+function sitemgr_icon_select(string $cur, array $icons): string {
+    $h = '<select name="icon"><option value="">(aucune)</option>';
+    foreach ($icons as $ic) $h .= '<option value="' . h($ic) . '"' . ($ic === $cur ? ' selected' : '') . '>' . h($ic) . '</option>';
+    return $h . '</select>';
+}
+function sitemgr_item_form(array $it, array $tabs, array $pages): string {
+    $h = '<form method="post" class="js" data-reload><div class="panel"><div class="ph"><h3>' . ((int)$it['id'] ? 'Entrée de sous-menu' : 'Nouvelle entrée') . '</h3></div>' . csrf_field()
+       . '<input type="hidden" name="action" value="nav_item_save"><input type="hidden" name="id" value="' . (int)$it['id'] . '">';
+    $h .= '<label style="display:block;margin-bottom:6px">Onglet parent<select name="tab_key">';
+    foreach ($tabs as $t) $h .= '<option value="' . h((string)$t['tab_key']) . '"' . ($t['tab_key'] === $it['tab_key'] ? ' selected' : '') . '>' . h((string)$t['label']) . ' (' . h((string)$t['tab_key']) . ')</option>';
+    $h .= '</select></label>';
+    $h .= '<label style="display:block;margin-bottom:6px">Nom affiché<input name="label" value="' . h((string)$it['label']) . '"></label>';
+    $h .= '<label style="display:block;margin-bottom:6px">Page de destination<input name="route" list="pageroutes" value="' . h((string)$it['route']) . '" placeholder="?p=welcome ou URL externe"></label>';
+    $h .= '<datalist id="pageroutes">';
+    foreach ($pages as $pg) $h .= '<option value="?p=' . h((string)$pg['slug']) . '">' . h((string)$pg['title']) . '</option>';
+    foreach (['home', 'register', 'community', 'events', 'games', 'shop', 'mobile', 'credits', 'club', 'help'] as $tk) $h .= '<option value="?p=' . $tk . '">';
+    $h .= '</datalist>';
+    $h .= '<label style="display:block;margin-bottom:6px">Ouverture<select name="target"><option value=""' . ($it['target'] === '' ? ' selected' : '') . '>Même onglet</option><option value="_blank"' . ($it['target'] === '_blank' ? ' selected' : '') . '>Nouvel onglet</option></select></label>';
+    $h .= '<button>💾 Enregistrer</button></div></form>';
+    return $h;
+}
+/* ---- Carrousel (point 7) ---- */
+function sitemgr_carousel(): void {
+    echo '<div class="card"><h3>🎠 Carrousel « À ne pas manquer »</h3><div class="sub">Les 4 diapositives affichées en haut de l\'accueil. C\'est le seul écran d\'édition du carrousel (accessible aussi depuis la page Accueil).</div>';
+    sitemgr_carousel_inner();
+    echo '</div>';
+}
+function sitemgr_carousel_inner(): void {
+    $slots = []; foreach (db()->query('SELECT * FROM site_carousel') as $r) $slots[(int)$r['slot']] = $r;
+    $pages = db()->query('SELECT slug,title FROM site_pages ORDER BY title')->fetchAll();
+    echo '<div class="sub" style="margin:4px 0 8px">Chaque diapo a sa propre image et son sujet. Image = chemin servi par Apache (ex. <code>/c_images/banners/425x178/…</code>). Lien = <code>?p=club</code> ou <code>/client.php</code>. Un numéro désactivé est retiré des sélecteurs côté site.</div>';
+    for ($i = 1; $i <= 4; $i++) {
+        $s = $slots[$i] ?? ['title' => '', 'image' => '', 'body' => '', 'link' => '', 'active' => 1];
+        echo '<form method="post" class="js" data-reload style="border-top:1px solid var(--line2);padding:9px 0">' . csrf_field() . '<input type="hidden" name="action" value="carousel_save"><input type="hidden" name="slot" value="' . $i . '">';
+        echo '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>#' . $i . '</b>';
+        if ((string)$s['image'] !== '') echo '<img src="' . h((string)$s['image']) . '" alt="" style="width:84px;height:42px;object-fit:cover;border:1px solid var(--line2);border-radius:5px">';
+        echo '<label style="flex:1;min-width:160px">Titre<input name="title" value="' . h((string)$s['title']) . '"></label>'
+           . '<label style="flex:1;min-width:160px">Lien<input name="link" list="pageroutesC" value="' . h((string)$s['link']) . '"></label>'
+           . '<label style="white-space:nowrap">Actif <input type="checkbox" name="active" ' . (((int)$s['active']) ? 'checked' : '') . '></label></div>';
+        echo '<div style="display:flex;gap:10px;margin-top:6px;flex-wrap:wrap"><label style="flex:2;min-width:200px">Image (chemin)<input name="image" value="' . h((string)$s['image']) . '"></label>'
+           . '<label style="flex:3;min-width:220px">Texte<input name="body" value="' . h((string)$s['body']) . '" maxlength="400"></label>'
+           . '<button class="sm-btn primary" style="align-self:flex-end">💾 Enregistrer</button></div></form>';
+    }
+    echo '<datalist id="pageroutesC">'; foreach ($pages as $pg) echo '<option value="?p=' . h((string)$pg['slug']) . '">' . h((string)$pg['title']) . '</option>'; echo '<option value="/client.php"></datalist>';
+}
+function sitemgr_blocs_inner(): void {
+    // Chaque bloc de l'accueil est repéré par sa colonne (point 14). Défaut = texte d'origine du site.
+    $groups = [
+        'Colonne de gauche' => [
+            ['site.home_besoin', 'Bloc « Besoin d\'aide ? »', "Un bug, un souci ? L'équipe de l'hôtel est là pour t'aider."],
+            ['site.home_bienvenue', 'Bloc « Bienvenue à Habbo »', "Habbo est une communauté virtuelle où tu rencontres tes amis, participes à des jeux et décores ton propre appart. L'entrée est gratuite !"],
+            ['site.home_securite', 'Bloc « La sécurité sur Habbo »', "Ne partage jamais ton mot de passe, même avec quelqu'un se présentant comme membre du staff."],
+            ['site.safety_slogan', 'Bloc « Slogan sécu de la semaine »', 'Pour vérifier ton e-mail, clique sur le lien reçu — ne le communique à personne !'],
+        ],
+        'Colonne du centre' => [
+            ['site.home_trax', 'Bloc « Trax »', "Le son de Habbo ! Compose tes propres mixes avec la Trax Machine directement en jeu."],
+            ['site.home_club', 'Bloc « Habbo Club »', 'Mobis exclusifs, cadeaux et badge doré avec le Habbo Club !'],
+            ['site.infobus', 'Bloc « L\'Infobus » (horaires)', 'Dans les Jardins Habbos ! Mercredi 16h30–17h30 et Vendredi 17h–18h.'],
+        ],
+        'Colonne de droite' => [
+            ['site.home_homes', 'Bloc « Habbo Homes »', 'Construis ta page perso : avatar, badges, amis et salles sur ta Habbo Home.'],
+            ['site.home_activation', 'Bloc « Activation de l\'adresse e-mail »', 'Vérifie ton adresse e-mail pour sécuriser ton compte et récupérer ton mot de passe.'],
+        ],
+        'Autres' => [
+            ['site.games_prog', 'Programme des jeux (page Jeux)', 'Des tournois sont organisés régulièrement en jeu. Surveille les actualités !'],
+        ],
+    ];
+    echo '<p class="sub" style="margin:2px 0 10px">Les compteurs (joueurs en ligne, classements), les clans et « Quoi de neuf ? » viennent automatiquement de la base — ils ne se modifient pas ici.</p>';
+    foreach ($groups as $col => $items) {
+        echo '<h4 style="margin:12px 0 6px;border-bottom:1px solid var(--line2);padding-bottom:3px">' . h($col) . '</h4>';
+        foreach ($items as $cfg) {
+            echo '<form method="post" class="js" data-reload style="margin-bottom:9px">' . csrf_field() . '<input type="hidden" name="action" value="site_setting"><input type="hidden" name="key" value="' . h($cfg[0]) . '">';
+            echo '<label style="display:block;font-weight:600;margin-bottom:3px">' . h($cfg[1]) . '</label>';
+            echo '<div style="display:flex;gap:8px;align-items:flex-start"><textarea name="value" maxlength="400" rows="2" style="flex:1;resize:vertical;font:inherit">' . h(site_setting_get($cfg[0], $cfg[2])) . '</textarea><button class="sm-btn primary" style="align-self:stretch">💾</button></div></form>';
+        }
+    }
+}
+function sitemgr_news(): void {
+    ensure_site_news_admin();
+    $new = isset($_GET['new']);
+    $editId = (int)($_GET['newsedit'] ?? 0);
+    // ---- Formulaire création / édition ----
+    if ($new || $editId > 0) {
+        $n = ['id' => 0, 'title' => '', 'summary' => '', 'body' => '', 'image' => '', 'category' => 'À la une', 'status' => 'published', 'created_at' => date('Y-m-d\TH:i')];
+        if ($editId > 0) { $st = db()->prepare('SELECT * FROM site_news WHERE id=?'); $st->execute([$editId]); $r = $st->fetch(); if ($r) { $n = $r; $n['created_at'] = date('Y-m-d\TH:i', strtotime((string)$r['created_at'])); } }
+        $mdir = dirname(__DIR__) . '/web-gallery/v2/pages_img';
+        $media = is_dir($mdir) ? array_values(array_filter(scandir($mdir), fn($f) => !in_array($f, ['.', '..'], true) && is_file($mdir . '/' . $f))) : [];
+        page_title($editId ? 'Modifier l\'actualité' : 'Créer une actualité', 'Remplis le titre, le résumé et le texte. Publie pour l\'afficher dans « Quoi de neuf ? ».');
+        echo '<p class="sm-crumb">Gestion du Site › <b>Actualités</b> › ' . ($editId ? 'Modifier' : 'Nouvelle') . '</p>';
+        echo '<p style="margin:0 0 10px"><a href="?p=sitemgr&sec=news">← Toutes les actualités</a>' . ($editId ? ' · <a href="/v2/?p=actu&id=' . $editId . '&preview=1" target="_blank">👁️ Prévisualiser ↗</a>' : '') . '</p>';
+        echo '<form method="post" class="js" data-reload id="nwform"><div class="card">' . csrf_field()
+           . '<input type="hidden" name="action" value="site_news_save"><input type="hidden" name="id" value="' . (int)$n['id'] . '"><input type="hidden" name="body" id="nwbody"><input type="hidden" name="status" id="nwstatus" value="' . h((string)$n['status']) . '">';
+        echo '<label style="display:block;margin-bottom:10px">Titre<input name="title" value="' . h((string)$n['title']) . '" required></label>';
+        echo '<label style="display:block;margin-bottom:10px">Résumé <span class="sub">(affiché dans « Quoi de neuf ? »)</span><input name="summary" value="' . h((string)$n['summary']) . '" maxlength="255"></label>';
+        // éditeur visuel
+        echo '<label style="display:block;margin-bottom:4px">Texte complet de l\'article</label>';
+        echo '<div style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1px solid var(--line2);border-bottom:0;border-radius:6px 6px 0 0;background:var(--panel2)">';
+        foreach ([['nwB(\'formatBlock\',\'P\')', 'Paragraphe'], ['nwB(\'formatBlock\',\'H3\')', 'Titre'], ['nwB(\'bold\')', 'Gras'], ['nwB(\'italic\')', 'Italique'], ['nwB(\'insertUnorderedList\')', 'Liste'], ['nwLink()', 'Lien']] as $t)
+            echo '<button type="button" onclick="' . h($t[0]) . '" style="padding:5px 11px;border:1px solid var(--line2);border-radius:5px;background:var(--panel);color:var(--txt);cursor:pointer;font-size:12px">' . h($t[1]) . '</button>';
+        echo '</div><div id="nwed" contenteditable="true" oninput="nwSync()" style="min-height:150px;border:1px solid var(--line2);border-radius:0 0 6px 6px;padding:12px;background:#fff;color:#222;font:12px/1.5 Verdana,Arial,sans-serif">' . (string)$n['body'] . '</div>';
+        // image + date
+        echo '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px"><label style="flex:1;min-width:220px">Image (illustration)<input name="image" id="nwimg" value="' . h((string)$n['image']) . '" placeholder="/web-gallery/v2/pages_img/…"></label>'
+           . '<label style="min-width:180px">Date<input type="datetime-local" name="created_at" value="' . h((string)$n['created_at']) . '"></label></div>';
+        echo '<div id="nwimgprev" style="margin-top:6px">' . ((string)$n['image'] !== '' ? '<img src="' . h((string)$n['image']) . '" style="max-height:60px;border:1px solid var(--line2);border-radius:5px">' : '') . '</div>';
+        echo '<div style="margin-top:6px"><button type="button" class="sm-btn" onclick="document.getElementById(\'nwmedia\').style.display=(document.getElementById(\'nwmedia\').style.display===\'none\'?\'block\':\'none\')">🖼️ Choisir une image</button></div>';
+        echo '<div id="nwmedia" style="display:none;margin-top:8px;padding:8px;border:1px solid var(--line2);border-radius:6px;max-height:200px;overflow:auto"><div style="display:flex;flex-wrap:wrap;gap:6px">';
+        foreach ($media as $f) echo '<img src="/web-gallery/v2/pages_img/' . h($f) . '" title="' . h($f) . '" onclick="nwPick(\'/web-gallery/v2/pages_img/' . h($f) . '\')" style="width:70px;height:46px;object-fit:contain;border:1px solid var(--line2);border-radius:4px;cursor:pointer;background:#fff">';
+        echo '</div><a href="?p=sitemgr&sec=media" target="_blank" class="sub">+ Importer une image ↗</a></div>';
+        // actions
+        echo '<div class="sm-actions"><button class="sm-btn" type="submit" onclick="document.getElementById(\'nwstatus\').value=\'draft\'">📝 Enregistrer le brouillon</button>'
+           . '<button class="sm-btn primary" type="submit" onclick="document.getElementById(\'nwstatus\').value=\'published\'">✅ Publier</button>';
+        if ($editId) echo '<button class="sm-btn danger" type="submit" formaction="" onclick="if(!confirm(\'Supprimer cette actualité ?\'))return false;this.form.querySelector(\'[name=action]\').value=\'site_news_delete\'" style="margin-left:auto">🗑️ Supprimer</button>';
+        echo '</div></div></form>';
+        echo <<<'JS'
+<script>
+function nwEl(){return document.getElementById('nwed');}
+function nwSync(){document.getElementById('nwbody').value=nwEl().innerHTML;}
+function nwB(c,v){nwEl().focus();document.execCommand(c,false,v||null);nwSync();}
+function nwLink(){var u=prompt('Lien (ex. ?p=club ou https://…) :','?p=');if(u){nwEl().focus();document.execCommand('createLink',false,u);nwSync();}}
+function nwPick(s){document.getElementById('nwimg').value=s;document.getElementById('nwimgprev').innerHTML='<img src="'+s+'" style="max-height:60px;border:1px solid var(--line2);border-radius:5px">';document.getElementById('nwmedia').style.display='none';}
+(function(){nwSync();var f=document.getElementById('nwform');if(f)f.addEventListener('submit',nwSync,true);})();
+</script>
+JS;
+        return;
+    }
+    // ---- Liste des actualités = la liste unifiée, pré-filtrée sur les news (un seul système) ----
+    sitemgr_allcontent('news');
+}
+function sitemgr_events(): void {
+    echo '<div class="panel"><div class="ph"><h3>🎉 Événements & Infobus</h3></div>';
+    echo '<p class="muted" style="padding:4px 0">Gère la <b>programmation affichée sur le site</b> (prochains événements + horaires Infobus).</p>';
+    echo '<p class="muted sm">⬜ À construire (point 9) : titre/description/illustration/date/intervenant/salle/état/mise en avant, prochains + archive.</p>';
+    echo '<div class="warn" style="margin-top:6px">⚠️ Le contrôle du bus <b>en jeu</b> (ouverture, votes) reste dans l\'onglet <a href="?p=bus">Bus (Infobus)</a> et n\'est pas présenté comme pleinement intégré à Kepler tant que ce n\'est pas testé.</div></div>';
+}
+/* ---- Médias (point 10) : bibliothèque locale ---- */
+function sitemgr_media(): void {
+    $dir = dirname(__DIR__) . '/web-gallery/v2/pages_img';
+    $url = '/web-gallery/v2/pages_img';
+    echo '<div class="panel"><div class="ph"><h3>🖼️ Importer une image</h3></div>';
+    echo '<form method="post" class="js" data-reload enctype="multipart/form-data"><div class="row">' . csrf_field() . '<input type="hidden" name="action" value="media_upload">'
+       . '<input type="file" name="file" accept="image/*" required><button>⬆️ Importer</button></div>'
+       . '<p class="muted sm" style="margin-top:4px">Hébergé dans le projet (<code>web-gallery/v2/pages_img/</code>). GIF animés et dimensions natives conservés (aucune conversion).</p></div>';
+
+    $files = is_dir($dir) ? array_values(array_filter(scandir($dir), fn($f) => !in_array($f, ['.', '..'], true) && is_file($dir . '/' . $f))) : [];
+    // "utilisée par" : scan site_pages + carrousel
+    $useHay = '';
+    foreach (db()->query('SELECT body_html FROM site_pages') as $r) $useHay .= (string)$r['body_html'];
+    foreach (db()->query('SELECT image FROM site_carousel') as $r) $useHay .= ' ' . (string)$r['image'];
+    echo '<div class="panel"><div class="ph"><h3>Bibliothèque</h3><span class="muted sm" style="margin-left:auto">' . count($files) . ' fichiers</span></div>';
+    if (!$files) echo '<p class="muted" style="padding:4px 0">Aucun fichier importé pour l\'instant.</p>';
+    else {
+        echo '<div style="display:flex;flex-wrap:wrap;gap:8px;padding:4px 0">';
+        foreach ($files as $f) {
+            $used = strpos($useHay, $f) !== false;
+            $sz = @getimagesize($dir . '/' . $f);
+            $dim = $sz ? $sz[0] . '×' . $sz[1] : '?';
+            echo '<div style="width:120px;border:1px solid var(--line2);border-radius:6px;padding:5px;text-align:center">'
+               . '<img src="' . $url . '/' . h($f) . '" alt="" style="max-width:100%;max-height:60px;object-fit:contain"><div class="muted sm" style="word-break:break-all;margin-top:3px">' . h($f) . '</div>'
+               . '<div class="muted sm">' . $dim . ' · ' . ($used ? '<span style="color:var(--green)">utilisée</span>' : 'non utilisée') . '</div></div>';
+        }
+        echo '</div>';
+    }
+    echo '<p class="muted sm">⬜ À compléter (point 10) : catégories, recherche, alt, liste précise des pages qui utilisent chaque image, garde-fou de suppression.</p></div>';
+}
+function sitemgr_settings(): void {
+    echo '<div class="panel"><div class="ph"><h3>⚙️ Réglages du site</h3></div>';
+    $settings = [
+        ['site.name', 'Nom du rétro', 'Habbo'],
+        ['site.contact', 'Contact (email/lien)', ''],
+        ['site.footer', 'Texte du pied de page', ''],
+    ];
+    foreach ($settings as $cfg) {
+        echo '<form method="post" class="js row" data-reload style="margin-bottom:6px">' . csrf_field() . '<input type="hidden" name="action" value="site_setting"><input type="hidden" name="key" value="' . h($cfg[0]) . '">';
+        echo '<label style="flex:1">' . h($cfg[1]) . '<input name="value" value="' . h(site_setting_get($cfg[0], $cfg[2])) . '" maxlength="400"></label><button style="align-self:flex-end">💾</button></form>';
+    }
+    echo '<p class="muted sm">La maintenance et l\'accès pendant maintenance se gèrent dans l\'onglet <a href="?p=server">Serveur</a>. Aucun éditeur de code ici (point 11).</p></div>';
+}
+function sitemgr_history(): void {
+    echo '<div class="panel"><div class="ph"><h3>🕑 Historique des modifications du site</h3></div>';
+    ensure_admin_log();
+    $rows = db()->query("SELECT author,action,detail,created_at FROM admin_log WHERE action IN ('sitepage_save','carousel_save','site_setting','nav_tab_save','nav_item_save','nav_move','nav_flag','media_upload','news_add','news_update','news_delete') ORDER BY id DESC LIMIT 40")->fetchAll();
+    if (!$rows) echo '<p class="muted" style="padding:4px 0">Aucune action enregistrée.</p>';
+    else { echo '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr class="muted sm"><th style="text-align:left">Date</th><th style="text-align:left">Staff</th><th style="text-align:left">Action</th><th style="text-align:left">Détail</th></tr>';
+        foreach ($rows as $r) echo '<tr><td style="padding:3px 0">' . h((string)$r['created_at']) . '</td><td>' . h((string)$r['author']) . '</td><td>' . h((string)$r['action']) . '</td><td class="muted sm">' . h((string)$r['detail']) . '</td></tr>';
+        echo '</table>'; }
+    echo '<p class="muted sm" style="margin-top:6px">⬜ À venir (point 14) : versions complètes des contenus + restauration + anti-écrasement concurrent.</p></div>';
+}
 /* Carte action POST -> onglet propriétaire (le plus PERMISSIF où le bouton est exposé),
    pour contrôler le droit AVANT exécution sans jamais verrouiller un accès existant. */
 function action_tab(string $a): string {
     static $map = [
+        // Gestion du Site (v2)
+        'carousel_save' => 'sitemgr', 'site_setting' => 'sitemgr', 'sitepage_save' => 'sitemgr', 'sitepage_block_save' => 'sitemgr', 'sitepage_arrange' => 'sitemgr',
+        'nav_tab_save' => 'sitemgr', 'nav_item_save' => 'sitemgr', 'nav_move' => 'sitemgr', 'nav_flag' => 'sitemgr', 'media_upload' => 'sitemgr',
+        'page_pin' => 'sitemgr', 'site_page_create' => 'sitemgr', 'site_news_save' => 'news', 'site_news_delete' => 'news',
+        'hm_report_status' => 'homemod', 'hm_home_hide' => 'homemod', 'hm_home_lock' => 'homemod', 'hm_gb_hide' => 'homemod', 'hm_item_del' => 'homemod', 'hm_asset_toggle' => 'homemod',
         // Joueurs
         'user_update' => 'users', 'user_details' => 'users', 'user_rank' => 'users', 'credits_all' => 'users',
         'user_password' => 'users', 'user_create' => 'users', 'user_credits' => 'users', 'user_hc' => 'users',
@@ -2116,7 +3484,7 @@ function page_access(): void {
     echo '<p class="hint" style="font-size:13px">Rang minimum requis pour chaque onglet. <b>5</b> = Super Hobba · <b>6</b> = Modérateur · <b>7</b> = Administrateur. « Accueil » et « Recherche » restent toujours accessibles. Page réservée au rang 7.</p>';
     echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="tabperm_update">';
     $nav = admin_nav();
-    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Site & contenus' => '📰', 'Messagerie' => '💬', 'Administration' => '⚙️'];
+    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Gestion du Site' => '🌐', 'Messagerie' => '💬', 'Administration' => '⚙️'];
     foreach (nav_groups() as $gl => $keys) {
         if ($gl === '') continue;
         echo '<div class="panel"><div class="ph"><h3>' . ($gicons[$gl] ?? '📁') . ' ' . h($gl) . '</h3></div><table class="clean"><tr><th>Onglet</th><th style="width:280px">Rang minimum</th></tr>';
@@ -2426,7 +3794,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
 .logbox{max-height:230px;overflow:auto;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;font:12px/1.5 var(--mono);color:var(--mut);white-space:pre-wrap;word-break:break-word;margin:0}
 </style></head><body>
 <aside class="side"><div class="brand"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="width:100%;max-width:180px;height:auto;display:block;margin:0 auto 4px;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated"><small>ADMINISTRATION</small></div><nav><?php
-    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Site & contenus' => '📰', 'Messagerie' => '💬', 'Administration' => '⚙️'];
+    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Gestion du Site' => '🌐', 'Messagerie' => '💬', 'Administration' => '⚙️'];
     foreach (nav_groups() as $grpLabel => $keys) {
         $visible = array_filter($keys, fn($k) => isset($nav[$k]) && tab_allowed($k));
         if (!$visible) continue;

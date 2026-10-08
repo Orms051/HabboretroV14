@@ -25,6 +25,7 @@
 # --- Sauvegardes / dumps (contiennent des hash users) ---
 /_backups/
 /_backups_HabboV14/
+/_backups_refonte/
 *.sql
 *.bak
 *.bak_*
@@ -35,6 +36,9 @@ _backup_*/
 *.tmp
 Thumbs.db
 desktop.ini
+
+# --- Fichier d'identifiants de test local (ne pas committer) ---
+Server/www/v2/tools/.admin_test_login.txt
 
 # --- Runtime PHP (binaires, téléchargeable) ---
 /Server/php/
