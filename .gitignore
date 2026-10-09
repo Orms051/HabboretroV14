@@ -27,6 +27,9 @@
 /_backups_HabboV14/
 /_backups_refonte/
 *.sql
+# Exception : migrations SQL versionnées (code de catalogue, sans données perso)
+!Server/www/_migrations/
+!Server/www/_migrations/*.sql
 *.bak
 *.bak_*
 kepler.jar.bak_*
