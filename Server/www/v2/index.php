@@ -713,6 +713,7 @@ if ($spage) {
         render_head((string)($spage['parent_tab'] ?: 'home'), null);
         if ($preview) echo '<div class="hist-note" style="background:#e7f0ff;border-color:#9fbce8;color:#234">👁️ <b>Aperçu staff</b> — ' . ((trim((string)($spage['body_draft'] ?? '')) !== '') ? 'brouillon non publié' : 'version publiée') . '. Non visible par les visiteurs.</div>';
         if ((int)$spage['is_historical']) echo '<div class="hist-note">📅 <b>Contenu d\'archive.</b> Ce texte reproduit une page d\'époque (2006-2007) : l\'offre ou l\'événement décrit n\'est pas actif sur ce rétro, le texte est conservé à l\'identique pour fidélité.</div>';
+        render_carousel($p); // carrousel propre à cette page (si configuré dans l'admin)
         echo '<div class="imported">' . $body . '</div>';
         render_foot(); exit;
     }

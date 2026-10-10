@@ -166,6 +166,25 @@ function tlink(string $label, string $href, string $target = ''): string {
     $t = $target !== '' ? ' target="' . $target . '" rel="noopener"' : '';
     return '<a class="alink" href="' . h($href) . '"' . $t . '>' . h($label) . '</a>';
 }
+/** Carrousel d'une page (indépendant, géré dans l'admin). Ne rend rien si la page n'a aucune diapo. */
+function render_carousel(string $page, string $title = 'À ne pas manquer'): void {
+    $slides = carousel_slides($page);
+    if (!$slides) return;
+    $cnums = '';
+    foreach ($slides as $i => $s) $cnums .= '<span class="cnum' . ($i === 0 ? ' on' : '') . '" id="cnum' . $i . '" onclick="carGo(' . $i . ')">' . ($i + 1) . '</span>';
+    box_open(h($title) . ' <span class="cnums">' . $cnums . '</span>', 'k');
+    echo '<div class="carousel" id="carousel" data-n="' . count($slides) . '">';
+    foreach ($slides as $i => $s) {
+        $ext = (strpos((string)$s['link'], '/client.php') === 0);
+        $tgt = $ext ? ' target="_blank" rel="noopener"' : '';
+        echo '<div class="cslide' . ($i === 0 ? ' on' : '') . '" id="cslide' . $i . '">'
+           . '<a class="cstage"' . ($s['link'] ? ' href="' . h((string)$s['link']) . '"' . $tgt : '') . ' style="background-image:url(' . h((string)$s['image']) . ')"><span class="ccap">' . h((string)$s['title']) . '</span></a>'
+           . '<div class="crow"><span class="ctext">' . h((string)$s['body']) . '</span>'
+           . '<span class="cbtns">' . clink('Entrer !', (string)($s['link'] ?: '/client.php'), $ext ? '_blank' : '') . tlink('En savoir plus »', (string)($s['link'] ?: '?p=help'), $ext ? '_blank' : '') . '</span></div></div>';
+    }
+    echo '</div>';
+    box_close();
+}
 function box_open(string $head = '', string $hc = 'o', string $variant = 'welcome'): void {
     echo '<div class="cb ' . $variant . '"><div class="bt"><div></div></div><div class="i1"><div class="i2"><div class="i3">';
     if ($head !== '') echo '<div class="bhead ' . $hc . '">' . $head . '</div>';

@@ -499,11 +499,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             /* --- Gestion du Site (v2) : carrousel + réglages accueil --- */
             case 'carousel_save':
                 ensure_carousel_admin();
+                $cpage = preg_replace('/[^a-z0-9_\-]/', '', (string)($_POST['page'] ?? 'home')); if ($cpage === '') $cpage = 'home';
                 $slot = max(1, min(4, (int)($_POST['slot'] ?? 0)));
                 $active = isset($_POST['active']) ? 1 : 0;
-                db()->prepare('INSERT INTO site_carousel (slot,title,image,body,link,active) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE title=VALUES(title),image=VALUES(image),body=VALUES(body),link=VALUES(link),active=VALUES(active)')
-                    ->execute([$slot, mb_substr(trim((string)($_POST['title'] ?? '')), 0, 120), mb_substr(trim((string)($_POST['image'] ?? '')), 0, 255), mb_substr(trim((string)($_POST['body'] ?? '')), 0, 400), mb_substr(trim((string)($_POST['link'] ?? '')), 0, 255), $active]);
-                $msg = '🎠 Emplacement carrousel #' . $slot . ' enregistré.'; break;
+                db()->prepare('INSERT INTO site_carousel (page,slot,title,image,body,link,active) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE title=VALUES(title),image=VALUES(image),body=VALUES(body),link=VALUES(link),active=VALUES(active)')
+                    ->execute([$cpage, $slot, mb_substr(trim((string)($_POST['title'] ?? '')), 0, 120), mb_substr(trim((string)($_POST['image'] ?? '')), 0, 255), mb_substr(trim((string)($_POST['body'] ?? '')), 0, 400), mb_substr(trim((string)($_POST['link'] ?? '')), 0, 255), $active]);
+                $msg = '🎠 Emplacement carrousel #' . $slot . ' (page « ' . h($cpage) . ' ») enregistré.'; break;
             case 'site_setting':
                 $allowed = ['site.infobus', 'site.safety_slogan', 'site.games_prog',
                     'site.home_besoin', 'site.home_bienvenue', 'site.home_securite',
@@ -996,7 +997,7 @@ function tab_min(string $tab): int { $m = tab_perms(); return $m[$tab] ?? tab_de
 function tab_allowed(string $tab): bool { return (int)($_SESSION['admin']['rank'] ?? 0) >= tab_min($tab); }
 /* ---- Gestion du Site (v2) : carrousel + réglages accueil ---- */
 function ensure_carousel_admin(): void {
-    db()->exec("CREATE TABLE IF NOT EXISTS site_carousel (slot TINYINT NOT NULL PRIMARY KEY, title VARCHAR(120) NOT NULL DEFAULT '', image VARCHAR(255) NOT NULL DEFAULT '', body VARCHAR(400) NOT NULL DEFAULT '', link VARCHAR(255) NOT NULL DEFAULT '', active TINYINT NOT NULL DEFAULT 1) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("CREATE TABLE IF NOT EXISTS site_carousel (page VARCHAR(64) NOT NULL DEFAULT 'home', slot TINYINT NOT NULL, title VARCHAR(120) NOT NULL DEFAULT '', image VARCHAR(255) NOT NULL DEFAULT '', body VARCHAR(400) NOT NULL DEFAULT '', link VARCHAR(255) NOT NULL DEFAULT '', active TINYINT NOT NULL DEFAULT 1, PRIMARY KEY (page,slot)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
 function site_setting_get(string $k, string $def = ''): string {
     try { $st = db()->prepare('SELECT value FROM settings WHERE setting=?'); $st->execute([$k]); $v = $st->fetchColumn(); return $v === false ? $def : (string)$v; } catch (Throwable $e) { return $def; }
@@ -1923,17 +1924,23 @@ function sitemgr_item_form(array $it, array $tabs, array $pages): string {
 }
 /* ---- Carrousel (point 7) ---- */
 function sitemgr_carousel(): void {
-    echo '<div class="card"><h3>🎠 Carrousel « À ne pas manquer »</h3><div class="sub">Les 4 diapositives affichées en haut de l\'accueil. C\'est le seul écran d\'édition du carrousel (accessible aussi depuis la page Accueil).</div>';
-    sitemgr_carousel_inner();
+    $pages = db()->query('SELECT slug,title FROM site_pages ORDER BY title')->fetchAll();
+    $cur = preg_replace('/[^a-z0-9_\-]/', '', (string)($_GET['cpage'] ?? 'home')); if ($cur === '') $cur = 'home';
+    echo '<div class="card"><h3>🎠 Carrousels par page</h3><div class="sub">Chaque page a son propre carrousel (4 emplacements, indépendants). L\'accueil affiche le carrousel « home ».</div>';
+    echo '<form method="get" style="margin:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input type="hidden" name="p" value="sitemgr"><input type="hidden" name="sec" value="carousel"><label><b>Page :</b></label><select name="cpage" onchange="this.form.submit()">';
+    echo '<option value="home"' . ($cur === 'home' ? ' selected' : '') . '>Accueil (home)</option>';
+    foreach ($pages as $pg) { $sl = (string)$pg['slug']; echo '<option value="' . h($sl) . '"' . ($cur === $sl ? ' selected' : '') . '>' . h((string)$pg['title']) . ' (' . h($sl) . ')</option>'; }
+    echo '</select><span class="sub">Change de page pour éditer son carrousel.</span></form>';
+    sitemgr_carousel_inner($cur);
     echo '</div>';
 }
-function sitemgr_carousel_inner(): void {
-    $slots = []; foreach (db()->query('SELECT * FROM site_carousel') as $r) $slots[(int)$r['slot']] = $r;
+function sitemgr_carousel_inner(string $page = 'home'): void {
+    $slots = []; $sst = db()->prepare('SELECT * FROM site_carousel WHERE page=?'); $sst->execute([$page]); foreach ($sst->fetchAll() as $r) $slots[(int)$r['slot']] = $r;
     $pages = db()->query('SELECT slug,title FROM site_pages ORDER BY title')->fetchAll();
-    echo '<div class="sub" style="margin:4px 0 8px">Chaque diapo a sa propre image et son sujet. Image = chemin servi par Apache (ex. <code>/c_images/banners/425x178/…</code>). Lien = <code>?p=club</code> ou <code>/client.php</code>. Un numéro désactivé est retiré des sélecteurs côté site.</div>';
+    echo '<div class="sub" style="margin:4px 0 8px">Carrousel de la page <b>« ' . h($page) . ' »</b>. Chaque diapo a son image et son sujet. Image = chemin servi par Apache (ex. <code>/c_images/banners/425x178/…</code>). Lien = <code>?p=club</code> ou <code>/client.php</code>. Un emplacement désactivé est retiré côté site.</div>';
     for ($i = 1; $i <= 4; $i++) {
         $s = $slots[$i] ?? ['title' => '', 'image' => '', 'body' => '', 'link' => '', 'active' => 1];
-        echo '<form method="post" class="js" data-reload style="border-top:1px solid var(--line2);padding:9px 0">' . csrf_field() . '<input type="hidden" name="action" value="carousel_save"><input type="hidden" name="slot" value="' . $i . '">';
+        echo '<form method="post" class="js" data-reload style="border-top:1px solid var(--line2);padding:9px 0">' . csrf_field() . '<input type="hidden" name="action" value="carousel_save"><input type="hidden" name="page" value="' . h($page) . '"><input type="hidden" name="slot" value="' . $i . '">';
         echo '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>#' . $i . '</b>';
         if ((string)$s['image'] !== '') echo '<img src="' . h((string)$s['image']) . '" alt="" style="width:84px;height:42px;object-fit:cover;border:1px solid var(--line2);border-radius:5px">';
         echo '<label style="flex:1;min-width:160px">Titre<input name="title" value="' . h((string)$s['title']) . '"></label>'

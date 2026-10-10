@@ -76,8 +76,8 @@ function av_url(string $figure, string $sex, string $direction = '2', string $si
 
 /* ---- Carrousel « À ne pas manquer » (4 emplacements, géré dans l'admin) ---- */
 function ensure_carousel(): void {
-    db()->exec("CREATE TABLE IF NOT EXISTS site_carousel (slot TINYINT NOT NULL PRIMARY KEY, title VARCHAR(120) NOT NULL DEFAULT '', image VARCHAR(255) NOT NULL DEFAULT '', body VARCHAR(400) NOT NULL DEFAULT '', link VARCHAR(255) NOT NULL DEFAULT '', active TINYINT NOT NULL DEFAULT 1) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    $n = (int) db()->query('SELECT COUNT(*) FROM site_carousel')->fetchColumn();
+    db()->exec("CREATE TABLE IF NOT EXISTS site_carousel (page VARCHAR(64) NOT NULL DEFAULT 'home', slot TINYINT NOT NULL, title VARCHAR(120) NOT NULL DEFAULT '', image VARCHAR(255) NOT NULL DEFAULT '', body VARCHAR(400) NOT NULL DEFAULT '', link VARCHAR(255) NOT NULL DEFAULT '', active TINYINT NOT NULL DEFAULT 1, PRIMARY KEY (page,slot)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $n = (int) db()->query("SELECT COUNT(*) FROM site_carousel WHERE page='home'")->fetchColumn();
     if ($n === 0) {
         $def = [
             [1, "Bienvenue dans l'Hôtel !", '/c_images/Frontpage_images/front_page_hotel_with_habbos.png', "Rencontre tes amis et décore ton appart. L'entrée est gratuite !", '/client.php'],
@@ -85,12 +85,13 @@ function ensure_carousel(): void {
             [3, 'Le Habbo Club', '/c_images/web_promo/promo_hc.png', 'Mobis exclusifs, cadeaux et badge doré avec le HC.', '?p=club'],
             [4, 'Les jeux Habbo', '/c_images/banners/425x178/bb2_topstory01.gif', 'BattleBall, SnowStorm… défie les autres Habbos !', '?p=games'],
         ];
-        $st = db()->prepare('INSERT INTO site_carousel (slot,title,image,body,link,active) VALUES (?,?,?,?,?,1)');
+        $st = db()->prepare("INSERT INTO site_carousel (page,slot,title,image,body,link,active) VALUES ('home',?,?,?,?,?,1)");
         foreach ($def as $d) { try { $st->execute($d); } catch (Throwable $e) {} }
     }
 }
-function carousel_slides(): array {
-    try { ensure_carousel(); return db()->query('SELECT slot,title,image,body,link FROM site_carousel WHERE active=1 ORDER BY slot')->fetchAll(); }
+/** Diapos actives d'un carrousel de page (défaut : accueil). Chaque page a ses propres 4 emplacements. */
+function carousel_slides(string $page = 'home'): array {
+    try { ensure_carousel(); $st = db()->prepare('SELECT slot,title,image,body,link FROM site_carousel WHERE page=? AND active=1 ORDER BY slot'); $st->execute([$page]); return $st->fetchAll(); }
     catch (Throwable $e) { return []; }
 }
 
