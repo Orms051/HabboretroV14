@@ -47,8 +47,16 @@ if errorlevel 1 (
   echo     Apache deja en marche.
 )
 
-echo [4/4] Demarrage de l'emulateur Kepler...
+echo [4/5] Demarrage de l'emulateur Kepler...
 start "HabboretroV14 - Emulateur" /min "%~dp0Server\www\run.bat"
+
+echo [5/5] Service d'avatars Minerva (local, port 5123)...
+if exist "%~dp0tools\minerva-bin\start-minerva.ps1" (
+  start "HabboretroV14 - Avatars (Minerva)" /min powershell -NoProfile -WindowStyle Minimized -ExecutionPolicy Bypass -File "%~dp0tools\minerva-bin\start-minerva.ps1"
+  echo     Minerva lance (relance auto si plantage, mono-instance).
+) else (
+  echo     Minerva non installe - le site affichera une silhouette. Voir Server\www\avatar\README.md
+)
 
 echo.
 echo ============================================

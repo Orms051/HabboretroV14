@@ -135,13 +135,17 @@ if ($png !== false && $png !== null && $httpCode === 200 && strncmp($png, "\x89P
     $valid = $sz && $sz[0] > 0 && $sz[1] > 0 && $sz['mime'] === 'image/png';
 }
 if ($valid) {
+    // Mise en cache best-effort (écriture atomique : tmp + rename), nettoyage du tmp si échec.
     @mkdir(AVA_CACHE_DIR, 0775, true);
-    // écriture atomique (fichier temporaire + rename) pour éviter les lectures partielles
     $tmp = $cacheFile . '.' . getmypid() . '.tmp';
-    if (@file_put_contents($tmp, $png, LOCK_EX) !== false) { @rename($tmp, $cacheFile); }
-    if (is_file($cacheFile) && filesize($cacheFile) > 0) { serve_png($cacheFile, $key); }
+    if (@file_put_contents($tmp, $png, LOCK_EX) !== false) {
+        if (!@rename($tmp, $cacheFile)) @unlink($tmp);
+    }
+    // On sert le PNG depuis la mémoire (insensible aux courses d'écriture du cache).
     header('Content-Type: image/png');
-    header('Cache-Control: public, max-age=86400');
+    header('Cache-Control: public, max-age=0, must-revalidate');
+    header('ETag: "' . $key . '"');
+    header('Content-Length: ' . strlen($png));
     echo $png; exit;
 }
 

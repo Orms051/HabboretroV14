@@ -10,6 +10,11 @@ REM MariaDB du pack
 for /f "tokens=2 delims=," %%P in ('tasklist /fi "imagename eq mysqld.exe" /fo csv /nh 2^>nul') do (
   wmic process where "ProcessId=%%~P" get ExecutablePath 2>nul | findstr /i "HabboretroV14" >nul && taskkill /pid %%~P /f >nul 2>&1
 )
+REM Service d'avatars Minerva (superviseur + processus)
+if exist "%~dp0tools\minerva-bin\stop-minerva.ps1" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\minerva-bin\stop-minerva.ps1" >nul 2>&1
+)
+
 REM Apache
 taskkill /im httpd.exe /f >nul 2>&1
 
