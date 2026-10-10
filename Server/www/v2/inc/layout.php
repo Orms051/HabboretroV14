@@ -251,7 +251,7 @@ function tabmenu_html(?string $err): string {
 <?php return (string)ob_get_clean();
 }
 
-function render_head(string $active, ?string $err = null): void {
+function render_head(string $active, ?string $err = null, ?array $crumb = null): void {
     $u = me();
     $tabs = nav_tabs();
     // Route courante (peut être un sous-item) → onglet principal à activer + surlignage.
@@ -486,7 +486,17 @@ a.new-button:hover b{background-position:-3px -25px;text-decoration:none}
     $here = null;
     foreach ($subItems as $it) { if (!empty($it[1]) && str_starts_with((string)$it[1], '?p=') && substr($it[1], 3) === $route) { $here = $it[0]; break; } }
     // Pas de fil d'Ariane sur l'accueil (comme la référence) ; ailleurs : Accueil » Section » Sous-page.
-    if (!($tab === 'home' && $route === 'home')) {
+    // Override explicite possible : $crumb = [[libellé, href|null], ...] (dernier segment = page courante sans lien).
+    if ($crumb !== null) {
+        echo '<div id="breadcrumb">';
+        $segs = [];
+        foreach ($crumb as $c) {
+            $lbl = h((string)$c[0]); $href = $c[1] ?? null;
+            $segs[] = ($href !== null && $href !== '') ? '<a href="' . h((string)$href) . '">' . $lbl . '</a>' : $lbl;
+        }
+        echo implode(' <span class="bc-sep">&raquo;</span> ', $segs);
+        echo '</div>';
+    } elseif (!($tab === 'home' && $route === 'home')) {
         echo '<div id="breadcrumb">';
         echo '<a href="?p=home">Accueil</a> <span class="bc-sep">&raquo;</span> ';
         echo '<a href="?p=' . h($tab) . '">' . h($section) . '</a>';
@@ -512,6 +522,24 @@ function showLogin(){var f=document.getElementById('mh-login'),l=document.getEle
 var carI=0,carT=null;
 function carGo(i){var c=document.getElementById('carousel');if(!c)return;var n=parseInt(c.getAttribute('data-n'),10)||1;i=((i%n)+n)%n;for(var j=0;j<n;j++){var s=document.getElementById('cslide'+j),b=document.getElementById('cnum'+j);if(s)s.className='cslide'+(j===i?' on':'');if(b)b.className='cnum'+(j===i?' on':'');}carI=i;if(carT)clearTimeout(carT);carT=setTimeout(function(){carGo(carI+1);},6000);}
 (function(){if(document.getElementById('carousel'))carGo(0);})();
+/* Ouverture du jeu dans une fenêtre séparée (comme la V1) : zone intérieure 720x540,
+   nom de fenêtre fixe 'habbov14game' réutilisé si déjà ouvert. Les liens gardent un vrai
+   href vers /client.php (secours si le popup est bloqué ou si le JS est inactif). */
+(function(){
+  function openGame(url){
+    var win=window.open(url,'habbov14game','width=728,height=548,resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no');
+    if(win){win.focus();return true;}
+    return false; // popup bloqué -> on laisse le navigateur suivre le href (nouvel onglet = secours)
+  }
+  document.addEventListener('click',function(e){
+    var a=e.target&&e.target.closest?e.target.closest('a'):null;
+    if(!a)return;
+    var href=a.getAttribute('href')||'';
+    if(/(^|\/)client\.php(\?|#|$)/.test(href)||/\/client\.php(\?|#|$)/.test(a.href)){
+      if(openGame(a.href)){e.preventDefault();}
+    }
+  });
+})();
 </script>
 </body></html>
 <?php

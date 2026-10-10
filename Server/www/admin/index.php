@@ -916,10 +916,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     db()->prepare('UPDATE rooms SET ccts=? WHERE id=?')->execute([$target . $extra, (int)$r['id']]); $n++;
                 }
                 $msg = '🎨 Décor « ' . season_label($season) . ' » appliqué à ' . $n . ' salle(s). Redémarre l\'émulateur.'; break;
+            case 'cmd_fav_toggle':
+                ensure_command_favorites();
+                $cmd = preg_replace('/[^a-z0-9_]/', '', strtolower((string)($_POST['command'] ?? '')));
+                $uid = (int)($_SESSION['admin']['id'] ?? 0);
+                if ($cmd === '' || $uid <= 0) { $ok = false; $msg = 'Commande invalide.'; break; }
+                $ex = db()->prepare('SELECT 1 FROM admin_command_favorites WHERE user_id=? AND command=?');
+                $ex->execute([$uid, $cmd]);
+                if ($ex->fetchColumn()) {
+                    db()->prepare('DELETE FROM admin_command_favorites WHERE user_id=? AND command=?')->execute([$uid, $cmd]);
+                    $msg = 'retiré';
+                } else {
+                    db()->prepare('INSERT INTO admin_command_favorites (user_id,command) VALUES (?,?)')->execute([$uid, $cmd]);
+                    $msg = 'ajouté';
+                }
+                break;
             default: $ok = false; $msg = 'Action inconnue.';
         }
     } catch (Throwable $e) { $ok = false; $msg = '❌ Erreur : ' . $e->getMessage(); }
-    if ($ok && !in_array($a, ['note_add', 'note_del'], true)) admin_log($a, strip_tags($msg));
+    if ($ok && !in_array($a, ['note_add', 'note_del', 'cmd_fav_toggle'], true)) admin_log($a, strip_tags($msg));
     if (is_ajax()) { header('Content-Type: application/json'); echo json_encode(['ok' => $ok, 'msg' => $msg]); exit; }
     flash($msg); redirect($back);
 }
@@ -2125,6 +2140,7 @@ function action_tab(string $a): string {
         // Communauté / modération
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
         'ban_add' => 'moderation', 'ban_remove' => 'moderation', 'bus_type' => 'bus',
+        'cmd_fav_toggle' => 'commandes',
         'pwreset_do' => 'messages', 'pwreset_reject' => 'messages',
         'cmsg_handle' => 'messages', 'cmsg_delete' => 'messages', 'umsg_send' => 'users',
         'smsg_post' => 'messages', 'smsg_delete' => 'messages',
@@ -3217,50 +3233,449 @@ function page_bus(): void {
     }
 }
 
-function page_commandes(): void {
-    page_title('Commandes en jeu', 'Toutes les commandes chat du kepler.jar');
-    echo '<p class="hint" style="font-size:13px">À taper dans le chat, précédées de <b>:</b> (deux-points). Réservées aux comptes <b>administrateur</b> (sauf indication).</p>';
-    $grp = [
-        '🎁 Joueurs / crédits' => [
-            [':givecredits &lt;user&gt; &lt;montant&gt;', 'Donne des crédits'],
-            [':givebadge &lt;user&gt; &lt;badge&gt;', 'Attribue un badge'],
-            [':giveclub &lt;user&gt; &lt;jours&gt;', 'Ajoute des jours de Habbo Club'],
-            [':giveitem &lt;user&gt; &lt;sprite&gt;', 'Donne un meuble dans la main'],
-            [':givedrink &lt;n°&gt;', 'Donne une boisson au joueur ciblé'],
-        ],
-        '🛡️ Modération / système' => [
-            [':hotelalert &lt;message&gt;', 'Alerte générale à tout l\'hôtel'],
-            [':usersonline', 'Nombre de joueurs connectés (alias :whosonline)'],
-            [':uptime', 'Durée de fonctionnement de l\'émulateur'],
-            [':reload', 'Recharge les données (catalogue, textes…)'],
-            [':setconfig &lt;clé&gt; &lt;valeur&gt;', 'Modifie un réglage serveur'],
-            [':setprice &lt;prix&gt;', 'Change le prix d\'un article du catalogue'],
-            [':shutdown', 'Arrête proprement l\'émulateur'],
-        ],
-        '🏛️ Appartement / soi-même' => [
-            [':about / :info', 'Infos sur l\'émulateur'],
-            [':coords', 'Affiche tes coordonnées dans l\'appart'],
-            [':sit', 'S\'asseoir sur place'],
-            [':afk / :idle', 'Passer absent (et retour)'],
-            [':motto &lt;texte&gt;', 'Change ta mission'],
-            [':poof / :update', 'Rafraîchir / disparaître'],
-            [':pickall', 'Ramasse tous les meubles de l\'appart'],
-            [':talk &lt;user&gt; &lt;texte&gt;', 'Fait parler un joueur (bot)'],
-            [':ufos', 'Effet OVNI'],
-            [':rgb / :rainbow', 'Gradateur arc-en-ciel'],
-        ],
-        '🚌 Bus' => [
-            [':infobus … / :bus …', 'Pilotage du bus (voir l\'onglet Bus)'],
-        ],
-    ];
-    foreach ($grp as $titre => $cmds) {
-        echo '<div class="panel"><div class="ph"><h3>' . h($titre) . '</h3></div><table class="clean"><tr><th>Commande</th><th>Effet</th></tr>';
-        foreach ($cmds as $c) echo '<tr><td><code>' . $c[0] . '</code></td><td>' . $c[1] . '</td></tr>';
-        echo '</table></div>';
+/* ===== Manuel des commandes en jeu =========================================
+ * Données SERVEUR : admin/data/commands.generated.json (via gen_commands.php).
+ * Docs FR MANUELLES : admin/data/commands.docs.php (jamais écrasées).
+ * Cette page ne modifie AUCUNE permission et n'exécute AUCUNE commande.
+ */
+function ensure_command_favorites(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS admin_command_favorites (user_id INT NOT NULL, command VARCHAR(64) NOT NULL, PRIMARY KEY (user_id, command)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+function command_favorites(): array {
+    ensure_command_favorites();
+    $uid = (int)($_SESSION['admin']['id'] ?? 0);
+    if ($uid <= 0) return [];
+    $st = db()->prepare('SELECT command FROM admin_command_favorites WHERE user_id=?');
+    $st->execute([$uid]);
+    return $st->fetchAll(PDO::FETCH_COLUMN) ?: [];
+}
+/** Charge et fusionne données extraites + docs FR. Retourne [meta, commands, unregistered, themes]. */
+function commands_inventory(): array {
+    $gen = @json_decode((string)@file_get_contents(__DIR__ . '/data/commands.generated.json'), true);
+    $docsFile = __DIR__ . '/data/commands.docs.php';
+    $docs = []; $themes = []; $proposals = [];
+    if (is_file($docsFile)) {
+        require_once $docsFile;
+        if (function_exists('commands_docs')) $docs = commands_docs();
+        if (function_exists('commands_doc_themes')) $themes = commands_doc_themes();
+        if (function_exists('commands_doc_proposals')) $proposals = commands_doc_proposals();
     }
-    echo '<p class="hint">Liste établie d\'après les commandes présentes dans <code>kepler.jar</code>. Les noms entre &lt;…&gt; sont les paramètres à remplacer.</p>';
+    $commands = [];
+    if (is_array($gen) && !empty($gen['commands'])) {
+        foreach ($gen['commands'] as $c) {
+            $doc = $docs[$c['name']] ?? [];
+            $commands[] = array_merge($c, ['doc' => $doc]);
+        }
+    }
+    return [
+        'meta'    => is_array($gen) ? ($gen + ['proposals' => $proposals]) : ['proposals' => $proposals],
+        'commands'=> $commands,
+        'unreg'   => (is_array($gen) && !empty($gen['unregistered'])) ? $gen['unregistered'] : [],
+        'themes'  => $themes,
+        'proposals' => $proposals,
+    ];
+}
+function rank_fr(int $id): string {
+    $n = [0 => 'Tous', 1 => 'Joueur', 2 => 'Community M.', 3 => 'Guide', 4 => 'Hobba', 5 => 'Super Hobba', 6 => 'Modérateur', 7 => 'Admin'];
+    return $n[$id] ?? ('rang ' . $id);
 }
 
+function cmd_fold(string $s): string {
+    $s = mb_strtolower($s, 'UTF-8');
+    $from = ['à','á','â','ä','ã','å','ç','è','é','ê','ë','ì','í','î','ï','ñ','ò','ó','ô','ö','õ','ù','ú','û','ü','ý','œ','æ'];
+    $to   = ['a','a','a','a','a','a','c','e','e','e','e','i','i','i','i','n','o','o','o','o','o','u','u','u','u','y','oe','ae'];
+    return str_replace($from, $to, $s);
+}
+
+function page_commandes(): void {
+    page_title('Commandes du jeu', 'Cherche une action, remplis les champs, copie la commande à coller dans le chat.');
+    $inv = commands_inventory();
+    $meta = $inv['meta']; $cmds = $inv['commands']; $themes = $inv['themes'];
+    $ui = function_exists('commands_ui') ? commands_ui() : [];
+    $favs = command_favorites();
+    $myRank = (int)($_SESSION['admin']['rank'] ?? 1);
+
+    if (!$cmds) {
+        echo '<div class="panel"><div class="ph"><h3>⚠️ Inventaire absent</h3></div><div style="padding:12px">';
+        echo '<p>Le fichier <code>admin/data/commands.generated.json</code> est manquant ou vide. Génère-le :</p>';
+        echo '<pre style="background:#0d1b24;color:#cfe;padding:10px;border-radius:6px"><code>php admin/tools/gen_commands.php</code></pre></div></div>';
+        return;
+    }
+
+    // ----- Fusion données + UI + regroupement par thème -----
+    $byTheme = [];        // theme => [name,…] (ordre d'origine)
+    $data = [];           // name => objet complet pour le JS
+    foreach ($cmds as $c) {
+        $name = (string)$c['name'];
+        $doc = $c['doc'] ?? [];
+        $u = $ui[$name] ?? [];
+        $theme = (string)($u['theme'] ?? ($doc['theme'] ?? 'infos'));
+        $label = (string)($u['label'] ?? $name);
+        $minRank = $c['minRankId'];
+
+        $searchParts = [$label, $name, implode(' ', $c['aliases']), implode(' ', $u['syn'] ?? []), (string)($doc['descFr'] ?? '')];
+        foreach (($doc['subcommands'] ?? []) as $s) $searchParts[] = (string)$s[0] . ' ' . (string)$s[1];
+        foreach (($u['actions'] ?? []) as $a) $searchParts[] = (string)$a['label'];
+        $search = cmd_fold(implode(' ', $searchParts));
+
+        $byTheme[$theme][] = $name;
+        $data[$name] = [
+            'name' => $name,
+            'label' => $label,
+            'aliases' => $c['aliases'],
+            'cmd' => ':' . $name,
+            'minRankId' => $minRank,
+            'who' => ($minRank === null) ? 'Membres du Habbo Club' : (($minRank >= 7) ? 'Administrateurs' : (($minRank <= 1) ? 'Tous les joueurs' : rank_fr((int)$minRank) . ' et plus')),
+            'clientSide' => !empty($c['clientSide']),
+            'sensitive' => !empty($doc['sensitive']),
+            'descFr' => (string)($doc['descFr'] ?? ($c['descriptionEn'] ?? '')),
+            'effects' => (string)($doc['effects'] ?? ''),
+            'scope' => (string)($doc['scope'] ?? ''),
+            'undo' => (string)($doc['undo'] ?? ''),
+            'conditions' => array_values($doc['conditions'] ?? []),
+            'failures' => array_values($doc['failures'] ?? []),
+            'examples' => array_values($doc['examples'] ?? []),
+            'subcommands' => array_map(fn($s) => [(string)$s[0], (string)$s[1]], $doc['subcommands'] ?? []),
+            'notes' => (string)($doc['notes'] ?? ''),
+            'permissions' => $c['permissions'],
+            'fields' => $u['fields'] ?? [],
+            'actions' => $u['actions'] ?? [],
+            'template' => (string)($u['template'] ?? (':' . $name)),
+            'summary' => (string)($u['summary'] ?? ($doc['descFr'] ?? '')),
+            'search' => $search,
+            'fav' => in_array($name, $favs, true),
+        ];
+    }
+
+    // ----- Barre d'outils -----
+    echo '<div id="cmdapp">';
+    echo '<div class="panel cmd-toolbar"><div class="ctb">';
+    echo '<input id="cmdq" type="search" placeholder="Que veux-tu faire ? Ex. crédits, bus, appartement…" autocomplete="off">';
+    echo '<label class="ctb-f">Accessibles à <select id="cmdrole">';
+    $roleOpts = [0 => 'Tous', 1 => 'Joueur', 4 => 'Hobba', 5 => 'Super Hobba', 6 => 'Modérateur', 7 => 'Administrateur'];
+    foreach ($roleOpts as $rid => $rl) echo '<option value="' . $rid . '">' . h($rl) . '</option>';
+    echo '</select></label>';
+    echo '<label class="ctb-f"><input type="checkbox" id="cmdfav"> ⭐ Mes favoris</label>';
+    echo '<button type="button" id="cmdclear" class="cbtn-ghost">Effacer les filtres</button>';
+    echo '</div></div>';
+
+    // ----- Informations techniques (repliées) -----
+    $jar = $meta['jar'] ?? []; $cnt = $meta['counts'] ?? [];
+    echo '<details class="panel cmd-tech"><summary>🧾 Informations techniques</summary><div class="cmd-tech-body">';
+    if ($jar) {
+        echo '<p><b>Source</b> : <code>Server/www/kepler.jar</code> · ' . number_format((int)($jar['size'] ?? 0), 0, ',', ' ') . ' octets · généré le ' . h(substr((string)($meta['generatedAt'] ?? ''), 0, 19)) . '</p>';
+        echo '<p class="mono-sm">SHA-256 : ' . h((string)($jar['sha256'] ?? '?')) . '</p>';
+    }
+    echo '<p>Inventaire : <b>' . (int)($cnt['commands'] ?? count($cmds)) . '</b> commandes · <b>' . (int)($cnt['aliasesTotal'] ?? 0) . '</b> alias · ' . (int)($cnt['clientSide'] ?? 0) . ' client-side · ' . (int)($cnt['unregistered'] ?? 0) . ' non enregistrées.</p>';
+    echo '<p>Régénérer (CLI, hors HTTP, sans exécuter le JAR) : <code>php admin/tools/gen_commands.php</code>. Données extraites dans <code>admin/data/commands.generated.json</code> ; descriptions FR dans <code>admin/data/commands.docs.php</code> (conservées à la régénération).</p>';
+    if (!empty($meta['limits'])) { echo '<p><b>Limites</b></p><ul>'; foreach ($meta['limits'] as $l) echo '<li>' . h($l) . '</li>'; echo '</ul>'; }
+    if (!empty($meta['warnings'])) echo '<p style="color:#b8731b">⚠ ' . h(implode(' · ', $meta['warnings'])) . '</p>';
+    // Propositions (dormantes)
+    if (!empty($inv['unreg'])) {
+        $prop = $inv['proposals'] ?? [];
+        echo '<p><b>Propositions</b> — classes présentes dans le JAR mais non enregistrées (inutilisables en jeu, aucun développement engagé) :</p><ul>';
+        foreach ($inv['unreg'] as $uu) { $note = $prop[$uu['class']] ?? ($uu['descriptionEn'] ?: '—'); echo '<li><code>' . h((string)$uu['class']) . '</code> — ' . h((string)$note) . '</li>'; }
+        echo '</ul>';
+    }
+    echo '<p><b>Aide générale « pourquoi ça ne marche pas »</b></p><ul>';
+    echo '<li>Rang insuffisant (les commandes admin exigent le rang Administrateur).</li>';
+    echo '<li>Pas propriétaire de la salle (pour Ramasser les meubles / Gradateur / OVNIs).</li>';
+    echo '<li>Arguments manquants, cible hors ligne, ou hors d\'une salle.</li>';
+    echo '<li>Habbo Club requis pour la liste des joueurs / des meubles.</li></ul>';
+    echo '</div></details>';
+
+    // ----- Maître / détail -----
+    echo '<div class="cmd-wrap">';
+    // Liste à gauche
+    echo '<div class="cmd-list" id="cmdlist">';
+    foreach ($themes as $tk => $t) {
+        if (empty($byTheme[$tk])) continue;
+        echo '<div class="cl-group" data-theme="' . h($tk) . '"><div class="cl-head">' . h($t[0] . ' ' . $t[1]) . '</div>';
+        foreach ($byTheme[$tk] as $name) {
+            $d = $data[$name];
+            echo '<button type="button" class="cmd-line" data-name="' . h($name) . '" data-search="' . h($d['search']) . '" data-minrank="' . (int)($d['minRankId'] ?? 0) . '" data-fav="' . ($d['fav'] ? '1' : '0') . '">'
+               . '<span class="cl-star" data-cmd="' . h($name) . '" role="button" title="Favori">' . ($d['fav'] ? '⭐' : '☆') . '</span>'
+               . '<span class="cl-main"><span class="cl-label">' . h($d['label']) . '</span><span class="cl-cmd">' . h($d['cmd']) . '</span></span>'
+               . '</button>';
+        }
+        echo '</div>';
+    }
+    echo '<p id="cmdnores" class="cl-nores" style="display:none">Aucune commande ne correspond.<br><button type="button" class="cbtn-ghost" id="cmdclear2">Effacer les filtres</button></p>';
+    echo '</div>';
+
+    // Détail à droite
+    echo '<div class="cmd-detail" id="cmddetail"><div class="cd-empty" id="cdEmpty">← Choisis une commande dans la liste pour la préparer.</div><div id="cdCard" style="display:none"></div></div>';
+    echo '</div>'; // .cmd-wrap
+
+    // ----- Formulaire favoris (AJAX) -----
+    echo '<form id="favform" method="post" style="display:none"><input type="hidden" name="action" value="cmd_fav_toggle"><input type="hidden" name="ajax" value="1"><input type="hidden" name="command" id="favcmd">' . csrf_field() . '</form>';
+
+    cmd_styles();
+    echo '<script>window.__CMD=' . json_encode($data, JSON_UNESCAPED_UNICODE) . ';</script>';
+    cmd_script();
+    echo '</div>'; // #cmdapp
+}
+
+function cmd_styles(): void {
+    echo <<<'CSS'
+<style>
+#cmdapp{--cp:#2f6f9f;--cp-d:#245a80;--danger:#c0392b;font-size:15px;color:#223}
+#cmdapp .panel{background:#fff}
+#cmdapp .cmd-toolbar{padding:0}
+#cmdapp .ctb{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 14px}
+#cmdapp #cmdq{flex:1;min-width:240px;font-size:16px;padding:11px 14px;border:1px solid #c3d0d8;border-radius:8px}
+#cmdapp #cmdq:focus{outline:2px solid var(--cp);border-color:var(--cp)}
+#cmdapp .ctb-f{font-size:14px;display:flex;align-items:center;gap:6px;white-space:nowrap}
+#cmdapp .ctb-f select{font-size:14px;padding:7px 9px;border:1px solid #c3d0d8;border-radius:7px}
+#cmdapp .cbtn-ghost{font-size:13px;background:none;border:1px solid #c3d0d8;border-radius:7px;padding:7px 11px;cursor:pointer;color:#456}
+#cmdapp .cbtn-ghost:hover{background:#f1f5f8}
+#cmdapp .cmd-tech{margin-top:10px}
+#cmdapp .cmd-tech>summary{cursor:pointer;padding:11px 14px;font-weight:700;font-size:14px}
+#cmdapp .cmd-tech-body{padding:0 16px 14px;font-size:13px;color:#4a5a6a;line-height:1.6}
+#cmdapp .cmd-tech-body ul{margin:4px 0 10px 18px}
+#cmdapp .mono-sm{font-family:var(--mono);font-size:11px;color:#6b8296;word-break:break-all}
+#cmdapp .cmd-wrap{display:flex;gap:16px;align-items:flex-start;margin-top:12px}
+#cmdapp .cmd-list{flex:0 0 32%;max-width:360px;min-width:250px;background:#fff;border:1px solid #e1e8ee;border-radius:10px;padding:6px;max-height:72vh;overflow:auto}
+#cmdapp .cl-group{margin-bottom:6px}
+#cmdapp .cl-head{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#7a8a99;padding:10px 10px 4px}
+#cmdapp .cmd-line{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:9px 10px;cursor:pointer;font-size:15px;color:#223}
+#cmdapp .cmd-line:hover{background:#f1f5f8}
+#cmdapp .cmd-line.sel{background:var(--cp);color:#fff}
+#cmdapp .cmd-line.sel .cl-cmd{color:#dbeafe}
+#cmdapp .cl-star{font-size:16px;line-height:1;flex:0 0 auto;color:#e0a500}
+#cmdapp .cl-main{display:flex;flex-direction:column;min-width:0}
+#cmdapp .cl-label{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#cmdapp .cl-cmd{font-family:var(--mono);font-size:12px;color:#7a8a99}
+#cmdapp .cl-nores{padding:18px 12px;text-align:center;color:#7a8a99}
+#cmdapp .cmd-detail{flex:1;min-width:0}
+#cmdapp .cd-empty{background:#fff;border:1px dashed #c3d0d8;border-radius:10px;padding:40px 20px;text-align:center;color:#7a8a99;font-size:16px}
+#cmdapp .cd-card{background:#fff;border:1px solid #e1e8ee;border-radius:10px;padding:18px 20px}
+#cmdapp .cd-back{display:none;margin-bottom:10px}
+#cmdapp .cd-title{font-size:22px;font-weight:700;margin:0 0 2px}
+#cmdapp .cd-cmd{font-family:var(--mono);font-size:14px;color:#7a8a99;margin:0 0 10px}
+#cmdapp .cd-desc{font-size:15px;line-height:1.55;margin:0 0 12px}
+#cmdapp .cd-who{display:inline-block;font-size:14px;background:#eef3f7;border-radius:6px;padding:4px 10px;margin:0 0 14px}
+#cmdapp .cd-conseq{background:#fbecea;border-left:4px solid var(--danger);color:#8a2b20;padding:9px 12px;border-radius:6px;font-size:14px;margin:0 0 14px}
+#cmdapp .cd-conseq b{color:#7a2318}
+#cmdapp .cd-field{margin:0 0 12px}
+#cmdapp .cd-field label{display:block;font-weight:600;font-size:14px;margin:0 0 4px}
+#cmdapp .cd-field .opt{font-weight:400;color:#8a97a3;font-size:13px}
+#cmdapp .cd-field input,#cmdapp .cd-field select{width:100%;max-width:420px;font-size:15px;padding:9px 11px;border:1px solid #c3d0d8;border-radius:8px}
+#cmdapp .cd-field input:focus,#cmdapp .cd-field select:focus{outline:2px solid var(--cp);border-color:var(--cp)}
+#cmdapp .cd-field.err input{border-color:var(--danger)}
+#cmdapp .cd-ex{font-size:12px;color:#8a97a3;margin:4px 0 0}
+#cmdapp .cd-fielderr{font-size:13px;color:var(--danger);margin:4px 0 0;display:none}
+#cmdapp .cd-field.err .cd-fielderr{display:block}
+#cmdapp .cd-summary{font-size:15px;background:#eef3f7;border-radius:8px;padding:11px 13px;margin:14px 0 10px}
+#cmdapp .cd-out-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#cmdapp .cd-out{flex:1;min-width:220px;font-family:var(--mono);font-weight:700;font-size:16px;padding:11px 13px;border:1px solid #c3d0d8;border-radius:8px;background:#f8fbfd}
+#cmdapp .cd-copy{font-size:16px;font-weight:700;color:#fff;background:var(--cp);border:0;border-radius:8px;padding:12px 20px;cursor:pointer}
+#cmdapp .cd-copy:hover{background:var(--cp-d)}
+#cmdapp .cd-copy:disabled{background:#b6c4cf;cursor:not-allowed}
+#cmdapp .cd-paste{font-size:13px;color:#5a6b7a;margin:8px 0 0}
+#cmdapp .cd-copied{font-size:14px;color:#1f7a3d;margin:8px 0 0;display:none}
+#cmdapp .cd-more{margin-top:16px;border-top:1px solid #eef2f5;padding-top:10px}
+#cmdapp .cd-more>summary{cursor:pointer;font-weight:700;font-size:14px;padding:4px 0}
+#cmdapp .cd-more ul{margin:6px 0 10px 18px;font-size:14px;line-height:1.55}
+#cmdapp .cd-more .ex-chip{font-family:var(--mono);background:#0d1b24;color:#bfe;display:inline-block;padding:3px 8px;border-radius:5px;margin:0 6px 5px 0;font-size:13px}
+@media(max-width:760px){
+  #cmdapp .cmd-wrap{flex-direction:column}
+  #cmdapp .cmd-list,#cmdapp .cmd-detail{width:100%;max-width:none;flex:none}
+  #cmdapp .cmd-list{max-height:none}
+  #cmdapp.detail-open .cmd-list{display:none}
+  #cmdapp:not(.detail-open) .cmd-detail{display:none}
+  #cmdapp.detail-open .cd-back{display:inline-block}
+}
+</style>
+CSS;
+}
+
+function cmd_script(): void {
+    echo <<<'JS'
+<script>
+(function(){
+  var app=document.getElementById('cmdapp');
+  var q=document.getElementById('cmdq'), role=document.getElementById('cmdrole'), favOnly=document.getElementById('cmdfav');
+  var list=document.getElementById('cmdlist'), nores=document.getElementById('cmdnores');
+  var lines=[].slice.call(document.querySelectorAll('.cmd-line'));
+  var empty=document.getElementById('cdEmpty'), cardBox=document.getElementById('cdCard');
+  var KEY='cmd_ui_state_v1';
+  function fold(s){try{return s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();}catch(e){return s.toLowerCase();}}
+  function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+  // ---- État persistant (hors valeurs de champs) ----
+  function loadState(){try{return JSON.parse(localStorage.getItem(KEY))||{};}catch(e){return {};}}
+  function saveState(){try{localStorage.setItem(KEY,JSON.stringify({q:q.value,role:role.value,fav:favOnly.checked,sel:current}));}catch(e){}}
+  var st=loadState(); var current=st.sel||null;
+  if(st.q)q.value=st.q; if(st.role!=null)role.value=st.role; if(st.fav)favOnly.checked=true;
+
+  // ---- Filtrage ----
+  function applyFilter(){
+    var toks=fold(q.value.trim()).split(/\s+/).filter(Boolean);
+    var r=parseInt(role.value,10)||0, fav=favOnly.checked, shown=0;
+    lines.forEach(function(l){
+      var s=l.dataset.search, ok=true;
+      for(var i=0;i<toks.length;i++){ if(s.indexOf(toks[i])<0){ok=false;break;} }
+      if(ok && r>0 && parseInt(l.dataset.minrank,10)>r) ok=false;
+      if(ok && fav && l.dataset.fav!=='1') ok=false;
+      l.style.display=ok?'':'none'; if(ok)shown++;
+    });
+    [].slice.call(document.querySelectorAll('.cl-group')).forEach(function(g){
+      var any=[].slice.call(g.querySelectorAll('.cmd-line')).some(function(l){return l.style.display!=='none';});
+      g.style.display=any?'':'none';
+    });
+    nores.style.display=shown?'none':'block';
+    saveState();
+  }
+  [q,role,favOnly].forEach(function(el){el.addEventListener('input',applyFilter);el.addEventListener('change',applyFilter);});
+  function clearFilters(){q.value='';role.value='0';favOnly.checked=false;applyFilter();q.focus();}
+  document.getElementById('cmdclear').addEventListener('click',clearFilters);
+  var c2=document.getElementById('cmdclear2'); if(c2)c2.addEventListener('click',clearFilters);
+
+  // ---- Favoris (étoile) ----
+  function toggleFav(name,starEl){
+    document.getElementById('favcmd').value=name;
+    var fd=new FormData(document.getElementById('favform'));
+    fetch('?p=commandes',{method:'POST',body:fd,headers:{'X-Requested-With':'fetch'}})
+      .then(function(r){return r.json();}).then(function(j){
+        if(!j.ok){if(window.toast)toast(j.msg||'Erreur',false);return;}
+        var on=(j.msg==='ajouté');
+        [].slice.call(document.querySelectorAll('.cmd-line[data-name="'+name+'"] .cl-star')).forEach(function(s){s.textContent=on?'⭐':'☆';});
+        var ln=document.querySelector('.cmd-line[data-name="'+name+'"]'); if(ln)ln.dataset.fav=on?'1':'0';
+        if(window.__CMD[name])window.__CMD[name].fav=on;
+        if(current===name)renderCard(name);
+        applyFilter();
+      }).catch(function(){if(window.toast)toast('Erreur réseau',false);});
+  }
+
+  // ---- Sélection + clics liste ----
+  lines.forEach(function(l){
+    l.addEventListener('click',function(e){
+      if(e.target.classList.contains('cl-star')){e.stopPropagation();toggleFav(l.dataset.name,e.target);return;}
+      select(l.dataset.name);
+    });
+  });
+  function select(name){
+    current=name; saveState();
+    lines.forEach(function(l){l.classList.toggle('sel',l.dataset.name===name);});
+    renderCard(name);
+    app.classList.add('detail-open');
+    var card=document.getElementById('cdCard'); if(card)card.scrollIntoView({block:'nearest'});
+  }
+
+  // ---- Rendu de la fiche ----
+  function buildField(f,idx){
+    var req=!f.opt;
+    var h='<div class="cd-field" data-key="'+esc(f.key)+'" data-rule="'+esc(f.rule||'')+'" data-opt="'+(f.opt?1:0)+'">';
+    h+='<label>'+esc(f.label)+(f.opt?' <span class="opt">(facultatif)</span>':'')+'</label>';
+    if(f.choices && f.choices.length){
+      h+='<select class="cd-input">';
+      if(f.opt)h+='<option value="">—</option>';
+      f.choices.forEach(function(ch){h+='<option value="'+esc(ch[0])+'">'+esc(ch[1])+'</option>';});
+      h+='</select>';
+    }else{
+      h+='<input type="text" class="cd-input" placeholder="'+esc(f.ph||'')+'">';
+    }
+    if(f.ex)h+='<p class="cd-ex">Exemple : '+esc(f.ex)+'</p>';
+    h+='<p class="cd-fielderr"></p></div>';
+    return h;
+  }
+  function renderCard(name){
+    var d=window.__CMD[name]; if(!d){return;}
+    empty.style.display='none'; cardBox.style.display='';
+    var hasActions=d.actions && d.actions.length;
+    var html='<div class="cd-card">';
+    html+='<button type="button" class="cbtn-ghost cd-back" id="cdBack">← Retour aux commandes</button>';
+    html+='<h2 class="cd-title">'+esc(d.label)+'</h2>';
+    html+='<p class="cd-cmd">'+esc(d.cmd)+(d.aliases.length>1?'  ·  alias '+esc(d.aliases.slice(1).map(function(a){return ':'+a;}).join(', ')):'')+'</p>';
+    if(d.descFr)html+='<p class="cd-desc">'+esc(d.descFr)+'</p>';
+    html+='<div class="cd-who">👤 '+esc(d.who)+'</div>';
+    // Conséquence sensible visible
+    if(d.sensitive){
+      var cz=d.scope?('Portée : '+d.scope):'Action sensible.';
+      var uz=d.undo?(' — Annulation : '+d.undo):'';
+      html+='<div class="cd-conseq"><b>⚠ Attention</b> — '+esc(cz+uz)+'</div>';
+    }
+    // Sélecteur d'action (sous-commandes)
+    if(hasActions){
+      html+='<div class="cd-field"><label>Action</label><select id="cdAction" class="cd-input">';
+      d.actions.forEach(function(a,i){html+='<option value="'+i+'">'+esc(a.label)+'</option>';});
+      html+='</select></div>';
+    }
+    html+='<div id="cdFields"></div>';
+    html+='<div class="cd-summary" id="cdSummary"></div>';
+    html+='<div class="cd-out-row"><input id="cdOut" class="cd-out" readonly onclick="this.select()" aria-label="Commande à copier"><button type="button" id="cdCopy" class="cd-copy">📋 Copier la commande</button></div>';
+    html+='<p class="cd-paste">À coller dans le chat du jeu.</p><p class="cd-copied" id="cdCopied">Commande copiée — colle-la dans le chat du jeu.</p>';
+    // Détails repliables
+    var more='';
+    if(d.conditions.length){more+='<p><b>Conditions</b></p><ul>';d.conditions.forEach(function(x){more+='<li>'+esc(x)+'</li>';});more+='</ul>';}
+    if(d.failures.length){more+='<p><b>Si ça ne marche pas</b></p><ul>';d.failures.forEach(function(x){more+='<li>'+esc(x)+'</li>';});more+='</ul>';}
+    if(!d.sensitive && d.effects){more+='<p><b>Effet</b> : '+esc(d.effects)+'</p>';}
+    if(!d.sensitive && d.scope){more+='<p><b>Portée</b> : '+esc(d.scope)+'</p>';}
+    if(d.examples.length){more+='<p><b>Exemples</b></p>';d.examples.forEach(function(x){more+='<span class="ex-chip">'+esc(x)+'</span>';});}
+    if(d.subcommands.length){more+='<p><b>Toutes les sous-commandes</b></p><ul>';d.subcommands.forEach(function(s){more+='<li><code>'+esc(s[0])+'</code> — '+esc(s[1])+'</li>';});more+='</ul>';}
+    if(d.notes)more+='<p>ℹ '+esc(d.notes)+'</p>';
+    if(more)html+='<details class="cd-more"><summary>Conditions et aide</summary>'+more+'</details>';
+    html+='</div>';
+    cardBox.innerHTML=html;
+
+    var bk=document.getElementById('cdBack'); if(bk)bk.addEventListener('click',function(){app.classList.remove('detail-open');});
+
+    // Champs selon action ou champs directs
+    var fieldsBox=document.getElementById('cdFields');
+    function curFields(){ if(hasActions){var i=parseInt(document.getElementById('cdAction').value,10)||0;return d.actions[i].fields||[];} return d.fields||[]; }
+    function curTemplate(){ if(hasActions){var i=parseInt(document.getElementById('cdAction').value,10)||0;return d.actions[i].template;} return d.template; }
+    function curSummary(){ if(hasActions){var i=parseInt(document.getElementById('cdAction').value,10)||0;return d.actions[i].summary;} return d.summary; }
+    function renderFields(){
+      var fs=curFields(); fieldsBox.innerHTML=fs.map(buildField).join('');
+      [].slice.call(fieldsBox.querySelectorAll('.cd-input')).forEach(function(inp){inp.addEventListener('input',update);inp.addEventListener('change',update);});
+      update();
+    }
+    function validateField(fe){
+      var inp=fe.querySelector('.cd-input'), v=(inp.value||'').trim(), opt=fe.dataset.opt==='1', rule=fe.dataset.rule, err='';
+      if(!v){ if(!opt)err='Ce champ est obligatoire.'; }
+      else if(rule==='int'){ if(!/^-?\d+$/.test(v))err='Entre un nombre entier.'; }
+      else if(rule==='badge'){ if(!/^[A-Z0-9]{3}$/.test(v))err='3 caractères en MAJUSCULES ou chiffres (ex. NL1).'; }
+      fe.classList.toggle('err',!!err);
+      fe.querySelector('.cd-fielderr').textContent=err;
+      return {ok:!err, filled:!!v, val:v};
+    }
+    function update(){
+      var tpl=curTemplate(), summary=curSummary(), allOk=true;
+      [].slice.call(fieldsBox.querySelectorAll('.cd-field')).forEach(function(fe){
+        var key=fe.dataset.key, r=validateField(fe);
+        if(!r.ok)allOk=false;
+        var token='{'+key+'}';
+        if(r.filled){ tpl=tpl.replace(token,r.val); summary=summary.replace(token,r.val); }
+        else{ tpl=tpl.replace(new RegExp('\\s*'+token.replace(/[{}]/g,'\\$&')),''); summary=summary.replace(token,'…'); }
+      });
+      tpl=tpl.replace(/\s+/g,' ').trim();
+      document.getElementById('cdOut').value=tpl;
+      document.getElementById('cdSummary').innerHTML='<b>Résumé :</b> '+esc(summary);
+      var copy=document.getElementById('cdCopy'); copy.disabled=!allOk;
+      document.getElementById('cdCopied').style.display='none';
+    }
+    if(hasActions){document.getElementById('cdAction').addEventListener('change',renderFields);}
+    renderFields();
+
+    // Copier (Chrome + Basilisk) + repli sélection manuelle
+    document.getElementById('cdCopy').addEventListener('click',function(){
+      var out=document.getElementById('cdOut'), text=out.value, done=false;
+      out.focus(); out.select(); try{out.setSelectionRange(0,text.length);}catch(e){}
+      try{ if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(text); done=true; } }catch(e){}
+      if(!done){ try{ done=document.execCommand('copy'); }catch(e){ done=false; } }
+      var c=document.getElementById('cdCopied');
+      if(done){ c.textContent='Commande copiée — colle-la dans le chat du jeu.'; c.style.color='#1f7a3d'; c.style.display='block'; if(window.toast)toast('Commande copiée !',true); }
+      else{ c.textContent='Copie automatique indisponible : le texte est sélectionné, fais Ctrl+C pour le copier.'; c.style.color='#b8731b'; c.style.display='block'; }
+    });
+  }
+
+  applyFilter();
+  if(current && window.__CMD[current]){ select(current); }
+})();
+</script>
+JS;
+}
 function entry_bg_countries(): array {
     return ['fr'=>'🇫🇷 France','us'=>'🇺🇸 USA','uk'=>'🇬🇧 Royaume-Uni','de'=>'🇩🇪 Allemagne','es'=>'🇪🇸 Espagne','it'=>'🇮🇹 Italie','br'=>'🇧🇷 Brésil','nl'=>'🇳🇱 Pays-Bas','jp'=>'🇯🇵 Japon','dk'=>'🇩🇰 Danemark','fi'=>'🇫🇮 Finlande','no'=>'🇳🇴 Norvège','se'=>'🇸🇪 Suède','ch'=>'🇨🇭 Suisse','ca'=>'🇨🇦 Canada','cn'=>'🇨🇳 Chine','ru'=>'🇷🇺 Russie','sg'=>'🇸🇬 Singapour','at'=>'🇦🇹 Autriche','au'=>'🇦🇺 Australie','pl'=>'🇵🇱 Pologne'];
 }

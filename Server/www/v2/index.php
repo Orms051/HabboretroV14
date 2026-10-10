@@ -909,7 +909,11 @@ if ($p === 'home_edit') {
     foreach ($items as $it) $jsItems[] = ['type' => $it['type'], 'resource' => (string)$it['resource'], 'x' => (int)$it['x'], 'y' => (int)$it['y'], 'z' => (int)$it['z'], 'content' => (string)($it['content'] ?? ''), 'style' => (string)($it['style'] ?? '')];
     $bgList = home_asset_list('bg');
     $stList = home_asset_list('sticker');
-    render_head('community');
+    render_head('community', null, [
+        ['Accueil', '?p=home'],
+        ['Ma Habbo Home', '?p=home/' . rawurlencode((string)$owner['username'])],
+        ['Personnalisation', null],
+    ]);
     if ($locked) { box_open('Édition bloquée', 'o'); echo '<p class="muted">L\'édition de ta Home est momentanément bloquée par la modération. Tu peux toujours la consulter.</p><div style="margin-top:8px">' . nbtn('Voir ma Home', '?p=home/' . rawurlencode((string)$owner['username'])) . '</div>'; box_close(); render_foot(); exit; }
     echo home_css();
     $ech = 460; foreach ($items as $it) $ech = max($ech, (int)$it['y'] + 210);
