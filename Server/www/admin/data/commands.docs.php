@@ -27,14 +27,108 @@
  */
 
 function commands_doc_themes(): array {
+    // Thèmes orientés métier (ordre = ordre d'affichage de la liste de gauche).
     return [
-        'soi'        => ['👤', 'Soi-même / avatar'],
-        'salle'      => ['🏠', 'Salle & meubles'],
-        'social'     => ['🥤', 'Social'],
-        'infos'      => ['ℹ️', 'Informations'],
-        'economie'   => ['💰', 'Crédits, badges & catalogue'],
-        'animation'  => ['🎪', 'Animation & modération'],
-        'systeme'    => ['🛠️', 'Système & maintenance'],
+        'personnage'   => ['🧍', 'Personnage'],
+        'appartements' => ['🏠', 'Appartements'],
+        'credits'      => ['💰', 'Crédits & badges'],
+        'moderation'   => ['🛡️', 'Modération & animation'],
+        'infobus'      => ['🚌', 'Infobus'],
+        'serveur'      => ['🛠️', 'Serveur'],
+        'infos'        => ['ℹ️', 'Infos & aide'],
+    ];
+}
+
+/**
+ * Métadonnées d'INTERFACE (écrites à la main) : nom FR de l'action, thème métier,
+ * synonymes de recherche, champs du formulaire (libellés FR, exemples, règles),
+ * résumé lisible, et actions pour les commandes à sous-commandes (Infobus, Shutdown).
+ * Séparé de commands_docs() : aucune permission n'est redéfinie ici.
+ *
+ * Champ : ['key','label','ph'(indice),'ex'(exemple),'opt'(bool),'rule'(null|'int'|'badge'),'choices'(null|[[val,lib],…])]
+ * Template : {key} remplacé par la valeur ; un champ facultatif vide est retiré proprement.
+ */
+function commands_ui(): array {
+    $F = fn($key, $label, $ph = '', $ex = '', $opt = false, $rule = null, $choices = null) =>
+        ['key' => $key, 'label' => $label, 'ph' => $ph, 'ex' => $ex, 'opt' => $opt, 'rule' => $rule, 'choices' => $choices];
+    return [
+        // ----- Personnage -----
+        'sit'        => ['label' => "S'asseoir", 'theme' => 'personnage', 'syn' => ['assis', 'poser'], 'summary' => "T'assoit sur place."],
+        'afk'        => ['label' => "Passer absent (AFK)", 'theme' => 'personnage', 'syn' => ['absent', 'dormir', 'idle', 'pause', 'zzz'], 'summary' => "Met ton avatar en sommeil (absent)."],
+        'motto'      => ['label' => "Changer ta mission", 'theme' => 'personnage', 'syn' => ['mission', 'slogan', 'statut', 'phrase'],
+            'fields' => [$F('texte', 'Nouvelle mission', 'Laisse vide pour effacer', 'Vive Habbo !', true)],
+            'template' => ':motto {texte}', 'summary' => "Changera ta mission en « {texte} »."],
+        'poof'       => ['label' => "Rafraîchir ton avatar", 'theme' => 'personnage', 'syn' => ['refresh', 'actualiser', 'reapparaitre', 'update'], 'summary' => "Rafraîchit l'affichage de ton avatar."],
+        'givedrink'  => ['label' => "Donner ta boisson", 'theme' => 'personnage', 'syn' => ['boire', 'verre', 'soda', 'nourriture', 'manger'],
+            'fields' => [$F('joueur', 'Joueur (même salle)', 'Pseudo exact', 'Orms', false)],
+            'template' => ':givedrink {joueur}', 'summary' => "Donnera la boisson que tu tiens à {joueur}."],
+
+        // ----- Appartements -----
+        'pickall'    => ['label' => "Ramasser tous les meubles", 'theme' => 'appartements', 'syn' => ['ranger', 'tout ramasser', 'vider', 'meubles', 'appart', 'salle'], 'summary' => "Ramasse tous les meubles de la salle dans ton inventaire."],
+        'rgb'        => ['label' => "Gradateur arc-en-ciel", 'theme' => 'appartements', 'syn' => ['couleur', 'moodlight', 'lumiere', 'rainbow', 'disco', 'salle'],
+            'fields' => [$F('secondes', 'Délai entre couleurs (s)', 'Par défaut : 5', '3', true, 'int')],
+            'template' => ':rgb {secondes}', 'summary' => "Démarre/arrête le cycle arc-en-ciel du gradateur ({secondes}s)."],
+        'coords'     => ['label' => "Voir mes coordonnées", 'theme' => 'appartements', 'syn' => ['position', 'xy', 'placement', 'salle'], 'summary' => "Affiche tes coordonnées X/Y/Z dans la salle."],
+        'ufos'       => ['label' => "Effet OVNIs", 'theme' => 'appartements', 'syn' => ['ovni', 'aliens', 'animation', 'effet', 'salle'], 'summary' => "Fait surgir une nuée d'OVNIs dans la salle (effet visuel)."],
+
+        // ----- Crédits & badges -----
+        'givecredits'=> ['label' => "Donner des crédits", 'theme' => 'credits', 'syn' => ['argent', 'monnaie', 'sous', 'pieces', 'credit', 'payer'],
+            'fields' => [$F('joueur', 'Joueur (en ligne)', 'Pseudo exact', 'Orms', false), $F('montant', 'Montant', 'Nombre de crédits', '300', false, 'int')],
+            'template' => ':givecredits {joueur} {montant}', 'summary' => "Donnera {montant} crédits à {joueur}."],
+        'givebadge'  => ['label' => "Donner un badge", 'theme' => 'credits', 'syn' => ['badge', 'recompense', 'medaille'],
+            'fields' => [$F('joueur', 'Joueur (en ligne)', 'Pseudo exact', 'Orms', false), $F('badge', 'Code badge (3 car., MAJ)', '3 caractères', 'NL1', false, 'badge')],
+            'template' => ':givebadge {joueur} {badge}', 'summary' => "Donnera le badge {badge} à {joueur}."],
+        'setprice'   => ['label' => "Changer un prix du catalogue", 'theme' => 'credits', 'syn' => ['prix', 'catalogue', 'tarif', 'cout', 'vente'],
+            'fields' => [$F('code', 'Code de vente', "Code d'un article existant", 'sofa_silo', false), $F('prix', 'Nouveau prix', 'Nombre de crédits', '25', false, 'int')],
+            'template' => ':setprice {code} {prix}', 'summary' => "Mettra le prix de « {code} » à {prix} crédits."],
+
+        // ----- Modération & animation -----
+        'hotelalert' => ['label' => "Alerte à tout l'hôtel", 'theme' => 'moderation', 'syn' => ['alerte', 'annonce', 'message', 'broadcast', 'prevenir'],
+            'fields' => [$F('message', 'Message', "Texte affiché à tous", 'Maintenance dans 5 min !', true)],
+            'template' => ':hotelalert {message}', 'summary' => "Enverra l'alerte « {message} » à TOUT l'hôtel."],
+        'talk'       => ['label' => "Faire parler la salle (voix)", 'theme' => 'moderation', 'syn' => ['parler', 'voix', 'synthese', 'annonce', 'speaker'],
+            'fields' => [$F('texte', 'Texte à dire', 'Phrase lue à voix haute', 'Bienvenue à tous !', true)],
+            'template' => ':talk {texte}', 'summary' => "Fera dire « {texte} » dans la salle."],
+
+        // ----- Infobus (actions) -----
+        'infobus'    => ['label' => "Piloter l'Infobus", 'theme' => 'infobus', 'syn' => ['bus', 'sondage', 'vote', 'question', 'porte', 'ouvrir', 'fermer'],
+            'actions' => [
+                ['value' => 'open',   'label' => "Ouvrir l'Infobus",        'template' => ':infobus open',  'fields' => [], 'summary' => "Ouvrira la porte de l'Infobus."],
+                ['value' => 'close',  'label' => "Fermer l'Infobus",        'template' => ':infobus close', 'fields' => [], 'summary' => "Fermera la porte de l'Infobus."],
+                ['value' => 'question', 'label' => "Définir la question",   'template' => ':infobus question {q}', 'fields' => [$F('q', 'Question du sondage', 'Texte de la question', 'Quel jeu préférez-vous ?', false)], 'summary' => "Définira la question : « {q} »."],
+                ['value' => 'optadd', 'label' => "Ajouter une réponse",     'template' => ':infobus option add {opt}', 'fields' => [$F('opt', 'Réponse à ajouter', "Texte de l'option", 'BattleBall', false)], 'summary' => "Ajoutera la réponse « {opt} »."],
+                ['value' => 'optrem', 'label' => "Retirer une réponse",     'template' => ':infobus option remove {num}', 'fields' => [$F('num', 'Numéro de la réponse', 'Numéro vu dans « Voir l\'état »', '2', false, 'int')], 'summary' => "Retirera la réponse n°{num}."],
+                ['value' => 'status', 'label' => "Voir l'état",             'template' => ':infobus status', 'fields' => [], 'summary' => "Affichera la question, les réponses et les votes."],
+                ['value' => 'start',  'label' => "Lancer le sondage",       'template' => ':infobus start', 'fields' => [], 'summary' => "Lancera le sondage (question + réponses requises)."],
+                ['value' => 'reset',  'label' => "Réinitialiser",           'template' => ':infobus reset', 'fields' => [], 'summary' => "Réinitialisera question, réponses et votes."],
+            ]],
+
+        // ----- Serveur -----
+        'reload'     => ['label' => "Recharger des données", 'theme' => 'serveur', 'syn' => ['recharger', 'refresh', 'actualiser', 'catalogue', 'textes'],
+            'fields' => [$F('composant', 'Que recharger ?', '', '', false, null, [['catalogue', 'Catalogue & meubles'], ['texts', 'Textes du jeu'], ['models', 'Modèles de salles'], ['settings', 'Configuration']])],
+            'template' => ':reload {composant}', 'summary' => "Rechargera à chaud : {composant}."],
+        'setconfig'  => ['label' => "Modifier un réglage serveur", 'theme' => 'serveur', 'syn' => ['config', 'reglage', 'parametre', 'setting'],
+            'fields' => [$F('cle', 'Clé de réglage', 'Doit déjà exister', 'shutdown.minutes', false), $F('valeur', 'Nouvelle valeur', '', '5', false)],
+            'template' => ':setconfig {cle} {valeur}', 'summary' => "Changera le réglage « {cle} » en « {valeur} »."],
+        'packet'     => ['label' => "Envoyer un paquet (debug)", 'theme' => 'serveur', 'syn' => ['paquet', 'packet', 'debug', 'protocole', 'developpeur'],
+            'fields' => [$F('donnees', 'Contenu du paquet', 'Outil technique', 'BK', true)],
+            'template' => ':packet {donnees}', 'summary' => "Enverra un paquet brut à ton client (debug)."],
+        'shutdown'   => ['label' => "Arrêt du serveur", 'theme' => 'serveur', 'syn' => ['arret', 'eteindre', 'maintenance', 'stop', 'shutdown', 'redemarrer'],
+            'actions' => [
+                ['value' => 'plan',   'label' => "Programmer l'arrêt",   'template' => ':shutdown {minutes}', 'fields' => [$F('minutes', 'Délai avant arrêt (min)', 'Vide = valeur par défaut', '10', true, 'int')], 'summary' => "Programmera l'arrêt du serveur dans {minutes} minute(s)."],
+                ['value' => 'cancel', 'label' => "Annuler l'arrêt",      'template' => ':shutdown cancel', 'fields' => [], 'summary' => "Annulera l'arrêt programmé du serveur."],
+            ]],
+
+        // ----- Infos & aide -----
+        'about'      => ['label' => "À propos de l'hôtel", 'theme' => 'infos', 'syn' => ['version', 'infos', 'credits dev', 'a propos'], 'summary' => "Affiche la version et les contributeurs de l'émulateur."],
+        'help'       => ['label' => "Aide : liste des commandes", 'theme' => 'infos', 'syn' => ['aide', 'liste', 'commandes'],
+            'fields' => [$F('page', 'Page', 'Par défaut : 1', '2', true, 'int')],
+            'template' => ':help {page}', 'summary' => "Affiche la liste des commandes de ton rang (page {page})."],
+        'uptime'     => ['label' => "Durée de fonctionnement", 'theme' => 'infos', 'syn' => ['uptime', 'stats', 'serveur', 'memoire'], 'summary' => "Affiche le temps de fonctionnement et des statistiques serveur."],
+        'usersonline'=> ['label' => "Joueurs connectés", 'theme' => 'infos', 'syn' => ['connectes', 'en ligne', 'joueurs', 'online'], 'summary' => "Affiche le nombre de joueurs connectés."],
+        'chooser'    => ['label' => "Liste des joueurs (salle)", 'theme' => 'infos', 'syn' => ['joueurs', 'liste', 'salle', 'club'], 'summary' => "Liste les joueurs de la salle (fonction client, Habbo Club requis)."],
+        'furni'      => ['label' => "Liste des meubles (salle)", 'theme' => 'infos', 'syn' => ['meubles', 'furni', 'liste', 'club'], 'summary' => "Liste les meubles de la salle (fonction client, Habbo Club requis)."],
+        'events'     => ['label' => "Événements en cours", 'theme' => 'infos', 'syn' => ['evenements', 'events', 'animations'], 'summary' => "Affiche les événements organisés par les joueurs (fonction client)."],
     ];
 }
 
