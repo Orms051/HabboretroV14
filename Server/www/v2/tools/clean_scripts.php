@@ -5,6 +5,7 @@
  * Usage : php v2/tools/clean_scripts.php
  */
 declare(strict_types=1);
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit('403 — script de maintenance réservé à la ligne de commande (CLI).'); }
 chdir(dirname(__DIR__, 2));
 require dirname(__DIR__, 2) . '/v2/inc/boot.php';
 ensure_site_pages();

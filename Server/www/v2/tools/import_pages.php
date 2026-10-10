@@ -8,6 +8,7 @@
  * Usage (CLI) :  php v2/tools/import_pages.php [slug1 slug2 ...]   (sans argument = tout)
  */
 declare(strict_types=1);
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit('403 — script de maintenance réservé à la ligne de commande (CLI).'); }
 $ROOT = dirname(__DIR__, 2);                 // .../Server/www
 chdir($ROOT);
 require $ROOT . '/v2/inc/boot.php';

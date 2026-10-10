@@ -31,6 +31,31 @@ function csrf_ok(): bool { $t = (string)($_POST['csrf'] ?? ''); return $t !== ''
 function hash_pw(string $pw): string { return password_hash($pw, PASSWORD_ARGON2ID, ['memory_cost' => 65536, 'time_cost' => 2, 'threads' => 1]); }
 function parse_fr_date(?string $s): string { $s = trim((string)$s); if (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})$#', $s, $m)) return sprintf('%04d-%02d-%02d', (int)$m[3], (int)$m[2], (int)$m[1]); if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $s)) return $s; return '1990-01-01'; }
 
+/* ---- Limitation des tentatives de connexion (anti brute-force, par IP, persistante au-delà des cookies) ---- */
+function login_throttle_file(): string {
+    $ip = (string)($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+    $dir = __DIR__ . '/../_runtime';
+    if (!is_dir($dir)) @mkdir($dir, 0775, true);
+    return $dir . '/login_' . substr(sha1($ip), 0, 20) . '.json';
+}
+function login_lock_remaining(): int { // secondes restantes de blocage, 0 sinon
+    $f = login_throttle_file(); if (!is_file($f)) return 0;
+    $d = json_decode((string)@file_get_contents($f), true) ?: [];
+    $u = (int)($d['until'] ?? 0); return $u > time() ? $u - time() : 0;
+}
+function login_register_fail(): void {
+    $f = login_throttle_file();
+    $d = json_decode((string)@file_get_contents($f), true) ?: [];
+    if (time() - (int)($d['first'] ?? 0) > 900) $d = ['first' => time(), 'fails' => 0]; // fenêtre glissante 15 min
+    $d['fails'] = (int)($d['fails'] ?? 0) + 1;
+    if ($d['fails'] >= 5) $d['until'] = time() + 600; // 10 min de blocage après 5 échecs
+    @file_put_contents($f, json_encode($d));
+}
+function login_register_success(): void { @unlink(login_throttle_file()); }
+
+/* ---- Mode maintenance : fichier Server/www/maintenance.json (écrit par l'admin). Le staff garde l'accès. ---- */
+function maintenance_active(): bool { return is_file(dirname(__DIR__, 2) . '/maintenance.json'); }
+
 /* Pseudo d'avatar en attendant l'imager V14 fidèle (placeholder stylisé — voir chantier avatar). */
 function av_url(string $figure, string $sex, string $direction = '2', string $size = 'b'): string {
     // TODO imager V14 : pour l'instant renvoie '' -> le gabarit affiche un SVG de repli.

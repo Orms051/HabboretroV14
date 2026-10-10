@@ -6,21 +6,38 @@
 require __DIR__ . '/inc/boot.php';
 require __DIR__ . '/inc/layout.php';
 
+/* ---- Mode maintenance : page de fermeture pour les non-staff (le staff garde l'accès) ---- */
+if (maintenance_active() && !is_staff()) {
+    http_response_code(503);
+    header('Retry-After: 3600');
+    echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>' . h(HOTEL) . ' — Maintenance</title>'
+       . '<meta name="viewport" content="width=device-width,initial-scale=1">'
+       . '<style>body{font:13px Verdana,Arial,sans-serif;background:#083940;color:#fff;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center}'
+       . '.box{background:#fff;color:#30384a;max-width:420px;padding:28px 26px;border-radius:10px;border:1px solid #06252b}.box h1{font-size:18px;margin:0 0 10px}.box p{margin:6px 0;color:#5a6672}</style></head>'
+       . '<body><div class="box"><h1>&#128679; L\'H&ocirc;tel est ferm&eacute;</h1><p>' . h(HOTEL) . ' est en maintenance. Reviens dans quelques instants&nbsp;!</p>'
+       . '<p style="font-size:11px;color:#8a97a3">Merci de ta patience.</p></div></body></html>';
+    exit;
+}
+
 $p = $_GET['p'] ?? 'home';
 $err = null;
 
 /* ---------- Actions ---------- */
 if ($p === 'logout') { unset($_SESSION['site_user'], $_SESSION['admin']); session_regenerate_id(true); redirect('?p=home'); }
 if ($p === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!csrf_ok()) { $err = 'Session expirée, réessaie.'; }
+    $wait = login_lock_remaining();
+    if ($wait > 0) { $err = 'Trop de tentatives de connexion. Réessaie dans ' . (int)ceil($wait / 60) . ' min.'; }
+    elseif (!csrf_ok()) { $err = 'Session expirée, réessaie.'; }
     else {
         $st = db()->prepare('SELECT id,username,password FROM users WHERE username=?'); $st->execute([trim($_POST['username'] ?? '')]);
         $row = $st->fetch();
         if ($row && password_verify((string)($_POST['password'] ?? ''), $row['password'])) {
+            login_register_success();
             session_regenerate_id(true); unset($_SESSION['admin']);
             $_SESSION['site_user'] = ['id' => (int)$row['id'], 'username' => $row['username']];
             redirect('?p=home');
         }
+        login_register_fail();
         $err = 'Nom ou mot de passe incorrect.';
     }
     $p = 'home';

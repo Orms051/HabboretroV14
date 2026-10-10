@@ -40,6 +40,9 @@ _backup_*/
 Thumbs.db
 desktop.ini
 
+# --- Runtime /v2 (throttle login, etc.) ---
+Server/www/v2/_runtime/
+
 # --- Fichier d'identifiants de test local (ne pas committer) ---
 Server/www/v2/tools/.admin_test_login.txt
 
