@@ -1220,9 +1220,19 @@ function hm_view_reports(): void {
     echo '<table class="lst"><tr class="sub"><td>Date</td><td>Cible</td><td>Propriétaire</td><td>Motif</td><td>Statut</td><td style="text-align:right">Actions</td></tr>';
     foreach ($rows as $r) {
         $owner = hm_uname((int)$r['owner_id']);
-        $cible = $r['target_type'] === 'gb' ? 'Message #' . (int)$r['target_id'] : 'Home';
+        if ($r['target_type'] === 'gb') {
+            $gm = db()->prepare('SELECT message,author_name,hidden FROM home_guestbook WHERE id=?'); $gm->execute([(int)$r['target_id']]); $gmrow = $gm->fetch();
+            if ($gmrow) {
+                $cible = 'Message #' . (int)$r['target_id'] . ((int)$gmrow['hidden'] ? ' <span class="pill off">masqué</span>' : '')
+                       . '<div class="sub" style="max-width:280px;white-space:normal">« ' . h(mb_strimwidth((string)$gmrow['message'], 0, 140, '…')) . ' »<br>— ' . h((string)$gmrow['author_name']) . '</div>';
+            } else {
+                $cible = 'Message #' . (int)$r['target_id'] . ' <span class="sub">(supprimé)</span>';
+            }
+        } else {
+            $cible = 'Home <a href="/v2/?p=home/' . h(rawurlencode($owner)) . '" target="_blank" class="sub">(voir ↗)</a>';
+        }
         echo '<tr><td class="sub">' . h(substr((string)$r['created_at'], 0, 16)) . '</td>'
-           . '<td>' . h($cible) . '</td>'
+           . '<td>' . $cible . '</td>'
            . '<td><a href="/v2/?p=home/' . h(rawurlencode($owner)) . '" target="_blank">' . h($owner) . ' ↗</a></td>'
            . '<td>' . h((string)$r['reason']) . ($r['detail'] !== '' ? '<div class="sub">' . h((string)$r['detail']) . '</div>' : '') . '<div class="sub" style="font-size:10px">signalé par ' . h((string)$r['reporter_name']) . '</div></td>'
            . '<td>' . ($pill[$r['status']] ?? h((string)$r['status'])) . '</td><td style="text-align:right">';

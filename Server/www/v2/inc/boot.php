@@ -258,7 +258,9 @@ function home_asset_list(string $kind, bool $withDisabled = false): array {
 function home_asset_ok(string $kind, string $file): bool {
     $file = basename($file);
     if ($file === '' || !preg_match('/\.(gif|png|jpg|jpeg)$/i', $file)) return false;
-    return is_file(home_asset_dir($kind) . '/' . $file);
+    if (!is_file(home_asset_dir($kind) . '/' . $file)) return false;
+    if (isset(home_disabled_set($kind)[$file])) return false; // ressource désactivée par l'admin : refusée à l'enregistrement
+    return true;
 }
 function home_asset_url(string $kind, string $file): string {
     return '/c_images/myhabbo/' . ($kind === 'bg' ? 'backgrounds2' : 'stickers') . '/' . rawurlencode(basename($file));
