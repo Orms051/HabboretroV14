@@ -1,24 +1,15 @@
 -- =====================================================================
--- Migration catalogue v14 : posters manquants + posters événementiels + md_sofa (test staff)
--- PORTABLE & SÛRE : clés naturelles, ids auto-attribués (pas d'id codé en dur),
--- pages créées par nom (id calculé), rejouable sans doublon. Généré 2026-10-10 05:50
--- Rollback : *_down.sql (FK-sûr : ne supprime pas la déf si un meuble la possède).
+-- Migration catalogue v14 : posters manquants (Galerie/Noël/Halloween) + posters événementiels
+-- PORTABLE & SÛRE : clés naturelles, ids auto-attribués, page événementiels par nom. Généré 2026-10-10 06:04
+-- (md_sofa NON inclus : ressource présente mais non rendue par le client v14 — voir rapport d'audit.)
 -- =====================================================================
 
--- 1) Pages (créées seulement si le nom n'existe pas ; id = MAX+1 pour éviter toute collision)
+-- 1) Page 'Posters événementiels' (créée si le nom n'existe pas ; id = MAX+1)
 INSERT INTO catalogue_pages (id,order_id,min_role,index_visible,is_club_only,name_index,link_list,name,layout,image_headline,image_teasers,body,label_pick)
 SELECT (SELECT m FROM (SELECT COALESCE(MAX(id),0)+1 m FROM catalogue_pages) t),207,1,1,0,'Événementiels','','Posters événementiels','ctlg_layout2','','','Posters spéciaux d''événements et de promotions.','Clique sur le meuble voulu'
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM catalogue_pages WHERE name='Posters événementiels');
-INSERT INTO catalogue_pages (id,order_id,min_role,index_visible,is_club_only,name_index,link_list,name,layout,image_headline,image_teasers,body,label_pick)
-SELECT (SELECT m FROM (SELECT COALESCE(MAX(id),0)+1 m FROM catalogue_pages) t),999,5,1,0,'TEST','','TEST (staff)','ctlg_layout2','','','Page de test réservée au staff — ne pas rendre publique.','Clique sur le meuble voulu'
-FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM catalogue_pages WHERE name='TEST (staff)');
 
--- 2) Définition md_sofa (id auto ; sprite_id interne = MAX+1 ; client rend par classname)
-INSERT INTO items_definitions (sprite,sprite_id,name,description,colour,length,width,top_height,max_status,behaviour,interactor,is_tradable,is_recyclable,drink_ids)
-SELECT 'md_sofa',(SELECT m FROM (SELECT COALESCE(MAX(sprite_id),0)+1 m FROM items_definitions) t),'Canapé','Canapé de la gamme Bubble Juice.','0,0,0',2,1,1,'1','can_sit_on_top','',1,1,''
-FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM items_definitions WHERE sprite='md_sofa');
-
--- 3) Offres posters (déf 251 partagée ; page référencée par NOM ; clé = déf+variante+page)
+-- 2) Offres posters (déf 251 partagée ; page par NOM ; clé = déf+variante+page)
 INSERT INTO catalogue_items (sale_code,page_id,order_id,price,is_hidden,amount,definition_id,item_specialspriteid,name,description,is_package)
 SELECT 'poster 56',(SELECT CAST(id AS CHAR) FROM catalogue_pages WHERE name='Galerie' LIMIT 1),36,3,0,1,251,56,'Panneau Disco','Fais la fête sur tes murs !',0
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=56 AND page_id=(SELECT CAST(id AS CHAR) FROM catalogue_pages WHERE name='Galerie' LIMIT 1));
@@ -83,12 +74,7 @@ INSERT INTO catalogue_items (sale_code,page_id,order_id,price,is_hidden,amount,d
 SELECT 'poster 2008',(SELECT CAST(id AS CHAR) FROM catalogue_pages WHERE name='Posters événementiels' LIMIT 1),2,3,0,1,251,2008,'Poster Habbo Cola','',0
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=2008 AND page_id=(SELECT CAST(id AS CHAR) FROM catalogue_pages WHERE name='Posters événementiels' LIMIT 1));
 
--- 4) Offre md_sofa (page TEST staff, déf référencée par sprite)
-INSERT INTO catalogue_items (sale_code,page_id,order_id,price,is_hidden,amount,definition_id,item_specialspriteid,name,description,is_package)
-SELECT 'md_sofa',(SELECT CAST(id AS CHAR) FROM catalogue_pages WHERE name='TEST (staff)' LIMIT 1),1,5,0,1,(SELECT id FROM items_definitions WHERE sprite='md_sofa'),0,'Canapé Bubble Juice','Canapé de la gamme Bubble Juice.',0
-FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM catalogue_items WHERE sale_code='md_sofa');
-
--- 5) Traductions FR des noms catalogue (posters déjà présents avant cette migration)
+-- 3) Traductions FR des noms catalogue (posters déjà présents avant cette migration)
 UPDATE catalogue_items SET name='Plaque Poisson' WHERE definition_id=251 AND item_specialspriteid=3;
 UPDATE catalogue_items SET name='Plaque Ours' WHERE definition_id=251 AND item_specialspriteid=4;
 UPDATE catalogue_items SET name='Vitrine à marteau' WHERE definition_id=251 AND item_specialspriteid=7;
