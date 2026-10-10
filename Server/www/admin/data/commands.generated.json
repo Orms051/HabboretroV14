@@ -1,0 +1,797 @@
+{
+    "_note": "FICHIER GÉNÉRÉ — ne pas éditer à la main. Régénérer avec: php admin/tools/gen_commands.php. Descriptions FR dans commands.docs.php.",
+    "generatedAt": "2026-10-10T11:23:18+00:00",
+    "generator": "gen_commands.php (analyse statique, sans exécution du JAR)",
+    "jar": {
+        "file": "Server/www/kepler.jar",
+        "size": 1215391,
+        "sha256": "ae4a2c6682f8da71b6b3b4a8b889e31d53011c2c9bb78bf876ab87e8abaf63c3",
+        "mtime": "2026-09-27T09:29:16+00:00"
+    },
+    "ranks": {
+        "RANKLESS": 0,
+        "NORMAL": 1,
+        "COMMUNITY_MANAGER": 2,
+        "GUIDE": 3,
+        "HOBBA": 4,
+        "SUPERHOBBA": 5,
+        "MODERATOR": 6,
+        "ADMINISTRATOR": 7
+    },
+    "fuserights": {
+        "DEFAULT": {
+            "rank": "NORMAL",
+            "club": false
+        },
+        "LOGIN": {
+            "rank": "NORMAL",
+            "club": false
+        },
+        "TRADE": {
+            "rank": "NORMAL",
+            "club": false
+        },
+        "BUY_CREDITS": {
+            "rank": "NORMAL",
+            "club": false
+        },
+        "BUY_CREDITS_FUSE_LOGIN": {
+            "rank": "NORMAL",
+            "club": false
+        },
+        "ROOM_QUEUE_DEFAULT": {
+            "rank": "NORMAL",
+            "club": false
+        },
+        "MUTE": {
+            "rank": "HOBBA",
+            "club": false
+        },
+        "KICK": {
+            "rank": "HOBBA",
+            "club": false
+        },
+        "RECEIVE_CALLS_FOR_HELP": {
+            "rank": "HOBBA",
+            "club": false
+        },
+        "REMOVE_PHOTOS": {
+            "rank": "SUPERHOBBA",
+            "club": false
+        },
+        "REMOVE_STICKIES": {
+            "rank": "SUPERHOBBA",
+            "club": false
+        },
+        "MOD": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "MODERATOR_ACCESS": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "CHAT_LOG": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "ROOM_ALERT": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "ROOM_KICK": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "IGNORE_ROOM_OWNER": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "ENTER_FULL_ROOMS": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "ENTER_LOCKED_ROOMS": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "SEE_ALL_ROOMOWNERS": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "SEARCH_USERS": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "BAN": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "SEE_CHAT_LOG_LINK": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "CANCEL_ROOMEVENT": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "ADMINISTRATOR_ACCESS": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "ANY_ROOM_CONTROLLER": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "PICK_UP_ANY_FURNI": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "SEE_FLAT_IDS": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "CREDITS": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "PRIORITY_ACCESS": {
+            "rank": null,
+            "club": true
+        },
+        "USE_SPECIAL_ROOM_LAYOUTS": {
+            "rank": null,
+            "club": true
+        },
+        "USE_CLUB_OUTFITS": {
+            "rank": null,
+            "club": true
+        },
+        "USE_CLUB_OUTFITS_DEFAULT": {
+            "rank": null,
+            "club": true
+        },
+        "USE_CLUB_BADGE": {
+            "rank": null,
+            "club": true
+        },
+        "USE_CLUB_DANCE": {
+            "rank": null,
+            "club": true
+        },
+        "USER_LIST_COMMAND": {
+            "rank": null,
+            "club": true
+        },
+        "FURNI_LIST_COMMAND": {
+            "rank": null,
+            "club": true
+        },
+        "EXTENDED_BUDDYLIST": {
+            "rank": null,
+            "club": true
+        },
+        "ROOM_QUEUE_CLUB": {
+            "rank": null,
+            "club": true
+        },
+        "HOUSEKEEPING_INTRA": {
+            "rank": "HOBBA",
+            "club": false
+        },
+        "HOUSEKEEPING_KICK": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "HOUSEKEEPING_ALERT": {
+            "rank": "SUPERHOBBA",
+            "club": false
+        },
+        "HOUSEKEEPING_DISCUSSION": {
+            "rank": "GUIDE",
+            "club": false
+        },
+        "HOUSEKEEPING_DISCUSSION_ADMIN": {
+            "rank": "SUPERHOBBA",
+            "club": false
+        },
+        "HOUSEKEEPING_ADMIN": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "HOUSEKEEPING_ADMIN_CREDITS": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "HOUSEKEEPING_ADMIN_USER_DATA": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "HOUSEKEEPING_ADMIN_PAYMENTS": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "HOUSEKEEPING_CAMPAIGN": {
+            "rank": "COMMUNITY_MANAGER",
+            "club": false
+        },
+        "HOUSEKEEPING_CAMPAIGN_ADS": {
+            "rank": "COMMUNITY_MANAGER",
+            "club": false
+        },
+        "HOUSEKEEPING_GEORGE": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "HOUSEKEEPING_ADMIN_CATALOG": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "HOUSEKEEPING_HOBBA": {
+            "rank": "GUIDE",
+            "club": false
+        },
+        "HOUSEKEEPING_HOBBA_NEWBIETOOLS": {
+            "rank": "GUIDE",
+            "club": false
+        },
+        "HOUSEKEEPING_HOBBA_MODERATORTOOLS": {
+            "rank": "HOBBA",
+            "club": false
+        },
+        "HOUSEKEEPING_HOBBA_HOBBATOOLS": {
+            "rank": "HOBBA",
+            "club": false
+        },
+        "HOUSEKEEPING_HOBBA_ADMINTOOLS": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "HOUSEKEEPING_HOBBA_SUPERTOOLS": {
+            "rank": "SUPERHOBBA",
+            "club": false
+        },
+        "HOUSEKEEPING_BAN": {
+            "rank": "MODERATOR",
+            "club": false
+        },
+        "HOUSEKEEPING_MEGABAN": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        },
+        "HOUSEKEEPING_SUPERBAN": {
+            "rank": "ADMINISTRATOR",
+            "club": false
+        }
+    },
+    "counts": {
+        "commands": 26,
+        "aliasesTotal": 34,
+        "clientSide": 3,
+        "unregistered": 3,
+        "jarCmdClasses": 29
+    },
+    "limits": [
+        "Les alias, permissions, arguments requis et description serveur sont lus dans les sources Java correspondant au JAR (classes vérifiées présentes dans le JAR). L'analyse n'exécute pas le JAR.",
+        "Les sous-commandes, paramètres facultatifs, valeurs par défaut, conditions, effets et causes d'échec ne sont pas tous exprimables mécaniquement : ils sont documentés à la main dans commands.docs.php.",
+        "Le nombre d'arguments requis vient de addArguments() ; certains handlers acceptent des arguments facultatifs supplémentaires non déclarés là (ex. :motto, :hotelalert, :talk, :rgb, :shutdown).",
+        "L'attribution rang↔droit vient de l'enum Fuseright (minimumRank) : ce build ne lit PAS les droits en base. Tout droit marqué « non confirmé » dans l'enum est signalé."
+    ],
+    "warnings": [],
+    "commands": [
+        {
+            "name": "help",
+            "aliases": [
+                "help",
+                "commands"
+            ],
+            "class": "HelpCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "<page> - List available commands"
+        },
+        {
+            "name": "about",
+            "aliases": [
+                "about",
+                "info"
+            ],
+            "class": "AboutCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": " Information about the software powering this retro"
+        },
+        {
+            "name": "givedrink",
+            "aliases": [
+                "givedrink"
+            ],
+            "class": "GiveDrinkCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [
+                "user"
+            ],
+            "descriptionEn": "Gives a user your own drink"
+        },
+        {
+            "name": "sit",
+            "aliases": [
+                "sit"
+            ],
+            "class": "SitCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Parks your arse on the floor"
+        },
+        {
+            "name": "uptime",
+            "aliases": [
+                "uptime",
+                "status"
+            ],
+            "class": "UptimeCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Get the uptime and status of the server"
+        },
+        {
+            "name": "poof",
+            "aliases": [
+                "poof",
+                "update"
+            ],
+            "class": "PoofCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Refresh your figure and motto"
+        },
+        {
+            "name": "coords",
+            "aliases": [
+                "coords"
+            ],
+            "class": "CoordsCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Shows the coordinates in the room"
+        },
+        {
+            "name": "pickall",
+            "aliases": [
+                "pickall"
+            ],
+            "class": "PickAllCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Allows the owner to pick up all furniture in a room"
+        },
+        {
+            "name": "usersonline",
+            "aliases": [
+                "usersonline",
+                "whosonline"
+            ],
+            "class": "UsersOnlineCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Get the list of players currently online"
+        },
+        {
+            "name": "rgb",
+            "aliases": [
+                "rgb",
+                "rainbow"
+            ],
+            "class": "RainbowDimmerCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "<seconds> - Cycles through the rainbow in your very own room!"
+        },
+        {
+            "name": "afk",
+            "aliases": [
+                "afk",
+                "idle"
+            ],
+            "class": "AfkCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Put your eyes to sleep"
+        },
+        {
+            "name": "motto",
+            "aliases": [
+                "motto"
+            ],
+            "class": "ChangeMottoCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Change your motto"
+        },
+        {
+            "name": "givebadge",
+            "aliases": [
+                "givebadge"
+            ],
+            "class": "GiveBadgeCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [
+                "user",
+                "badge"
+            ],
+            "descriptionEn": "Add badge to user"
+        },
+        {
+            "name": "packet",
+            "aliases": [
+                "packet"
+            ],
+            "class": "PacketTestCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Tests a Habbo client-sided packet"
+        },
+        {
+            "name": "reload",
+            "aliases": [
+                "reload"
+            ],
+            "class": "ReloadCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [
+                "component"
+            ],
+            "descriptionEn": "Refresh the settings/items/texts"
+        },
+        {
+            "name": "shutdown",
+            "aliases": [
+                "shutdown"
+            ],
+            "class": "ShutdownCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "<minutes> - Shutdown Kepler"
+        },
+        {
+            "name": "setprice",
+            "aliases": [
+                "setprice"
+            ],
+            "class": "SetItemPriceCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [
+                "sale code",
+                "price"
+            ],
+            "descriptionEn": "In-game housekeeping for the catalogue item prices."
+        },
+        {
+            "name": "setconfig",
+            "aliases": [
+                "setconfig"
+            ],
+            "class": "SetConfigCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [
+                "setting",
+                "value"
+            ],
+            "descriptionEn": "In-game housekeeping for the catalogue item prices."
+        },
+        {
+            "name": "hotelalert",
+            "aliases": [
+                "hotelalert"
+            ],
+            "class": "HotelAlertCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Sends an alert hotel-wide"
+        },
+        {
+            "name": "ufos",
+            "aliases": [
+                "ufos"
+            ],
+            "class": "UfosCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "UFO's :o"
+        },
+        {
+            "name": "talk",
+            "aliases": [
+                "talk"
+            ],
+            "class": "TalkCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Voice to text command"
+        },
+        {
+            "name": "infobus",
+            "aliases": [
+                "infobus",
+                "bus"
+            ],
+            "class": "InfobusCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [
+                "subcommand"
+            ],
+            "descriptionEn": "To show infobus commands use [:infobus help]"
+        },
+        {
+            "name": "givecredits",
+            "aliases": [
+                "givecredits"
+            ],
+            "class": "GiveCreditsCommand",
+            "clientSide": false,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "ADMINISTRATOR_ACCESS"
+            ],
+            "minRankId": 7,
+            "minRankName": "ADMINISTRATOR",
+            "clubRelated": false,
+            "requiredArgs": [
+                "user",
+                "credits"
+            ],
+            "descriptionEn": "Give credits to user"
+        },
+        {
+            "name": "chooser",
+            "aliases": [
+                "chooser"
+            ],
+            "class": "ChooserCommand",
+            "clientSide": true,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "List users in current room (club membership required)"
+        },
+        {
+            "name": "furni",
+            "aliases": [
+                "furni"
+            ],
+            "class": "FurniCommand",
+            "clientSide": true,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "List furniture in current room (club membership required)"
+        },
+        {
+            "name": "events",
+            "aliases": [
+                "events"
+            ],
+            "class": "EventsCommand",
+            "clientSide": true,
+            "registered": true,
+            "inJar": true,
+            "permissions": [
+                "DEFAULT"
+            ],
+            "minRankId": 1,
+            "minRankName": "NORMAL",
+            "clubRelated": false,
+            "requiredArgs": [],
+            "descriptionEn": "Show current events organised by other users"
+        }
+    ],
+    "unregistered": [
+        {
+            "class": "GiveItemCommand",
+            "pkg": "registered",
+            "isStub": true,
+            "descriptionEn": null
+        },
+        {
+            "class": "NoAfkCommand",
+            "pkg": "registered",
+            "isStub": false,
+            "descriptionEn": "Put your eyes to sleep"
+        },
+        {
+            "class": "GiveClubCommand",
+            "pkg": "registered",
+            "isStub": true,
+            "descriptionEn": null
+        }
+    ]
+}

@@ -916,10 +916,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     db()->prepare('UPDATE rooms SET ccts=? WHERE id=?')->execute([$target . $extra, (int)$r['id']]); $n++;
                 }
                 $msg = '🎨 Décor « ' . season_label($season) . ' » appliqué à ' . $n . ' salle(s). Redémarre l\'émulateur.'; break;
+            case 'cmd_fav_toggle':
+                ensure_command_favorites();
+                $cmd = preg_replace('/[^a-z0-9_]/', '', strtolower((string)($_POST['command'] ?? '')));
+                $uid = (int)($_SESSION['admin']['id'] ?? 0);
+                if ($cmd === '' || $uid <= 0) { $ok = false; $msg = 'Commande invalide.'; break; }
+                $ex = db()->prepare('SELECT 1 FROM admin_command_favorites WHERE user_id=? AND command=?');
+                $ex->execute([$uid, $cmd]);
+                if ($ex->fetchColumn()) {
+                    db()->prepare('DELETE FROM admin_command_favorites WHERE user_id=? AND command=?')->execute([$uid, $cmd]);
+                    $msg = 'retiré';
+                } else {
+                    db()->prepare('INSERT INTO admin_command_favorites (user_id,command) VALUES (?,?)')->execute([$uid, $cmd]);
+                    $msg = 'ajouté';
+                }
+                break;
             default: $ok = false; $msg = 'Action inconnue.';
         }
     } catch (Throwable $e) { $ok = false; $msg = '❌ Erreur : ' . $e->getMessage(); }
-    if ($ok && !in_array($a, ['note_add', 'note_del'], true)) admin_log($a, strip_tags($msg));
+    if ($ok && !in_array($a, ['note_add', 'note_del', 'cmd_fav_toggle'], true)) admin_log($a, strip_tags($msg));
     if (is_ajax()) { header('Content-Type: application/json'); echo json_encode(['ok' => $ok, 'msg' => $msg]); exit; }
     flash($msg); redirect($back);
 }
@@ -2125,6 +2140,7 @@ function action_tab(string $a): string {
         // Communauté / modération
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
         'ban_add' => 'moderation', 'ban_remove' => 'moderation', 'bus_type' => 'bus',
+        'cmd_fav_toggle' => 'commandes',
         'pwreset_do' => 'messages', 'pwreset_reject' => 'messages',
         'cmsg_handle' => 'messages', 'cmsg_delete' => 'messages', 'umsg_send' => 'users',
         'smsg_post' => 'messages', 'smsg_delete' => 'messages',
@@ -3217,48 +3233,323 @@ function page_bus(): void {
     }
 }
 
-function page_commandes(): void {
-    page_title('Commandes en jeu', 'Toutes les commandes chat du kepler.jar');
-    echo '<p class="hint" style="font-size:13px">À taper dans le chat, précédées de <b>:</b> (deux-points). Réservées aux comptes <b>administrateur</b> (sauf indication).</p>';
-    $grp = [
-        '🎁 Joueurs / crédits' => [
-            [':givecredits &lt;user&gt; &lt;montant&gt;', 'Donne des crédits'],
-            [':givebadge &lt;user&gt; &lt;badge&gt;', 'Attribue un badge'],
-            [':giveclub &lt;user&gt; &lt;jours&gt;', 'Ajoute des jours de Habbo Club'],
-            [':giveitem &lt;user&gt; &lt;sprite&gt;', 'Donne un meuble dans la main'],
-            [':givedrink &lt;n°&gt;', 'Donne une boisson au joueur ciblé'],
-        ],
-        '🛡️ Modération / système' => [
-            [':hotelalert &lt;message&gt;', 'Alerte générale à tout l\'hôtel'],
-            [':usersonline', 'Nombre de joueurs connectés (alias :whosonline)'],
-            [':uptime', 'Durée de fonctionnement de l\'émulateur'],
-            [':reload', 'Recharge les données (catalogue, textes…)'],
-            [':setconfig &lt;clé&gt; &lt;valeur&gt;', 'Modifie un réglage serveur'],
-            [':setprice &lt;prix&gt;', 'Change le prix d\'un article du catalogue'],
-            [':shutdown', 'Arrête proprement l\'émulateur'],
-        ],
-        '🏛️ Appartement / soi-même' => [
-            [':about / :info', 'Infos sur l\'émulateur'],
-            [':coords', 'Affiche tes coordonnées dans l\'appart'],
-            [':sit', 'S\'asseoir sur place'],
-            [':afk / :idle', 'Passer absent (et retour)'],
-            [':motto &lt;texte&gt;', 'Change ta mission'],
-            [':poof / :update', 'Rafraîchir / disparaître'],
-            [':pickall', 'Ramasse tous les meubles de l\'appart'],
-            [':talk &lt;user&gt; &lt;texte&gt;', 'Fait parler un joueur (bot)'],
-            [':ufos', 'Effet OVNI'],
-            [':rgb / :rainbow', 'Gradateur arc-en-ciel'],
-        ],
-        '🚌 Bus' => [
-            [':infobus … / :bus …', 'Pilotage du bus (voir l\'onglet Bus)'],
-        ],
-    ];
-    foreach ($grp as $titre => $cmds) {
-        echo '<div class="panel"><div class="ph"><h3>' . h($titre) . '</h3></div><table class="clean"><tr><th>Commande</th><th>Effet</th></tr>';
-        foreach ($cmds as $c) echo '<tr><td><code>' . $c[0] . '</code></td><td>' . $c[1] . '</td></tr>';
-        echo '</table></div>';
+/* ===== Manuel des commandes en jeu =========================================
+ * Données SERVEUR : admin/data/commands.generated.json (via gen_commands.php).
+ * Docs FR MANUELLES : admin/data/commands.docs.php (jamais écrasées).
+ * Cette page ne modifie AUCUNE permission et n'exécute AUCUNE commande.
+ */
+function ensure_command_favorites(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS admin_command_favorites (user_id INT NOT NULL, command VARCHAR(64) NOT NULL, PRIMARY KEY (user_id, command)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+function command_favorites(): array {
+    ensure_command_favorites();
+    $uid = (int)($_SESSION['admin']['id'] ?? 0);
+    if ($uid <= 0) return [];
+    $st = db()->prepare('SELECT command FROM admin_command_favorites WHERE user_id=?');
+    $st->execute([$uid]);
+    return $st->fetchAll(PDO::FETCH_COLUMN) ?: [];
+}
+/** Charge et fusionne données extraites + docs FR. Retourne [meta, commands, unregistered, themes]. */
+function commands_inventory(): array {
+    $gen = @json_decode((string)@file_get_contents(__DIR__ . '/data/commands.generated.json'), true);
+    $docsFile = __DIR__ . '/data/commands.docs.php';
+    $docs = []; $themes = []; $proposals = [];
+    if (is_file($docsFile)) {
+        require_once $docsFile;
+        if (function_exists('commands_docs')) $docs = commands_docs();
+        if (function_exists('commands_doc_themes')) $themes = commands_doc_themes();
+        if (function_exists('commands_doc_proposals')) $proposals = commands_doc_proposals();
     }
-    echo '<p class="hint">Liste établie d\'après les commandes présentes dans <code>kepler.jar</code>. Les noms entre &lt;…&gt; sont les paramètres à remplacer.</p>';
+    $commands = [];
+    if (is_array($gen) && !empty($gen['commands'])) {
+        foreach ($gen['commands'] as $c) {
+            $doc = $docs[$c['name']] ?? [];
+            $commands[] = array_merge($c, ['doc' => $doc]);
+        }
+    }
+    return [
+        'meta'    => is_array($gen) ? ($gen + ['proposals' => $proposals]) : ['proposals' => $proposals],
+        'commands'=> $commands,
+        'unreg'   => (is_array($gen) && !empty($gen['unregistered'])) ? $gen['unregistered'] : [],
+        'themes'  => $themes,
+        'proposals' => $proposals,
+    ];
+}
+function rank_fr(int $id): string {
+    $n = [0 => 'Tous', 1 => 'Joueur', 2 => 'Community M.', 3 => 'Guide', 4 => 'Hobba', 5 => 'Super Hobba', 6 => 'Modérateur', 7 => 'Admin'];
+    return $n[$id] ?? ('rang ' . $id);
+}
+
+function page_commandes(): void {
+    page_title('Commandes en jeu', 'Manuel généré depuis kepler.jar — documentation, aucune exécution');
+    $inv = commands_inventory();
+    $meta = $inv['meta']; $cmds = $inv['commands']; $themes = $inv['themes'];
+    $favs = command_favorites();
+    $myRank = (int)($_SESSION['admin']['rank'] ?? 1);
+
+    if (!$cmds) {
+        echo '<div class="panel"><div class="ph"><h3>⚠️ Inventaire absent</h3></div><div style="padding:12px">';
+        echo '<p>Le fichier <code>admin/data/commands.generated.json</code> est manquant ou vide.</p>';
+        echo '<p>Génère-le en ligne de commande (hors HTTP) :</p>';
+        echo '<pre style="background:#0d1b24;color:#cfe;padding:10px;border-radius:6px;overflow:auto"><code>php admin/tools/gen_commands.php</code></pre>';
+        echo '</div></div>';
+        return;
+    }
+
+    // ---- Bandeau empreinte / limites ----
+    $jar = $meta['jar'] ?? [];
+    $cnt = $meta['counts'] ?? [];
+    echo '<div class="panel"><div class="ph"><h3>🧾 Source de l\'inventaire</h3></div><div style="padding:10px 12px;font-size:13px">';
+    if ($jar) {
+        echo '<p style="margin:0 0 4px"><b>kepler.jar</b> · ' . number_format((int)($jar['size'] ?? 0), 0, ',', ' ') . ' octets · généré le ' . h(substr((string)($meta['generatedAt'] ?? ''), 0, 19)) . '</p>';
+        echo '<p style="margin:0 0 6px;font-family:var(--mono);font-size:11px;color:#6b8296;word-break:break-all">SHA-256 : ' . h((string)($jar['sha256'] ?? '?')) . '</p>';
+    }
+    echo '<p style="margin:0">Commandes actives : <b>' . (int)($cnt['commands'] ?? count($cmds)) . '</b> · alias : <b>' . (int)($cnt['aliasesTotal'] ?? 0) . '</b> · client-side : <b>' . (int)($cnt['clientSide'] ?? 0) . '</b> · non enregistrées : <b>' . (int)($cnt['unregistered'] ?? 0) . '</b></p>';
+    if (!empty($meta['limits'])) {
+        echo '<details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700">Limites de l\'inventaire</summary><ul style="margin:6px 0 0 18px;padding:0;color:#4a5a6a">';
+        foreach ($meta['limits'] as $l) echo '<li style="margin:3px 0">' . h($l) . '</li>';
+        echo '</ul></details>';
+    }
+    if (!empty($meta['warnings'])) {
+        echo '<p style="margin:8px 0 0;color:#b8731b">⚠ ' . count($meta['warnings']) . ' avertissement(s) de génération : ' . h(implode(' · ', $meta['warnings'])) . '</p>';
+    }
+    echo '<p class="hint" style="margin:8px 0 0">Régénérer après mise à jour du JAR : <code>php admin/tools/gen_commands.php</code> (CLI, hors HTTP, sans exécuter le JAR). Les descriptions FR de <code>commands.docs.php</code> sont conservées.</p>';
+    echo '</div></div>';
+
+    // ---- Barre de filtres ----
+    echo '<div class="panel"><div style="padding:10px 12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">';
+    echo '<input id="cmdq" type="search" class="ui-search" placeholder="🔍 Rechercher une commande, un alias, un mot-clé…" style="flex:1;min-width:220px;padding:7px 10px;border:1px solid #c3d0d8;border-radius:6px">';
+    echo '<label style="font-size:13px">Rôle : <select id="cmdrole" style="padding:6px;border:1px solid #c3d0d8;border-radius:6px">';
+    for ($r = 1; $r <= 7; $r++) echo '<option value="' . $r . '"' . ($r === $myRank ? ' selected' : '') . '>' . h(rank_fr($r)) . '</option>';
+    echo '</select></label>';
+    echo '<label style="font-size:13px">Thème : <select id="cmdtheme" style="padding:6px;border:1px solid #c3d0d8;border-radius:6px"><option value="">Tous</option>';
+    foreach ($themes as $k => $t) echo '<option value="' . h($k) . '">' . h($t[0] . ' ' . $t[1]) . '</option>';
+    echo '</select></label>';
+    echo '<label style="font-size:13px"><input type="checkbox" id="cmdfav"> ⭐ Favoris</label>';
+    echo '<span id="cmdcount" class="hint" style="margin-left:auto"></span>';
+    echo '</div></div>';
+
+    // ---- Constructeur de commande ----
+    echo '<div class="panel"><div class="ph"><h3>🧱 Constructeur de commande</h3></div><div style="padding:10px 12px">';
+    echo '<p class="hint" style="margin:0 0 8px">Assemble la commande puis copie-la : <b>cette page ne l\'exécute jamais</b>. Colle-la dans le chat du jeu.</p>';
+    echo '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">';
+    echo '<label style="font-size:13px">Commande <br><select id="bld-cmd" style="padding:6px;border:1px solid #c3d0d8;border-radius:6px;min-width:160px"></select></label>';
+    echo '<div id="bld-params" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end"></div>';
+    echo '</div>';
+    echo '<div class="row" style="align-items:center;gap:8px;margin-top:10px;max-width:560px">';
+    echo '<input id="bld-out" readonly value="" onclick="this.select()" style="flex:1;font-family:var(--mono);font-weight:700;font-size:15px;padding:7px 10px;border:1px solid #c3d0d8;border-radius:6px" aria-label="Commande assemblée">';
+    echo '<button class="mini" type="button" id="bld-copy">📋 Copier</button>';
+    echo '</div>';
+    echo '<p id="bld-hint" class="hint" style="margin:6px 0 0"></p>';
+    echo '</div></div>';
+
+    // ---- Liste des fiches ----
+    echo '<div id="cmdlist">';
+    foreach ($cmds as $c) {
+        $name = (string)$c['name'];
+        $doc = $c['doc'] ?? [];
+        $theme = (string)($doc['theme'] ?? '');
+        $themeLbl = isset($themes[$theme]) ? ($themes[$theme][0] . ' ' . $themes[$theme][1]) : '';
+        $minRank = $c['minRankId'];
+        $minRankLbl = ($minRank === null) ? 'Club' : rank_fr((int)$minRank);
+        $isFav = in_array($name, $favs, true);
+        $sensitive = !empty($doc['sensitive']);
+        // mots-clés pour la recherche
+        $kw = strtolower($name . ' ' . implode(' ', $c['aliases']) . ' ' . ($doc['descFr'] ?? '') . ' ' . ($c['descriptionEn'] ?? '') . ' ' . $themeLbl);
+
+        echo '<div class="panel cmd-card" data-name="' . h($name) . '" data-kw="' . h($kw) . '" data-minrank="' . (int)($minRank ?? 0) . '" data-theme="' . h($theme) . '" data-fav="' . ($isFav ? '1' : '0') . '" style="margin-bottom:10px">';
+        // En-tête
+        echo '<div class="ph" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
+        echo '<h3 style="margin:0"><code>:' . h($name) . '</code></h3>';
+        if (count($c['aliases']) > 1) echo '<span class="hint" style="font-size:12px">alias : ' . h(implode(', ', array_map(fn($a) => ':' . $a, array_slice($c['aliases'], 1)))) . '</span>';
+        echo '<span style="flex:1"></span>';
+        if ($c['clientSide']) echo '<span class="rk" style="background:#5a6b85">client-side</span>';
+        echo '<span class="rk" style="background:' . ($minRank >= 7 ? '#ff5b5b' : ($minRank >= 5 ? '#ffb033' : '#3fa65a')) . '" title="Rang minimum requis">' . h($minRankLbl) . '</span>';
+        if ($themeLbl) echo '<span class="rk" style="background:#4a6b8a">' . h($themeLbl) . '</span>';
+        if ($sensitive) echo '<span class="rk" style="background:#b8431b" title="Action sensible">⚠ sensible</span>';
+        echo '<button class="mini fav-btn" type="button" data-cmd="' . h($name) . '" title="Favori">' . ($isFav ? '⭐' : '☆') . '</button>';
+        echo '</div>';
+        // Corps
+        echo '<div style="padding:10px 12px;font-size:13px">';
+        if (!empty($doc['descFr'])) echo '<p style="margin:0 0 8px;font-size:14px">' . h($doc['descFr']) . '</p>';
+
+        // Syntaxe
+        $syntax = cmd_build_syntax($name, $doc, $c['requiredArgs']);
+        echo '<p style="margin:0 0 6px"><b>Syntaxe</b> &nbsp;<code style="font-size:14px">' . h($syntax) . '</code></p>';
+
+        // Permissions (DONNÉE SERVEUR)
+        echo '<p style="margin:0 0 6px"><b>Permissions</b> : ';
+        if (!empty($c['permissions'])) echo h(implode(', ', $c['permissions'])) . ' — rang minimum <b>' . h($minRankLbl) . '</b>' . ($minRank !== null ? ' (' . (int)$minRank . '+)' : '');
+        else echo 'aucune (tous les rangs)';
+        echo '</p>';
+
+        // Arguments requis (serveur) vs facultatifs (docs)
+        if (!empty($c['requiredArgs'])) echo '<p style="margin:0 0 6px"><b>Arguments requis</b> (déclarés serveur) : <code>' . h(implode(' ', $c['requiredArgs'])) . '</code></p>';
+
+        // Paramètres détaillés
+        if (!empty($doc['params'])) {
+            echo '<table class="clean" style="margin:4px 0 8px"><tr><th>Paramètre</th><th>Oblig.</th><th>Défaut</th><th>Description</th></tr>';
+            foreach ($doc['params'] as $p) {
+                echo '<tr><td><code>' . h((string)$p[0]) . '</code></td><td>' . (empty($p[1]) ? 'oui' : 'non') . '</td><td>' . h((string)($p[2] ?? '—')) . '</td><td>' . h((string)($p[3] ?? '')) . '</td></tr>';
+            }
+            echo '</table>';
+        }
+
+        // Sous-commandes
+        if (!empty($doc['subcommands'])) {
+            echo '<p style="margin:6px 0 4px"><b>Sous-commandes</b></p><table class="clean"><tr><th>Syntaxe</th><th>Effet</th></tr>';
+            foreach ($doc['subcommands'] as $s) echo '<tr><td><code>' . h((string)$s[0]) . '</code></td><td>' . h((string)$s[1]) . '</td></tr>';
+            echo '</table>';
+        }
+
+        // Exemples
+        if (!empty($doc['examples'])) {
+            echo '<p style="margin:8px 0 4px"><b>Exemples</b></p>';
+            foreach ($doc['examples'] as $ex) echo '<div style="font-family:var(--mono);background:#0d1b24;color:#bfe;display:inline-block;padding:3px 8px;border-radius:5px;margin:0 6px 4px 0">' . h((string)$ex) . '</div>';
+        }
+
+        // Effets / portée / conditions / annulation / échecs
+        if (!empty($doc['effects']))  echo '<p style="margin:8px 0 2px"><b>Effet</b> : ' . h((string)$doc['effects']) . '</p>';
+        if (!empty($doc['scope']))    echo '<p style="margin:2px 0"><b>Portée</b> : ' . h((string)$doc['scope']) . '</p>';
+        if (!empty($doc['conditions'])) { echo '<p style="margin:6px 0 2px"><b>Conditions</b></p><ul style="margin:0 0 0 18px;padding:0">'; foreach ($doc['conditions'] as $x) echo '<li>' . h((string)$x) . '</li>'; echo '</ul>'; }
+        echo '<p style="margin:6px 0 2px"><b>Annulation</b> : ' . (!empty($doc['undo']) ? h((string)$doc['undo']) : '<span class="hint">aucune / sans objet</span>') . '</p>';
+        if (!empty($doc['failures'])) { echo '<p style="margin:6px 0 2px"><b>Causes d\'échec connues</b></p><ul style="margin:0 0 0 18px;padding:0">'; foreach ($doc['failures'] as $x) echo '<li>' . h((string)$x) . '</li>'; echo '</ul>'; }
+        if (!empty($doc['notes']))    echo '<p class="hint" style="margin:8px 0 0">ℹ ' . h((string)$doc['notes']) . '</p>';
+        if (empty($doc) && !empty($c['descriptionEn'])) echo '<p class="hint" style="margin:6px 0 0">Description serveur : ' . h((string)$c['descriptionEn']) . '</p>';
+
+        echo '</div></div>';
+    }
+    echo '<p id="cmdempty" class="hint" style="display:none;text-align:center;padding:20px">Aucune commande ne correspond aux filtres.</p>';
+    echo '</div>';
+
+    // ---- Aide au dépannage ----
+    echo '<div class="panel"><div class="ph"><h3>🩺 « Pourquoi ça ne marche pas ? »</h3></div><div style="padding:10px 12px;font-size:13px"><ul style="margin:0 0 0 18px;padding:0">';
+    echo '<li><b>Rang insuffisant</b> : ton rang doit être ≥ au rang minimum de la commande. Les commandes admin exigent le rang <b>Admin (7)</b>.</li>';
+    echo '<li><b>Pas propriétaire de la salle</b> : <code>:pickall</code>, <code>:rgb</code> et <code>:ufos</code> n\'agissent que si tu es propriétaire de la salle (ou disposes de <code>ANY_ROOM_CONTROLLER</code>), même si la commande est « autorisée » à tous.</li>';
+    echo '<li><b>Arguments manquants</b> : une commande avec arguments requis non fournis renvoie « player_commands_no_args » et ne fait rien.</li>';
+    echo '<li><b>Cible hors ligne</b> : <code>:givecredits</code>, <code>:givebadge</code>, <code>:givedrink</code> ciblent un joueur <b>connecté</b> (et dans la même salle pour <code>:givedrink</code>).</li>';
+    echo '<li><b>Hors salle</b> : la plupart des commandes exigent d\'être dans une salle.</li>';
+    echo '<li><b>Habbo Club requis</b> : <code>:chooser</code> et <code>:furni</code> dépendent d\'un abonnement Club (fonction client).</li>';
+    echo '<li><b>Pré-requis matériel</b> : <code>:rgb</code> nécessite un gradateur posé ; <code>:talk</code>/<code>:ufos</code> s\'appuient sur la synthèse vocale de la salle.</li>';
+    echo '</ul></div></div>';
+
+    // ---- Propositions (séparées, aucun dev serveur) ----
+    if (!empty($inv['unreg'])) {
+        $prop = $inv['proposals'] ?? [];
+        echo '<div class="panel" style="border:1px dashed #b39">';
+        echo '<div class="ph"><h3>💡 Propositions (non développées)</h3></div><div style="padding:10px 12px;font-size:13px">';
+        echo '<p class="hint" style="margin:0 0 8px">Classes présentes dans le JAR mais <b>non enregistrées</b> dans <code>CommandManager</code> : elles ne sont <b>pas utilisables en jeu</b>. Section indicative — <b>aucun développement serveur n\'est engagé ici</b>.</p>';
+        echo '<table class="clean"><tr><th>Classe</th><th>État</th><th>Note</th></tr>';
+        foreach ($inv['unreg'] as $u) {
+            $note = $prop[$u['class']] ?? ($u['descriptionEn'] ?: '—');
+            $etat = !empty($u['isStub']) ? 'coquille vide' : 'compilée, non enregistrée';
+            echo '<tr><td><code>' . h((string)$u['class']) . '</code></td><td>' . h($etat) . '</td><td>' . h((string)$note) . '</td></tr>';
+        }
+        echo '</table></div></div>';
+    }
+
+    // ---- Données JS + logique ----
+    $jsCmds = [];
+    foreach ($cmds as $c) {
+        $jsCmds[] = [
+            'name' => $c['name'],
+            'aliases' => $c['aliases'],
+            'params' => array_map(fn($p) => ['name' => $p[0], 'optional' => !empty($p[1])], $c['doc']['params'] ?? array_map(fn($a) => [$a, false], $c['requiredArgs'])),
+        ];
+    }
+    echo '<form id="favform" method="post" style="display:none"><input type="hidden" name="action" value="cmd_fav_toggle"><input type="hidden" name="ajax" value="1"><input type="hidden" name="command" id="favcmd">' . csrf_field() . '</form>';
+    echo '<script>window.__CMDS=' . json_encode($jsCmds, JSON_UNESCAPED_UNICODE) . ';</script>';
+    echo <<<'JS'
+<script>
+(function(){
+  var q=document.getElementById('cmdq'), role=document.getElementById('cmdrole'),
+      theme=document.getElementById('cmdtheme'), favOnly=document.getElementById('cmdfav'),
+      count=document.getElementById('cmdcount'), cards=[].slice.call(document.querySelectorAll('.cmd-card')),
+      empty=document.getElementById('cmdempty');
+  function applyFilter(){
+    var text=(q.value||'').toLowerCase().trim(), r=parseInt(role.value,10)||7, th=theme.value, fav=favOnly.checked, shown=0;
+    cards.forEach(function(c){
+      var ok=true;
+      if(text && c.dataset.kw.indexOf(text)<0) ok=false;
+      if(ok && parseInt(c.dataset.minrank,10) > r) ok=false;   // rôle insuffisant pour cette commande
+      if(ok && th && c.dataset.theme!==th) ok=false;
+      if(ok && fav && c.dataset.fav!=='1') ok=false;
+      c.style.display=ok?'':'none'; if(ok)shown++;
+    });
+    count.textContent=shown+' commande'+(shown>1?'s':'')+' affichée'+(shown>1?'s':'');
+    empty.style.display=shown?'none':'block';
+  }
+  [q,role,theme,favOnly].forEach(function(el){el.addEventListener('input',applyFilter);el.addEventListener('change',applyFilter);});
+  applyFilter();
+
+  // Favoris (AJAX, sans quitter la page)
+  document.querySelectorAll('.fav-btn').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var cmd=btn.dataset.cmd;
+      document.getElementById('favcmd').value=cmd;
+      var fd=new FormData(document.getElementById('favform'));
+      fetch('?p=commandes',{method:'POST',body:fd,headers:{'X-Requested-With':'fetch'}})
+        .then(function(r){return r.json();}).then(function(j){
+          if(j.ok){var on=(j.msg==='ajouté');btn.textContent=on?'⭐':'☆';
+            var card=btn.closest('.cmd-card');if(card)card.dataset.fav=on?'1':'0';
+            if(window.toast)toast(on?'Ajouté aux favoris':'Retiré des favoris',true);applyFilter();}
+          else if(window.toast)toast(j.msg||'Erreur',false);
+        }).catch(function(){if(window.toast)toast('Erreur réseau',false);});
+    });
+  });
+
+  // Constructeur
+  var sel=document.getElementById('bld-cmd'), params=document.getElementById('bld-params'),
+      out=document.getElementById('bld-out'), hint=document.getElementById('bld-hint'),
+      byName={};
+  (window.__CMDS||[]).forEach(function(c){byName[c.name]=c;var o=document.createElement('option');o.value=c.name;o.textContent=':'+c.name;sel.appendChild(o);});
+  function rebuild(){
+    var c=byName[sel.value]; if(!c)return; params.innerHTML='';
+    (c.params||[]).forEach(function(p){
+      var wrap=document.createElement('label');wrap.style.cssText='font-size:13px;display:flex;flex-direction:column';
+      wrap.textContent=p.name+(p.optional?' (facultatif)':'');
+      var inp=document.createElement('input');inp.className='bld-p';inp.dataset.optional=p.optional?'1':'0';
+      inp.placeholder=p.name;inp.style.cssText='padding:6px;border:1px solid #c3d0d8;border-radius:6px;margin-top:2px';
+      inp.addEventListener('input',assemble);wrap.appendChild(inp);params.appendChild(wrap);
+    });
+    assemble();
+  }
+  function assemble(){
+    var c=byName[sel.value]; if(!c)return; var parts=[':'+c.name], missing=false;
+    [].slice.call(params.querySelectorAll('.bld-p')).forEach(function(inp){
+      var v=inp.value.trim();
+      if(v) parts.push(v);
+      else if(inp.dataset.optional!=='1') missing=true;
+    });
+    out.value=parts.join(' ');
+    hint.textContent=missing?'Renseigne les paramètres obligatoires pour une commande complète.':'Prête à copier. Cette page n’exécute rien.';
+  }
+  sel.addEventListener('change',rebuild); if(sel.options.length)rebuild();
+
+  // Copier (Chrome + Basilisk) avec repli sélection manuelle
+  function copyText(text){
+    out.value=text; out.focus(); out.select(); out.setSelectionRange(0,text.length);
+    var done=false;
+    try{ if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(text); done=true; } }catch(e){}
+    if(!done){ try{ done=document.execCommand('copy'); }catch(e){ done=false; } }
+    if(window.toast)toast(done?'Commande copiée !':'Copie auto indisponible — texte sélectionné, fais Ctrl+C',done!==false);
+    return done;
+  }
+  document.getElementById('bld-copy').addEventListener('click',function(){copyText(out.value);});
+})();
+</script>
+JS;
+}
+
+/** Construit la ligne de syntaxe : <requis> [facultatif]. */
+function cmd_build_syntax(string $name, array $doc, array $requiredArgs): string {
+    $s = ':' . $name;
+    if (!empty($doc['params'])) {
+        foreach ($doc['params'] as $p) $s .= ' ' . (empty($p[1]) ? '<' . $p[0] . '>' : '[' . $p[0] . ']');
+    } else {
+        foreach ($requiredArgs as $a) $s .= ' <' . $a . '>';
+    }
+    return $s;
 }
 
 function entry_bg_countries(): array {
