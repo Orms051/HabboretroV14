@@ -2727,7 +2727,9 @@ function page_user(): void {
 
     echo '<div style="margin-bottom:10px"><a class="mini ghost lnkbtn" href="?p=users">← Retour aux joueurs</a></div>';
     page_title('👤 ' . $u['username'], 'Fiche complète du joueur · ID ' . $id);
-    echo '<div style="margin:-10px 0 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' . rank_badge((int)$u['rank']) . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">Compte actif</span>');
+    echo '<div style="margin:-10px 0 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+       . '<img src="/avatar.php?user=' . h(rawurlencode((string)$u['username'])) . '&size=b&v=2" alt="Avatar de ' . h((string)$u['username']) . '" width="64" height="110" loading="lazy" style="image-rendering:pixelated;image-rendering:crisp-edges;vertical-align:bottom;background:#f3eecf;border:1px solid #d8cfa6;border-radius:4px">'
+       . rank_badge((int)$u['rank']) . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">Compte actif</span>');
     if ((int)($_SESSION['admin']['rank'] ?? 0) >= 7) echo '<form method="post" action="?p=user&id=' . $id . '" target="_blank" style="margin-left:auto" onsubmit="return confirm(\'Ouvrir le jeu connecté en tant que ' . h(addslashes($u['username'])) . ' ?\')">' . csrf_field() . '<input type="hidden" name="action" value="loginas"><input type="hidden" name="id" value="' . $id . '"><button class="mini ghost" title="Ouvre le jeu connecté en tant que ce joueur (nouvel onglet)">🎭 Se connecter en tant que…</button></form>';
     echo '</div>';
 
@@ -2868,7 +2870,7 @@ function page_users(): void {
         $seen = (int)$u['last_online'] > 0 ? date('d/m/Y H:i', (int)$u['last_online']) : '<span class="muted">jamais</span>';
         $isBan = isset($bans[(int)$u['id']]);
         echo '<tr>
-            <td class="muted">' . (int)$u['id'] . '</td><td><a class="ulink" href="?p=user&id=' . (int)$u['id'] . '">' . h($u['username']) . '</a><div class="muted sm">' . h($u['motto']) . '</div></td>
+            <td class="muted">' . (int)$u['id'] . '</td><td><div style="display:flex;align-items:center;gap:8px"><span style="flex:0 0 auto;width:28px;height:34px;overflow:hidden;background:#f3eecf;border:1px solid #d8cfa6;border-radius:3px;display:flex;justify-content:center"><img src="/avatar.php?user=' . h(rawurlencode((string)$u['username'])) . '&size=s&head=1&v=2" alt="" width="32" height="55" loading="lazy" style="image-rendering:pixelated;image-rendering:crisp-edges"></span><span><a class="ulink" href="?p=user&id=' . (int)$u['id'] . '">' . h($u['username']) . '</a><div class="muted sm">' . h($u['motto']) . '</div></span></div></td>
             <td>' . rank_badge((int)$u['rank']) . '</td><td>' . (int)$u['credits'] . '</td><td>' . badge_preview(array_merge($rb, $ub)) . '</td>
             <td>' . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">OK</span>') . '</td>
             <td style="text-align:right"><button class="mini ghost" onclick="tgl(\'ue' . (int)$u['id'] . '\')">Éditer</button>
