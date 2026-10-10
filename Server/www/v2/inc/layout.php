@@ -409,8 +409,8 @@ a.alink:hover{color:#b85a16}
 .crow .cbtns{flex:0 0 auto;white-space:nowrap}
 /* boutons new_button */
 a.new-button{position:relative;display:inline-block;height:25px;text-decoration:none;overflow:hidden;vertical-align:top;margin:0 3px 2px 0}
-a.new-button b{display:inline;float:left;margin-right:3px;padding:5px 17px 4px 20px;height:17px;font-size:11px;font-weight:bold;color:#000 !important;background:url(<?= $I ?>/new_button.png) no-repeat -3px 0;text-align:center;white-space:nowrap}
-a.new-button i{position:absolute;right:0;top:0;width:3px;height:25px;background:url(<?= $I ?>/new_button.png) no-repeat 0 0}
+a.new-button b{box-sizing:content-box;display:inline;float:left;margin-right:3px;padding:5px 17px 4px 20px;height:17px;font-size:11px;font-weight:bold;color:#000 !important;background:url(<?= $I ?>/new_button.png) no-repeat -3px 0;text-align:center;white-space:nowrap}
+a.new-button i{box-sizing:content-box;position:absolute;right:0;top:0;width:3px;height:25px;background:url(<?= $I ?>/new_button.png) no-repeat 0 0}
 a.new-button:hover b{background-position:-3px -25px;text-decoration:none}
 /* ===== Boîtes d'origine .v3box (pages importées fidèlement) ===== */
 #content .content-2col,#content .content-1col,#content .content-3col{border-collapse:collapse;width:100%}
