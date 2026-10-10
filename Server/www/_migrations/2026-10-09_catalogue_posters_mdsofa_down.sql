@@ -1,28 +1,30 @@
--- Rollback ciblé (supprime UNIQUEMENT les ajouts de cette migration ; ne touche pas aux autres lignes).
+-- Rollback ciblé & FK-sûr.
+-- Retire uniquement les offres créées par cette migration :
 
-DELETE FROM catalogue_pages WHERE id=214;
-DELETE FROM catalogue_pages WHERE id=215;
-DELETE FROM items_definitions WHERE id=2267 AND sprite='md_sofa';
-DELETE FROM catalogue_items WHERE id=2266;
-DELETE FROM catalogue_items WHERE id=2267;
-DELETE FROM catalogue_items WHERE id=2268;
-DELETE FROM catalogue_items WHERE id=2269;
-DELETE FROM catalogue_items WHERE id=2270;
-DELETE FROM catalogue_items WHERE id=2271;
-DELETE FROM catalogue_items WHERE id=2272;
-DELETE FROM catalogue_items WHERE id=2273;
-DELETE FROM catalogue_items WHERE id=2274;
-DELETE FROM catalogue_items WHERE id=2275;
-DELETE FROM catalogue_items WHERE id=2276;
-DELETE FROM catalogue_items WHERE id=2277;
-DELETE FROM catalogue_items WHERE id=2278;
-DELETE FROM catalogue_items WHERE id=2279;
-DELETE FROM catalogue_items WHERE id=2280;
-DELETE FROM catalogue_items WHERE id=2281;
-DELETE FROM catalogue_items WHERE id=2282;
-DELETE FROM catalogue_items WHERE id=2283;
-DELETE FROM catalogue_items WHERE id=2284;
-DELETE FROM catalogue_items WHERE id=2285;
-DELETE FROM catalogue_items WHERE id=2286;
-DELETE FROM catalogue_items WHERE id=2287;
--- (Traductions de noms non annulées : cosmétique, non destructif.)
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=56 AND sale_code='poster 56';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=21 AND sale_code='poster 21';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=22 AND sale_code='poster 22';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=46 AND sale_code='poster 46';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=47 AND sale_code='poster 47';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=48 AND sale_code='poster 48';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=49 AND sale_code='poster 49';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=1006 AND sale_code='poster 1006';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=25 AND sale_code='poster 25';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=26 AND sale_code='poster 26';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=27 AND sale_code='poster 27';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=28 AND sale_code='poster 28';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=29 AND sale_code='poster 29';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=30 AND sale_code='poster 30';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=23 AND sale_code='poster 23';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=42 AND sale_code='poster 42';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=43 AND sale_code='poster 43';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=45 AND sale_code='poster 45';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=50 AND sale_code='poster 50';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=2005 AND sale_code='poster 2005';
+DELETE FROM catalogue_items WHERE definition_id=251 AND item_specialspriteid=2008 AND sale_code='poster 2008';
+DELETE FROM catalogue_items WHERE sale_code='md_sofa';
+-- Déf md_sofa : supprimée SEULEMENT si aucun meuble posé/possédé ne l'utilise (sinon conservée)
+DELETE FROM items_definitions WHERE sprite='md_sofa' AND NOT EXISTS (SELECT 1 FROM items i WHERE i.definition_id = items_definitions.id);
+-- Pages créées : supprimées seulement si devenues vides
+DELETE FROM catalogue_pages WHERE name IN ('Posters événementiels','TEST (staff)') AND NOT EXISTS (SELECT 1 FROM catalogue_items ci WHERE ci.page_id = CAST(catalogue_pages.id AS CHAR));
+-- NB: traductions de noms non annulées (cosmétique, non destructif).
