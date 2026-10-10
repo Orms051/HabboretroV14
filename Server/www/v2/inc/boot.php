@@ -56,6 +56,18 @@ function login_register_success(): void { @unlink(login_throttle_file()); }
 /* ---- Mode maintenance : fichier Server/www/maintenance.json (écrit par l'admin). Le staff garde l'accès. ---- */
 function maintenance_active(): bool { return is_file(dirname(__DIR__, 2) . '/maintenance.json'); }
 
+/* ---- Messagerie : messages reçus du staff (user_messages, partagés avec le site /) ---- */
+function ensure_user_msgs(): void {
+    static $done = false; if ($done) return; $done = true;
+    try { db()->exec("CREATE TABLE IF NOT EXISTS user_messages (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, from_staff VARCHAR(64) NOT NULL DEFAULT '', subject VARCHAR(120) NOT NULL DEFAULT '', body VARCHAR(2000) NOT NULL, read_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(user_id), INDEX(read_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); }
+    catch (Throwable $e) {}
+}
+function unread_msgs(int $uid): int {
+    if ($uid <= 0) return 0;
+    try { ensure_user_msgs(); $st = db()->prepare('SELECT COUNT(*) FROM user_messages WHERE user_id=? AND read_at IS NULL'); $st->execute([$uid]); return (int)$st->fetchColumn(); }
+    catch (Throwable $e) { return 0; }
+}
+
 /* Pseudo d'avatar en attendant l'imager V14 fidèle (placeholder stylisé — voir chantier avatar). */
 function av_url(string $figure, string $sex, string $direction = '2', string $size = 'b'): string {
     // TODO imager V14 : pour l'instant renvoie '' -> le gabarit affiche un SVG de repli.

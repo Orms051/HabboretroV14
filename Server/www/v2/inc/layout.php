@@ -191,6 +191,7 @@ function tabmenu_html(?string $err): string {
         <div class="mh-dest">
           <a href="/client.php" target="_blank" rel="noopener">Entrer dans l'hôtel</a>
           <a href="?p=home/<?= h(rawurlencode((string)$u['username'])) ?>">Voir ma Habbo Home</a>
+          <a href="?p=messages">Mes messages<?php $nm = function_exists('unread_msgs') ? unread_msgs((int)$u['id']) : 0; if ($nm > 0): ?> <span style="background:#e5820c;color:#fff;padding:0 4px;border-radius:2px">(<?= (int)$nm ?>)</span><?php endif; ?></a>
           <a href="?p=me">Modifier mes paramètres</a>
           <?php if ($isAdmin): ?><a href="/admin/" class="mh-admin">Administration</a><?php endif; ?>
         </div>

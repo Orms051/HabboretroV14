@@ -548,6 +548,34 @@ if ($p === 'games') {
     render_foot(); exit;
 }
 
+/* ---- Messagerie : messages reçus du staff (intégration de la messagerie existante) ---- */
+if ($p === 'messages') {
+    render_head('home', null);
+    $u = me();
+    if (!$u) {
+        box_open('Mes messages', 'b');
+        echo '<p class="muted">Connecte-toi pour voir tes messages. <a href="?p=register">Se connecter / s\'inscrire</a></p>';
+        box_close(); render_foot(); exit;
+    }
+    ensure_user_msgs();
+    $list = db()->prepare('SELECT id,from_staff,subject,body,read_at,created_at FROM user_messages WHERE user_id=? ORDER BY id DESC'); $list->execute([(int)$u['id']]); $msgs = $list->fetchAll();
+    try { db()->prepare('UPDATE user_messages SET read_at=NOW() WHERE user_id=? AND read_at IS NULL')->execute([(int)$u['id']]); } catch (Throwable $e) {}
+    box_open('✉ Mes messages', 'b');
+    echo '<p class="muted" style="margin-bottom:8px">Les messages de l\'équipe de l\'hôtel.</p>';
+    if (!$msgs) echo '<p class="muted">📭 Tu n\'as aucun message pour le moment.</p>';
+    else foreach ($msgs as $m) {
+        $new = empty($m['read_at']);
+        echo '<div style="border:1px solid #d9d2b8;border-radius:4px;padding:8px;margin-bottom:6px;background:' . ($new ? '#fff7e6' : '#fff') . '">'
+           . '<div style="font-size:10px;color:#8a97a3;margin-bottom:3px"><b style="color:#5b5b5b">👤 ' . h((string)($m['from_staff'] ?: 'Équipe')) . '</b>'
+           . ($new ? ' <span style="background:#e5820c;color:#fff;padding:0 5px;border-radius:2px;font-weight:bold">Nouveau</span>' : '')
+           . ' · ' . h(date('d/m/Y H:i', strtotime((string)$m['created_at']))) . '</div>';
+        if (trim((string)$m['subject']) !== '') echo '<div style="font-weight:bold;font-size:12px;margin-bottom:2px;color:#30384a">' . h((string)$m['subject']) . '</div>';
+        echo '<div style="font-size:11px;color:#5b5b5b">' . nl2br(h((string)$m['body'])) . '</div></div>';
+    }
+    box_close();
+    render_foot(); exit;
+}
+
 /* ---- Communauté ---- */
 if ($p === 'community') {
     render_head('community', null);
