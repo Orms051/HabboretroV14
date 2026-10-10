@@ -331,8 +331,8 @@ a.alink:hover{color:#b85a16}
 #mainmenu ul{list-style:none;overflow:hidden}
 #mainmenu li{float:left;height:39px}
 #mainmenu li#leftspacer{width:5px}
-#mainmenu li a{float:left;display:block;background:url(<?= $I ?>/navi/tab_mid.gif) repeat-x;height:39px;text-decoration:none;text-shadow:#000 2px 2px 2px;font-weight:bold;color:#fff;line-height:39px;padding:0 8px 0 0}
-#mainmenu li a img{vertical-align:middle;padding:0 2px 0 2px}
+#mainmenu li a{float:left;display:block;background:url(<?= $I ?>/navi/tab_mid.gif) repeat-x;height:39px;text-decoration:none;text-shadow:#000 2px 2px 2px;font-weight:bold;color:#fff;line-height:39px;padding:0 5px 0 0}
+#mainmenu li a img{vertical-align:middle;padding:0 1px 0 1px}
 #mainmenu li#active a{background:url(<?= $I ?>/navi/tab_act_mid.gif) repeat-x;color:#000;text-shadow:none}
 #mainmenu li .left{width:5px;float:left;background:url(<?= $I ?>/navi/tab_left.gif) no-repeat;height:39px}
 #mainmenu li .right{width:4px;float:left;background:url(<?= $I ?>/navi/tab_right.gif) no-repeat;height:39px}
