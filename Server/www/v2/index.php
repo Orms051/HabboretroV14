@@ -248,7 +248,7 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                . '<div class="profile-since">Habbo créé le :<br><b>' . ($cr !== '' ? h(date('d/m/Y', strtotime($cr))) : '—') . '</b></div>'
                . ($motto !== '' ? '<div class="profile-motto-inline">« ' . h($motto) . ' »</div>' : '')
                . '</div>'
-               . '<div class="profile-figure"><span class="av-figure" style="background:' . $fbg . '">' . $fch . '</span><span class="av-cap">avatar en jeu</span></div>';
+               . '<div class="profile-figure">' . avatar_tag($un, ['size' => 'b', 'alt' => 'Avatar de ' . $un]) . '</div>';
             $viewer = me(); $isOwner = $viewer && (int)$viewer['id'] === $oid;
             if ($viewer && !$isOwner && $ctx === 'view') {
                 $isFriend = false; try { $fq = db()->prepare('SELECT COUNT(*) FROM messenger_friends WHERE (from_id=? AND to_id=?) OR (from_id=? AND to_id=?)'); $fq->execute([(int)$viewer['id'], $oid, $oid, (int)$viewer['id']]); $isFriend = (int)$fq->fetchColumn() > 0; } catch (Throwable $e) {}
@@ -256,14 +256,14 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                 else $b .= '<form class="profile-friend" method="post" action="?p=home_addfriend"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="fid" value="' . $oid . '"><button class="new-button" type="submit"><b>Ajouter en ami</b><i></i></button></form>';
             }
             $b .= '<div class="profile-tags"><div class="pt-band">Aucun tag.</div></div>';
-            return hw_box('Profil', $b, 190, 'b', $skin);
+            return hw_box('Profil', $b, 210, 'b', $skin);
         case 'widget_friends':
             $rows = [];
             try { $st = db()->prepare('SELECT CASE WHEN from_id=? THEN to_id ELSE from_id END AS fid FROM messenger_friends WHERE from_id=? OR to_id=? LIMIT 30'); $st->execute([$oid, $oid, $oid]); $ids = array_column($st->fetchAll(), 'fid'); }
             catch (Throwable $e) { $ids = []; }
             if ($ids) { $in = implode(',', array_map('intval', array_slice($ids, 0, 18))); try { $rows = db()->query('SELECT username,sex FROM users WHERE id IN (' . $in . ')')->fetchAll(); } catch (Throwable $e) {} }
             if (!$rows) $b = '<p class="muted" style="font-size:10px">Aucun ami pour le moment.</p>';
-            else { $b = '<div style="display:flex;flex-wrap:wrap">'; foreach ($rows as $r) $b .= '<a href="?p=home/' . h(rawurlencode((string)$r['username'])) . '" title="' . h((string)$r['username']) . '" style="width:46px;text-align:center;margin:0 3px 6px 0;font-size:8px;color:#30384a;text-decoration:none"><span style="display:block;margin:0 auto 2px">' . av_initial((string)$r['username'], 38) . '</span>' . h(mb_strimwidth((string)$r['username'], 0, 7, '…')) . '</a>'; $b .= '</div>'; }
+            else { $b = '<div style="display:flex;flex-wrap:wrap">'; foreach ($rows as $r) $b .= '<a href="?p=home/' . h(rawurlencode((string)$r['username'])) . '" title="' . h((string)$r['username']) . '" style="width:46px;text-align:center;margin:0 3px 6px 0;font-size:8px;color:#30384a;text-decoration:none"><span style="display:block;margin:0 auto 2px">' . avatar_tag((string)$r['username'], ['head' => true, 'alt' => (string)$r['username']]) . '</span>' . h(mb_strimwidth((string)$r['username'], 0, 7, '…')) . '</a>'; $b .= '</div>'; }
             return hw_box('Mes amis', $b, 300, 'g', $skin);
         case 'widget_badges':
             try { $st = db()->prepare('SELECT badge FROM users_badges WHERE user_id=? LIMIT 24'); $st->execute([$oid]); $bd = array_column($st->fetchAll(), 'badge'); }
@@ -598,7 +598,7 @@ if ($p === 'community') {
     if ($q !== '') {
         echo '<div style="display:flex;flex-wrap:wrap;margin-top:10px">';
         if (!$found) echo '<p class="muted">Aucun Habbo trouvé pour « ' . h($q) . ' ».</p>';
-        else foreach ($found as $r) echo '<a href="?p=home/' . h(rawurlencode((string)$r['username'])) . '" style="width:60px;text-align:center;margin:0 6px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:48px;height:48px;background:#f3eecf;border:1px solid #d8cfa6;margin:0 auto 2px;overflow:hidden">' . av_svg((string)$r['username'], (string)$r['sex']) . '</span>' . h(mb_strimwidth((string)$r['username'], 0, 9, '…')) . '</a>';
+        else foreach ($found as $r) echo '<a href="?p=home/' . h(rawurlencode((string)$r['username'])) . '" style="width:60px;text-align:center;margin:0 6px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:48px;height:48px;background:#f3eecf;border:1px solid #d8cfa6;margin:0 auto 2px;overflow:hidden">' . avatar_tag((string)$r['username'], ['head' => true]) . '</span>' . h(mb_strimwidth((string)$r['username'], 0, 9, '…')) . '</a>';
         echo '</div>';
     }
     box_close();
@@ -609,11 +609,11 @@ if ($p === 'community') {
     echo '</div><div class="sidecol">';
     box_open('L\'équipe', 'p');
     if (!$staff) echo '<p class="muted">Aucun membre du staff.</p>';
-    else { echo '<div style="display:flex;flex-wrap:wrap">'; foreach ($staff as $s) echo '<a href="?p=home/' . h(rawurlencode((string)$s['username'])) . '" title="' . h((string)$s['username']) . '" style="width:56px;text-align:center;margin:0 4px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:44px;height:44px;background:#f3eecf;border:1px solid #d8cfa6;margin:0 auto 2px;overflow:hidden">' . av_svg((string)$s['username'], (string)$s['sex']) . '</span>' . h(mb_strimwidth((string)$s['username'], 0, 8, '…')) . '</a>'; echo '</div>'; }
+    else { echo '<div style="display:flex;flex-wrap:wrap">'; foreach ($staff as $s) echo '<a href="?p=home/' . h(rawurlencode((string)$s['username'])) . '" title="' . h((string)$s['username']) . '" style="width:56px;text-align:center;margin:0 4px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:44px;height:44px;background:#f3eecf;border:1px solid #d8cfa6;margin:0 auto 2px;overflow:hidden">' . avatar_tag((string)$s['username'], ['head' => true]) . '</span>' . h(mb_strimwidth((string)$s['username'], 0, 8, '…')) . '</a>'; echo '</div>'; }
     box_close();
     box_open('Habbo Homes', 'p');
     echo '<p class="muted" style="margin-bottom:7px">Découvre les pages perso des Habbos !</p><div style="display:flex;flex-wrap:wrap">';
-    foreach (recent_players(6) as $r) echo '<a href="?p=home/' . h(rawurlencode((string)$r['username'])) . '" title="' . h((string)$r['username']) . '" style="width:50px;text-align:center;margin:0 4px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:44px;height:44px;background:#f3eecf;border:1px solid #d8cfa6;margin:0 auto 2px;overflow:hidden">' . av_svg((string)$r['username'], (string)$r['sex']) . '</span>' . h(mb_strimwidth((string)$r['username'], 0, 8, '…')) . '</a>';
+    foreach (recent_players(6) as $r) echo '<a href="?p=home/' . h(rawurlencode((string)$r['username'])) . '" title="' . h((string)$r['username']) . '" style="width:50px;text-align:center;margin:0 4px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:44px;height:44px;background:#f3eecf;border:1px solid #d8cfa6;margin:0 auto 2px;overflow:hidden">' . avatar_tag((string)$r['username'], ['head' => true]) . '</span>' . h(mb_strimwidth((string)$r['username'], 0, 8, '…')) . '</a>';
     echo '</div>';
     box_close();
     echo '</div></div>';
@@ -658,8 +658,12 @@ if ($p === 'me') {
     if (!$u) { box_open('Mon Habbo', 'b'); echo '<p class="muted">Connecte-toi pour accéder à ton compte.</p>'; box_close(); render_foot(); exit; }
     $me = null; try { $me = db()->query('SELECT username,motto,credits,club_expiration FROM users WHERE id=' . (int)$u['id'])->fetch(); } catch (Throwable $e) {}
     box_open('Salut ' . h($u['username']) . ' !', 'g');
+    echo '<div style="display:flex;gap:12px;align-items:flex-start">';
+    echo '<div style="flex:0 0 auto">' . avatar_tag((string)$u['username'], ['size' => 'b', 'alt' => 'Mon avatar']) . '</div>';
+    echo '<div style="flex:1">';
     if ($me) echo '<p class="muted">Mission : <b>' . h((string)$me['motto']) . '</b><br>Crédits : <b>' . number_format((int)$me['credits'], 0, ',', ' ') . '</b> · Club : ' . ((int)$me['club_expiration'] > time() ? 'actif' : 'non membre') . '</p>';
     echo '<div style="margin-top:8px">' . nbtn('Entre dans l\'Hôtel', '/client.php', '_blank') . nbtn('Ma Home publique', '?p=home/' . rawurlencode((string)$u['username'])) . '</div>';
+    echo '</div></div>';
     box_close();
     render_foot(); exit;
 }
@@ -1060,7 +1064,7 @@ if (strpos($p, 'home/') === 0) {
     if (($_GET['need'] ?? '') === 'login') echo '<div class="hist-note">🔑 Connecte-toi pour effectuer cette action. <a href="?p=register">Se connecter / s\'inscrire</a></div>';
     // En-tête propriétaire + actions
     echo '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">';
-    echo '<div style="width:34px;height:34px;background:#f3eecf;border:1px solid #d8cfa6;border-radius:3px;overflow:hidden">' . av_svg((string)$owner['username'], (string)$owner['sex']) . '</div>';
+    echo '<div style="width:34px;height:40px;background:#f3eecf;border:1px solid #d8cfa6;border-radius:3px;overflow:hidden;display:flex;align-items:flex-start;justify-content:center">' . avatar_tag((string)$owner['username'], ['head' => true, 'alt' => (string)$owner['username']]) . '</div>';
     echo '<div style="flex:1"><b style="font-size:13px">La Habbo Home de ' . h((string)$owner['username']) . '</b><div class="muted" style="font-size:10px">' . h((string)$owner['motto']) . '</div></div>';
     $url = 'http://' . h($_SERVER['HTTP_HOST'] ?? 'localhost') . '/v2/?p=home/' . h(rawurlencode((string)$owner['username']));
     echo '<input readonly value="' . $url . '" onclick="this.select()" style="width:230px;border:1px solid #b9c7cf;padding:3px 5px;font-size:10px" title="Copier le lien de cette Home">';

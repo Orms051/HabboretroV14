@@ -26,3 +26,8 @@ Kepler-Server/src/main/java/META-INF/MANIFEST.MF
 *.log
 .env
 .vscode
+# Avatars générés (cache)
+/cache/
+
+# Cache des données figuredata (régénéré)
+/avatar/cache/
