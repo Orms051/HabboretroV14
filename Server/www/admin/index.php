@@ -1279,11 +1279,13 @@ function page_homemod(): void {
     page_title('Modération des Habbo Homes', 'Signalements, recherche de Home et catalogue des ressources. Masquer une Home (public) et bloquer son édition sont deux actions distinctes.');
     echo '<div class="smwrap">';
     echo '<div class="sm-nav">';
-    foreach (['reports' => '🚩 Signalements' . ($nnew ? ' (' . $nnew . ')' : ''), 'search' => '🔎 Rechercher une Home', 'catalog' => '🗂️ Catalogue de ressources'] as $k => $lbl)
+    foreach (['reports' => '🚩 Signalements' . ($nnew ? ' (' . $nnew . ')' : ''), 'search' => '🔎 Rechercher une Home', 'restrictions' => '🚧 Restrictions actives', 'history' => '🕑 Historique', 'catalog' => '🗂️ Catalogue de ressources'] as $k => $lbl)
         echo '<a href="?p=homemod&sec=' . $k . '" class="' . ($k === $sec ? 'on' : '') . '">' . $lbl . '</a>';
     echo '</div>';
     if ($sec === 'search') hm_view_search();
     elseif ($sec === 'catalog') hm_view_catalog();
+    elseif ($sec === 'restrictions') hm_view_restrictions();
+    elseif ($sec === 'history') hm_view_history();
     else hm_view_reports();
     echo '</div>';
 }
@@ -1367,6 +1369,39 @@ function hm_view_reports(): void {
     echo '<p class="sub" style="margin-top:12px">Pour sanctionner le compte (bannissement), ouvre la <a href="?p=user&id=' . $ownerId . '">fiche du propriétaire</a> → onglet Modération.</p>';
     echo '</div>';
     echo '</div></div></div>'; // card + hmdetail + hmwrap
+}
+function hm_view_restrictions(): void {
+    echo '<div class="card"><div class="ph"><h3>🚧 Restrictions actives</h3></div>';
+    echo '<p class="sub" style="margin:-6px 0 10px">Homes actuellement <b>masquées</b> au public ou dont l\'<b>édition est bloquée</b>. Chaque rétablissement demande un motif (journalisé).</p>';
+    try { $rows = db()->query("SELECT user_id,hidden,edit_locked FROM home_pages WHERE hidden=1 OR edit_locked=1 ORDER BY updated_at DESC LIMIT 100")->fetchAll(); }
+    catch (Throwable $e) { $rows = []; }
+    if (!$rows) { echo '<div class="empty">Aucune restriction active. 🎉</div></div>'; return; }
+    echo '<table class="clean"><tr><th>Joueur</th><th>Visibilité</th><th>Édition</th><th style="text-align:right">Rétablir</th></tr>';
+    foreach ($rows as $r) {
+        $uid = (int)$r['user_id']; $owner = hm_uname($uid); $back = '?p=homemod&sec=restrictions';
+        echo '<tr><td><a href="?p=user&id=' . $uid . '"><b>' . h($owner) . '</b></a> <a class="sub" href="/v2/?p=home/' . h(rawurlencode($owner)) . '" target="_blank">(Home ↗)</a></td>'
+           . '<td>' . ((int)$r['hidden'] ? '<span class="rk red">Masquée</span>' : '<span class="rk green">Visible</span>') . '</td>'
+           . '<td>' . ((int)$r['edit_locked'] ? '<span class="rk red">Bloquée</span>' : '<span class="rk green">Autorisée</span>') . '</td><td style="text-align:right">';
+        if ((int)$r['hidden']) echo hm_reason_action('hm_home_hide', ['user_id' => $uid, 'val' => 0, 'back' => $back], 'Rendre visible');
+        if ((int)$r['edit_locked']) echo hm_reason_action('hm_home_lock', ['user_id' => $uid, 'val' => 0, 'back' => $back], 'Débloquer l\'édition');
+        echo '</td></tr>';
+    }
+    echo '</table></div>';
+}
+function hm_view_history(): void {
+    $q = trim((string)($_GET['q'] ?? ''));
+    echo '<form method="get" class="card" style="display:flex;gap:6px;align-items:flex-end"><input type="hidden" name="p" value="homemod"><input type="hidden" name="sec" value="history">'
+       . '<label style="flex:1">Rechercher (joueur, décision, modérateur, motif)<input name="q" value="' . h($q) . '" placeholder="Nom, mot-clé…"></label><button class="sm-btn primary">Filtrer</button></form>';
+    echo '<div class="card"><div class="ph"><h3>🕑 Décisions sur les signalements</h3></div>';
+    echo '<p class="sub" style="margin:-6px 0 10px">Dossiers clos avec leur décision. « Rouvrir » ramène au dossier (où tu peux remettre le statut « En cours »).</p>';
+    try { $rows = db()->query("SELECT * FROM home_reports WHERE status='handled' ORDER BY (handled_at IS NULL), handled_at DESC, id DESC LIMIT 100")->fetchAll(); }
+    catch (Throwable $e) { $rows = []; }
+    $out = [];
+    foreach ($rows as $r) { $owner = hm_uname((int)$r['owner_id']); $hay = $owner . ' ' . (string)($r['decision'] ?? '') . ' ' . (string)$r['handled_by'] . ' ' . (string)$r['reason']; if ($q === '' || stripos($hay, $q) !== false) { $r['_owner'] = $owner; $out[] = $r; } }
+    if (!$out) { echo '<div class="empty">Aucune décision enregistrée' . ($q ? ' pour « ' . h($q) . ' »' : '') . '.</div></div>'; return; }
+    echo '<table class="clean"><tr><th>Quand</th><th>Home</th><th>Motif signalé</th><th>Décision</th><th>Par</th><th></th></tr>';
+    foreach ($out as $r) echo '<tr><td class="sub">' . h(substr((string)(!empty($r['handled_at']) ? $r['handled_at'] : $r['created_at']), 0, 16)) . '</td><td><b>' . h($r['_owner']) . '</b></td><td class="sub">' . h((string)$r['reason']) . '</td><td>' . h((string)($r['decision'] ?? '') ?: '—') . '</td><td class="sub">' . h((string)$r['handled_by']) . '</td><td><a class="sm-btn" href="?p=homemod&sec=reports&r=' . (int)$r['id'] . '">Rouvrir →</a></td></tr>';
+    echo '</table></div>';
 }
 function hm_view_search(): void {
     $q = trim((string)($_GET['q'] ?? ''));
