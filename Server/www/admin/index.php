@@ -1162,7 +1162,7 @@ function ensure_home_admin(): void {
     try { if (!col_exists('home_reports', 'handled_at')) db()->exec("ALTER TABLE home_reports ADD COLUMN handled_at DATETIME NULL"); } catch (Throwable $e) {}
 }
 function sitemgr_sections(): array {
-    return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'apparence' => ['🎨', 'Apparence'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
+    return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'apparence' => ['🎨', 'Apparence'], 'ressources' => ['🏠', 'Ressources Homes'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
 }
 function sitemgr_style(): void {
     static $done = false; if ($done) return; $done = true;
@@ -1279,8 +1279,9 @@ function page_homemod(): void {
     page_title('Modération des Habbo Homes', 'Signalements, recherche de Home et catalogue des ressources. Masquer une Home (public) et bloquer son édition sont deux actions distinctes.');
     echo '<div class="smwrap">';
     echo '<div class="sm-nav">';
-    foreach (['reports' => '🚩 Signalements' . ($nnew ? ' (' . $nnew . ')' : ''), 'search' => '🔎 Rechercher une Home', 'restrictions' => '🚧 Restrictions actives', 'history' => '🕑 Historique', 'catalog' => '🗂️ Catalogue de ressources'] as $k => $lbl)
+    foreach (['reports' => '🚩 Signalements' . ($nnew ? ' (' . $nnew . ')' : ''), 'search' => '🔎 Rechercher une Home', 'restrictions' => '🚧 Restrictions actives', 'history' => '🕑 Historique'] as $k => $lbl)
         echo '<a href="?p=homemod&sec=' . $k . '" class="' . ($k === $sec ? 'on' : '') . '">' . $lbl . '</a>';
+    echo '<a href="?p=sitemgr&sec=ressources" title="Déplacé vers Gestion du Site → Ressources">🗂️ Catalogue de ressources ↗</a>';
     echo '</div>';
     if ($sec === 'search') hm_view_search();
     elseif ($sec === 'catalog') hm_view_catalog();
@@ -1488,6 +1489,7 @@ function page_sitemgr(): void {
         case 'events': sitemgr_events(); break;
         case 'media': sitemgr_media(); break;
         case 'apparence': sitemgr_apparence(); break;
+        case 'ressources': ensure_home_admin(); echo '<p class="sm-crumb">Gestion du Site › <b>Ressources Homes</b> (stickers &amp; fonds)</p>'; hm_view_catalog(); break;
         case 'settings': sitemgr_settings(); break;
         case 'history': sitemgr_history(); break;
         default: sitemgr_overview(); break;
