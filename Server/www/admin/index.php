@@ -356,6 +356,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 admin_log('conv_reprise', $n . ' repris');
                 $msg = '📥 Reprise terminée : ' . $n . ' ancien(s) message(s) importé(s) en conversations.'; break;
             }
+            case 'conv_assign': {
+                ensure_conversations();
+                $cid = (int)($_POST['cid'] ?? 0);
+                $me = (string)($_SESSION['admin']['username'] ?? '');
+                $to = (($_POST['to'] ?? '') === 'me') ? $me : '';
+                db()->prepare('UPDATE conversations SET assigned_to=? WHERE id=?')->execute([$to, $cid]);
+                admin_log('conv_assign', '#' . $cid . ($to !== '' ? ' → ' . $to : ' (libérée)'));
+                $msg = $to !== '' ? '🙋 Conversation prise en charge.' : '↩︎ Conversation libérée.'; break;
+            }
+            case 'conv_note': {
+                ensure_conversations();
+                $cid = (int)($_POST['cid'] ?? 0);
+                $body = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 4000);
+                if ($cid <= 0 || $body === '') { $ok = false; $msg = '❌ Note vide.'; break; }
+                conv_add_message($cid, 'staff', (string)($_SESSION['admin']['username'] ?? 'Équipe'), $body, 1);
+                admin_log('conv_note', '#' . $cid);
+                $msg = '🔒 Note interne ajoutée (non visible par le joueur).'; break;
+            }
             case 'umsg_send':
                 ensure_user_msgs();
                 $toName = trim((string)($_POST['username'] ?? ''));
@@ -2450,6 +2468,7 @@ function action_tab(string $a): string {
         'cmsg_handle' => 'messages', 'cmsg_delete' => 'messages', 'umsg_send' => 'users',
         'smsg_post' => 'messages', 'smsg_delete' => 'messages',
         'conv_reply' => 'messages', 'conv_status' => 'messages', 'conv_new' => 'messages', 'conv_reprise' => 'messages',
+        'conv_assign' => 'messages', 'conv_note' => 'messages',
         // Jeux : codes & recycleur
         'voucher_add' => 'vouchers', 'voucher_delete' => 'vouchers',
         'recy_add' => 'recycler', 'recy_update' => 'recycler', 'recy_delete' => 'recycler',
@@ -3482,16 +3501,22 @@ function conv_assistance_view(): void {
         if ($conv) conv_mark_read_staff($cid);
     }
 
-    // Liste (ouvertes d'abord, résolues ensuite)
+    // Liste (ouvertes d'abord, résolues ensuite) — filtre facultatif
+    $filter = in_array(($_GET['f'] ?? ''), ['mine', 'unassigned'], true) ? (string)$_GET['f'] : 'all';
+    $where = ''; $args = [];
+    if ($filter === 'mine') { $where = 'WHERE c.assigned_to=?'; $args[] = $me; }
+    elseif ($filter === 'unassigned') { $where = "WHERE c.assigned_to=''"; }
     $rows = [];
     try {
-        $rows = db()->query("SELECT c.id,c.subject,c.category,c.status,c.player_id,c.legacy_ref,c.updated_at,
+        $sql = "SELECT c.id,c.subject,c.category,c.status,c.player_id,c.legacy_ref,c.assigned_to,c.updated_at,
                 u.username AS uname,
                 (SELECT COUNT(*) FROM conversation_messages m WHERE m.conv_id=c.id AND m.sender='player' AND m.read_staff=0) AS unread,
                 (SELECT body FROM conversation_messages m2 WHERE m2.conv_id=c.id ORDER BY m2.id DESC LIMIT 1) AS last_body,
                 (SELECT sender_name FROM conversation_messages m3 WHERE m3.conv_id=c.id AND m3.sender='player' ORDER BY m3.id ASC LIMIT 1) AS pname
             FROM conversations c LEFT JOIN users u ON u.id=c.player_id
-            ORDER BY (c.status='resolved') ASC, c.updated_at DESC LIMIT 120")->fetchAll();
+            $where
+            ORDER BY (c.status='resolved') ASC, c.updated_at DESC LIMIT 120";
+        $qs = db()->prepare($sql); $qs->execute($args); $rows = $qs->fetchAll();
     } catch (Throwable $e) { $rows = []; }
 
     $statLabel = ['waiting_staff' => '🔴 À répondre', 'waiting_player' => '⏳ Attente joueur', 'resolved' => '✅ Résolu'];
@@ -3512,8 +3537,15 @@ function conv_assistance_view(): void {
        . '<button class="mini ghost" title="Importe les anciens messages dans le nouveau système, sans doublon">📥 Reprendre les anciens messages</button></form>';
     echo '</div>';
 
+    // Filtres
+    $fl = function (string $k, string $lbl) use ($filter) { return '<a class="mini ghost' . ($filter === $k ? ' on' : '') . '" href="?p=messages&f=' . $k . '">' . $lbl . '</a>'; };
+    echo '<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">' . $fl('all', 'Toutes') . ' ' . $fl('unassigned', 'Non attribuées') . ' ' . $fl('mine', 'Les miennes') . '</div>';
+
     if (!$rows) {
-        echo '<div class="empty" style="margin-top:10px">Aucune conversation pour l\'instant. Les nouvelles demandes des joueurs apparaîtront ici. Les anciens messages peuvent être repris via le bouton ci-dessus.</div></div>';
+        echo '<div class="empty" style="margin-top:10px">' . ($filter !== 'all'
+                ? 'Aucune conversation pour ce filtre. <a class="lnk" href="?p=messages">Voir toutes</a>.'
+                : 'Aucune conversation pour l\'instant. Les nouvelles demandes des joueurs apparaîtront ici. Les anciens messages peuvent être repris via le bouton ci-dessus.')
+           . '</div></div>';
         return;
     }
 
@@ -3529,6 +3561,7 @@ function conv_assistance_view(): void {
            . '<div class="hmrow-top"><b>' . h((string)($r['subject'] ?: 'Sans sujet')) . '</b>'
            . ($unread ? '<span class="rk red" style="margin-left:auto">' . $unread . '</span>' : '') . '</div>'
            . '<div class="sm muted">' . h($name) . ' · ' . h($statLabel[(string)$r['status']] ?? (string)$r['status'])
+           . ((string)$r['assigned_to'] !== '' ? ' · 🙋 ' . h((string)$r['assigned_to']) : '')
            . ($r['legacy_ref'] ? ' · <span title="Ancien message repris">↩︎ repris</span>' : '') . '</div>'
            . '<div class="sm muted" style="opacity:.8">' . h($snippet) . '</div></a>';
     }
@@ -3542,10 +3575,24 @@ function conv_assistance_view(): void {
         $name = trim((string)($conv['uname'] ?? '')) ?: '—';
         echo '<div class="ph"><h3>' . h((string)($conv['subject'] ?: 'Sans sujet')) . '</h3>'
            . '<span class="rk" style="margin-left:auto">' . h($statLabel[(string)$conv['status']] ?? (string)$conv['status']) . '</span></div>';
-        echo '<p class="sm muted" style="margin:-4px 0 10px">Joueur : <b>' . h($name) . '</b>'
+        $assignedTo = (string)($conv['assigned_to'] ?? '');
+        echo '<p class="sm muted" style="margin:-4px 0 8px">Joueur : <b>' . h($name) . '</b>'
            . ($conv['uname'] ? ' · <a class="lnk" href="?p=users&u=' . h(rawurlencode((string)$conv['uname'])) . '">fiche</a>' : '')
            . ' · catégorie : ' . h((string)$conv['category'])
            . ($conv['legacy_ref'] ? ' · <span title="Repris de l\'ancienne messagerie">ancien message repris</span>' : '') . '</p>';
+
+        // Attribution (prise en charge)
+        echo '<form method="post" class="js row" data-reload style="margin:0 0 10px;align-items:center;gap:8px;flex-wrap:wrap">' . csrf_field()
+           . '<input type="hidden" name="action" value="conv_assign"><input type="hidden" name="cid" value="' . $cid . '">';
+        if ($assignedTo === '') {
+            echo '<span class="sm muted">Non attribuée.</span> <button class="mini" name="to" value="me">🙋 M\'attribuer</button>';
+        } elseif ($assignedTo === $me) {
+            echo '<span class="sm">🙋 Pris en charge par <b>toi</b>.</span> <button class="mini ghost" name="to" value="">↩︎ Libérer</button>';
+        } else {
+            echo '<span class="sm" style="color:#b5651d">🙋 Pris en charge par <b>' . h($assignedTo) . '</b>.</span> '
+               . '<button class="mini ghost" name="to" value="me" data-confirm="Cette conversation est déjà prise par ' . h($assignedTo) . '. La reprendre ?">Reprendre</button>';
+        }
+        echo '</form>';
 
         echo '<div class="convthread">';
         foreach (conv_messages($cid, true) as $m) {
@@ -3576,6 +3623,13 @@ function conv_assistance_view(): void {
            . '<button class="mini ghost" name="status" value="waiting_staff">🔴 À répondre</button> '
            . '<button class="mini ghost" name="status" value="waiting_player">⏳ Attente joueur</button> '
            . '<button class="mini ghost" name="status" value="resolved">✅ Résolu</button></form>';
+
+        // Note interne (équipe seulement — jamais vue par le joueur)
+        echo '<details style="margin-top:10px"><summary class="mini">🔒 Ajouter une note interne</summary>'
+           . '<form method="post" class="js" data-reload style="margin-top:8px"><input type="hidden" name="action" value="conv_note">' . csrf_field()
+           . '<input type="hidden" name="cid" value="' . $cid . '">'
+           . '<textarea name="body" rows="2" maxlength="4000" required placeholder="Note visible uniquement par l\'équipe…" style="width:100%"></textarea>'
+           . '<button class="mini" style="margin-top:6px">🔒 Enregistrer la note</button></form></details>';
     }
     echo '</div>'; // hmdetail
     echo '</div>';  // hmwrap
