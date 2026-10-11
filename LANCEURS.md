@@ -34,11 +34,16 @@ nom ou un port ouvert. Double-cliquer deux fois ne crée pas de doublon.
 
 1. **Minerva** : la supervision est désactivée **avant** d'arrêter le service
    (pas de relance intempestive).
-2. **Kepler** : demande d'arrêt **propre** (`taskkill` **sans** `/f`, qui déclenche
-   le *shutdown hook* de la JVM), puis attente de sa fin.
+2. **Kepler** : demande d'arrêt **propre** par un vrai **Ctrl+C** (`CTRL_C_EVENT`)
+   envoyé à SA console, ce qui déclenche le *shutdown hook* `dispose()` de la JVM
+   (sauvegarde items/chat/joueurs, puis fermeture des sockets), puis attente de sa
+   fin. *(Un `java.exe` en console n'a pas de fenêtre : un `taskkill` sans `/f` ne
+   l'atteindrait pas — d'où le Ctrl+C.)* La fenêtre « Émulateur » peut rester sur
+   « Terminate batch job (Y/N)? » : Kepler a déjà sauvegardé et quitté, le lanceur
+   referme cette fenêtre (cosmétique).
    - **Pas d'arrêt forcé automatique.** S'il refuse de s'arrêter dans le délai, le
-     lanceur **demande explicitement** s'il faut forcer l'arrêt ciblé de ce PID ;
-     sinon le processus est **laissé actif**.
+     lanceur **demande explicitement** s'il faut forcer l'arrêt ciblé de ce PID
+     (`/f`, **sans** sauvegarde) ; sinon le processus est **laissé actif**.
    - ⚠️ Vérifie la **sauvegarde** dans `server.log` pour confirmer que l'arrêt
      propre a bien eu lieu (le *shutdown hook* existe, mais il faut le constater
      sur ta machine).
