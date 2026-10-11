@@ -2058,7 +2058,7 @@ win_voucher=Code de crédit Habbo
 month03=Mars
 nav_venue_cunning_fox_gamehall/2_desc=Baisse la tête : les bombes arrivent !
 nav_venue_sw_lobby_tournament_1/0_desc=
-hubu_info_url_1=http://www.habbohotel.co.uk/habbo/en/help/12
+hubu_info_url_1=http://%predefined%/?p=help
 furni_footylamp_name=Ballon de Foot
 furni_bed_budget_one*4_name=Lit 'une place'
 furni_waterbowl*1_name=Ecuelle rouge
@@ -2433,7 +2433,7 @@ game_poker=POKER
 bb_title_finalScores=Classement final :
 poll_thanks_window=Merci !
 next=Suivant
-hubu_info_url_2=http://www.talktofrank.com/
+hubu_info_url_2=http://%predefined%/?p=help
 furni_divider_arm3_name=Porte
 messenger.email.header=
 furni_toy1*1_desc=Qu'est-ce qu'elle rebondit bien!
@@ -3547,7 +3547,7 @@ furni_pudding_desc=Pour les touristes anglais
 furni_glass_stool*8_name=Tabouret plexi
 poster_51_desc=2 points par panier
 furni_carpet_armas_desc=Il réchauffe la pièce
-NUF_groups_url=http://d16-1.web.varoke.net/home/group-tutorial
+NUF_groups_url=http://%predefined%/?p=help
 purse_noevents=Tu n'as effectué aucune transaction pour le moment. Clique sur le bouton ci-dessous pour découvrir comment obtenir des crédits Habbo.\rRappel : tu dois demander la permission de tes parents avant d'acheter des crédits Habbo.
 nav_venue_rooftop/0_desc=Retrouve tes amis sur le toit de l'hôtel Habbo !
 furni_doormat_plain_desc=Disponible en d'autres coloris
@@ -3813,7 +3813,7 @@ callhelp_example=Exemple : comment empiler des meubles ?
 nav_error_room_full=La salle est pleine.
 furni_bed_budget_one*6_desc=bleu
 furni_rubberchair*7_name=Siège gonflable blanc
-NUF_habbo_home_url=http://d15-1.web.varoke.net/home/home-tutorial
+NUF_habbo_home_url=http://%predefined%/?p=help
 furni_soft_sofa_norja_desc=Chauffe ma place, j'arrive!
 furni_couch_norja*6_name=Banc bleu
 furni_prizetrophy*1_desc=Trophée en or
@@ -3987,7 +3987,7 @@ furni_scifidoor*8_name=Sas O.V.N.I pourpre
 catalog_purchase_not_allowed_hc=Pour acheter cet objet, tu dois être membre du Club Habbo !
 nav_venue_sw_lobby_expert_2/0_desc=Todellisille lumisotureille.
 reg_update_text2=Ne les change que lorsque tu veux t'assurer que personne ne peut connaître ou deviner ton mot de passe.
-url_help_6=http://%predefined%/?p=contact
+url_help_6=http://%predefined%/?p=help
 Alert_moderator_warning=
 furni_carpet_polar*4_desc=A notre regretté Nunjagalak
 bb_powerup_desc_7=Une bombe nettoie toutes les cases autour d'elle.
