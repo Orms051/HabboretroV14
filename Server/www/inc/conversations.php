@@ -72,12 +72,13 @@ function conv_add_message(int $convId, string $sender, string $senderName, strin
         db()->prepare('INSERT INTO conversation_messages (conv_id,sender,sender_name,body,is_internal,read_player,read_staff) VALUES (?,?,?,?,?,?,?)')
             ->execute([$convId, $sender, mb_substr(trim($senderName), 0, 64), mb_substr($body, 0, 4000), $isInternal ? 1 : 0, $sender === 'player' ? 1 : 0, ($sender === 'staff' || $sender === 'system') ? 1 : 0]);
         if ($isInternal) {
+            // Une note interne ne change ni le statut ni les boîtes du joueur.
             db()->prepare('UPDATE conversations SET updated_at=NOW() WHERE id=?')->execute([$convId]);
         } else {
-            // Un message public (re)met la conversation dans la file de l'autre partie.
+            // Un message public (re)met la conversation dans la file de l'autre partie
+            // et la fait ressortir de l'archive / corbeille du joueur, quel que soit l'expéditeur.
             $newStatus = ($sender === 'player') ? 'waiting_staff' : 'waiting_player';
-            // Une réponse du joueur fait aussi ressortir la conversation de sa corbeille.
-            db()->prepare('UPDATE conversations SET status=?, updated_at=NOW()' . ($sender === 'player' ? ', player_trashed=0, player_archived=0' : '') . ' WHERE id=?')
+            db()->prepare('UPDATE conversations SET status=?, updated_at=NOW(), player_trashed=0, player_archived=0 WHERE id=?')
                 ->execute([$newStatus, $convId]);
         }
         return true;

@@ -576,6 +576,23 @@ if ($p === 'conv_reply') {
     if (function_exists('conv_add_message')) conv_add_message($cid, 'player', (string)$u['username'], $body, 0);
     redirect('?p=messages&c=' . $cid . '&done=replied');
 }
+/* ---- Joueur : archiver / corbeille / restaurer une conversation ---- */
+if ($p === 'conv_move') {
+    $u = me();
+    if (!$u) redirect('?p=messages');
+    $cid = (int)($_POST['cid'] ?? 0);
+    $op  = (string)($_POST['op'] ?? '');
+    if (!csrf_ok() || $cid <= 0 || !in_array($op, ['archive', 'trash', 'restore'], true)) redirect('?p=messages');
+    $own = false; try { $st = db()->prepare('SELECT 1 FROM conversations WHERE id=? AND player_id=?'); $st->execute([$cid, (int)$u['id']]); $own = (bool)$st->fetchColumn(); } catch (Throwable $e) {}
+    if (!$own) redirect('?p=messages');
+    try {
+        if ($op === 'archive')      db()->prepare('UPDATE conversations SET player_archived=1, player_trashed=0 WHERE id=?')->execute([$cid]);
+        elseif ($op === 'trash')    db()->prepare('UPDATE conversations SET player_trashed=1, player_archived=0 WHERE id=?')->execute([$cid]);
+        else                        db()->prepare('UPDATE conversations SET player_trashed=0, player_archived=0 WHERE id=?')->execute([$cid]);
+    } catch (Throwable $e) {}
+    $box = $op === 'archive' ? 'archived' : ($op === 'trash' ? 'trashed' : 'active');
+    redirect('?p=messages&box=' . $box . '&done=moved');
+}
 
 if ($p === 'messages') {
     render_head('home', null);
@@ -589,7 +606,8 @@ if ($p === 'messages') {
     ensure_user_msgs();
     if (function_exists('ensure_conversations')) ensure_conversations();
     $done = (string)($_GET['done'] ?? '');
-    $flash = ['sent' => '✅ Ta demande a bien été envoyée à l\'équipe.', 'replied' => '✅ Ta réponse a été envoyée.', 'empty' => '⚠️ Ton message était vide.', 'err' => '⚠️ Oups, l\'envoi a échoué, réessaie.'];
+    $flash = ['sent' => '✅ Ta demande a bien été envoyée à l\'équipe.', 'replied' => '✅ Ta réponse a été envoyée.', 'empty' => '⚠️ Ton message était vide.', 'err' => '⚠️ Oups, l\'envoi a échoué, réessaie.', 'moved' => '✅ Conversation déplacée.'];
+    $box = in_array(($_GET['box'] ?? ''), ['archived', 'trashed'], true) ? (string)$_GET['box'] : 'active';
     $flashHtml = isset($flash[$done]) ? '<div style="background:#e7f6ea;border:1px solid #9ed3ad;color:#1c5a2e;border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:11px">' . h($flash[$done]) . '</div>' : '';
     $cid = (int)($_GET['c'] ?? 0);
 
@@ -612,18 +630,27 @@ if ($p === 'messages') {
         echo '<form method="post" action="?p=conv_reply" style="margin-top:8px"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="cid" value="' . $cid . '">'
            . '<textarea name="body" rows="3" maxlength="4000" required placeholder="Écris ta réponse…" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></textarea>'
            . '<div style="margin-top:6px"><button class="new-button" type="submit"><b>Envoyer</b><i></i></button></div></form>';
+        // Déplacement (archive / corbeille / restaurer)
+        $mvBtn = function (string $op, string $lbl) use ($cid) {
+            return '<form method="post" action="?p=conv_move" style="display:inline"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="cid" value="' . $cid . '"><input type="hidden" name="op" value="' . $op . '"><button type="submit" style="border:0;background:none;color:#5f6b78;cursor:pointer;font-size:10px;text-decoration:underline;padding:0 6px 0 0">' . $lbl . '</button></form>';
+        };
+        echo '<div style="margin-top:10px;border-top:1px dotted #ddd6c2;padding-top:6px">';
+        if ((int)$conv['player_archived'] || (int)$conv['player_trashed']) echo $mvBtn('restore', '↩︎ Remettre dans mes messages');
+        else { echo $mvBtn('archive', '🗂 Archiver'); echo $mvBtn('trash', '🗑 Mettre à la corbeille'); }
+        echo '</div>';
         box_close();
         render_foot(); exit;
     }
 
-    /* === Liste des conversations === */
+    /* === Liste des conversations (selon la boîte) === */
+    $boxCond = $box === 'archived' ? 'c.player_archived=1' : ($box === 'trashed' ? 'c.player_trashed=1' : 'c.player_archived=0 AND c.player_trashed=0');
     $convs = [];
     if (function_exists('conv_unread_player')) {
         try {
             $list = db()->prepare("SELECT c.id,c.subject,c.status,c.updated_at,
                     (SELECT COUNT(*) FROM conversation_messages m WHERE m.conv_id=c.id AND m.is_internal=0 AND m.sender<>'player' AND m.read_player=0) AS unread,
                     (SELECT body FROM conversation_messages m2 WHERE m2.conv_id=c.id AND m2.is_internal=0 ORDER BY m2.id DESC LIMIT 1) AS last_body
-                FROM conversations c WHERE c.player_id=? AND c.player_trashed=0 ORDER BY c.updated_at DESC");
+                FROM conversations c WHERE c.player_id=? AND $boxCond ORDER BY c.updated_at DESC");
             $list->execute([$uid]); $convs = $list->fetchAll();
         } catch (Throwable $e) { $convs = []; }
     }
@@ -631,8 +658,13 @@ if ($p === 'messages') {
 
     box_open('✉ Mes messages', 'b');
     echo $flashHtml;
-    echo '<p class="muted" style="margin-bottom:8px">Tes échanges avec l\'équipe de l\'hôtel.</p>';
-    if (!$convs) echo '<p class="muted">📭 Tu n\'as aucune conversation. Pose ta question ci-dessous 👇</p>';
+    // Onglets de boîte
+    $tab = function (string $k, string $lbl) use ($box) {
+        $on = $box === $k; $href = $k === 'active' ? '?p=messages' : '?p=messages&box=' . $k;
+        return '<a href="' . $href . '" style="display:inline-block;padding:3px 9px;margin-right:4px;border-radius:3px 3px 0 0;font-size:11px;text-decoration:none;' . ($on ? 'background:#30384a;color:#fff;font-weight:bold' : 'background:#e8e2cc;color:#5b5b5b') . '">' . $lbl . '</a>';
+    };
+    echo '<div style="margin-bottom:8px;border-bottom:2px solid #30384a;padding-bottom:0">' . $tab('active', '✉ Messages') . $tab('archived', '🗂 Archivés') . $tab('trashed', '🗑 Corbeille') . '</div>';
+    if (!$convs) echo '<p class="muted">' . ($box === 'active' ? '📭 Tu n\'as aucune conversation. Pose ta question ci-dessous 👇' : ($box === 'archived' ? '🗂 Aucune conversation archivée.' : '🗑 Ta corbeille est vide.')) . '</p>';
     else foreach ($convs as $c) {
         $unread = (int)$c['unread'];
         $snip = mb_strimwidth(trim(preg_replace('/\s+/', ' ', (string)$c['last_body'])), 0, 70, '…');
@@ -643,6 +675,8 @@ if ($p === 'messages') {
            . '<div style="font-size:11px;color:#5b5b5b">' . h($snip) . '</div></a>';
     }
     box_close();
+
+    if ($box !== 'active') { render_foot(); exit; } // archives/corbeille : pas de formulaire de nouvelle demande
 
     /* === Nouvelle demande === */
     box_open('✍ Nouvelle demande à l\'équipe', 'g');
