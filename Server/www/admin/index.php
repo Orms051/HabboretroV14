@@ -1338,7 +1338,7 @@ function hm_view_reports(): void {
 
     echo '<div class="cols">';
     echo '<div class="panel"><div class="ph"><h3>📋 Dossier</h3></div><table class="clean">'
-       . '<tr><td class="muted">Statut</td><td>' . (['new' => '🆕 Nouveau', 'progress' => '⏳ En cours', 'handled' => '✅ Clos'][$r['status']] ?? h((string)$r['status'])) . '</td></tr>'
+       . '<tr><td class="muted">Statut</td><td>' . (['new' => '🆕 Nouveau', 'progress' => '⏳ En cours', 'handled' => '✅ Clos'][$r['status']] ?? h((string)$r['status'])) . ($r['status'] === 'progress' && (string)$r['handled_by'] !== '' ? ' par <b>' . h((string)$r['handled_by']) . '</b>' : '') . '</td></tr>'
        . '<tr><td class="muted">Traité par</td><td>' . h((string)($r['handled_by'] ?: '—')) . '</td></tr>'
        . '<tr><td class="muted">Décision</td><td>' . h((string)($r['decision'] ?? '') ?: '—') . '</td></tr>'
        . (!empty($r['handled_at']) ? '<tr><td class="muted">Le</td><td>' . h(substr((string)$r['handled_at'], 0, 16)) . '</td></tr>' : '')
@@ -1357,6 +1357,17 @@ function hm_view_reports(): void {
     }
     echo '</div>';
 
+    // Anti double-traitement : alerte si un autre modérateur l'a déjà pris en charge.
+    if ($r['status'] === 'progress' && (string)$r['handled_by'] !== '' && (string)$r['handled_by'] !== (string)($_SESSION['admin']['username'] ?? '')) {
+        echo '<div class="warn" style="border-color:#8a5216"><b>⚠️ Dossier déjà pris en charge par ' . h((string)$r['handled_by']) . '.</b> Vérifie avec cette personne avant d\'enregistrer une décision, pour éviter un double traitement.</div>';
+    }
+    // Autres dossiers du même propriétaire (contexte, pas une preuve)
+    try { $others = db()->prepare('SELECT id,reason,status,created_at FROM home_reports WHERE owner_id=? AND id<>? ORDER BY id DESC LIMIT 10'); $others->execute([$ownerId, (int)$r['id']]); $otherRows = $others->fetchAll(); } catch (Throwable $e) { $otherRows = []; }
+    if ($otherRows) {
+        echo '<div class="panel"><div class="ph"><h3>📂 Autres dossiers de ' . h($owner) . ' (' . count($otherRows) . ')</h3></div><p class="sub" style="margin:-6px 0 8px">Leur nombre n\'est pas une preuve de faute.</p><table class="clean"><tr><th>Date</th><th>Motif</th><th>Statut</th><th></th></tr>';
+        foreach ($otherRows as $o) echo '<tr><td class="sub">' . h(substr((string)$o['created_at'], 0, 16)) . '</td><td>' . h((string)$o['reason']) . '</td><td>' . (['new' => '🆕 Nouveau', 'progress' => '⏳ En cours', 'handled' => '✅ Clos'][$o['status']] ?? h((string)$o['status'])) . '</td><td><a class="sm-btn" href="?p=homemod&sec=reports&r=' . (int)$o['id'] . '">Ouvrir →</a></td></tr>';
+        echo '</table></div>';
+    }
     echo '<div class="panel"><div class="ph"><h3>⚖️ Décision</h3></div>';
     echo '<form method="post" class="js" data-reload style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;max-width:760px">' . csrf_field() . '<input type="hidden" name="action" value="hm_report_status"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($backUrl) . '">'
        . '<label>Statut du dossier<select name="status"><option value="new"' . ($r['status'] === 'new' ? ' selected' : '') . '>Nouveau</option><option value="progress"' . ($r['status'] === 'progress' ? ' selected' : '') . '>En cours</option><option value="handled"' . ($r['status'] === 'handled' ? ' selected' : '') . '>Clos (décision prise)</option></select></label>'
