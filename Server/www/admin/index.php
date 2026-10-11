@@ -3033,6 +3033,18 @@ function page_user(): void {
     if (!$ipl) echo '<div class="empty">Aucune IP enregistrée.</div>';
     else { echo '<table class="clean"><tr><th>IP</th><th>Date</th></tr>'; foreach ($ipl as $r) echo '<tr><td><code>' . h($r['ip_address']) . '</code></td><td class="sm muted">' . h(date('d/m/Y H:i', strtotime((string)$r['created_at']))) . '</td></tr>'; echo '</table>'; }
     echo '</div></div>';
+    // Comptes liés (même IP) — réservé rang 7 ; une IP commune est un indice, pas une preuve.
+    if ($rankSelf >= 7) {
+        try {
+            $alts = db()->prepare('SELECT DISTINCT u.id,u.username,u.rank FROM users_ip_logs l JOIN users_ip_logs l2 ON l2.ip_address=l.ip_address JOIN users u ON u.id=l2.user_id WHERE l.user_id=? AND u.id<>? ORDER BY u.username LIMIT 20');
+            $alts->execute([$id, $id]); $altRows = $alts->fetchAll();
+            echo '<div class="panel"><div class="ph"><h3>🕵️ Comptes liés (même IP)</h3><span class="muted sm" style="margin-left:auto">réservé admin</span></div>';
+            echo '<p class="muted sm">Comptes ayant partagé une adresse IP avec ce joueur. ⚠️ Une IP commune est un <b>indice</b>, pas une preuve (connexion partagée, lieu public…).</p>';
+            if (!$altRows) echo '<div class="empty">Aucun compte lié détecté.</div>';
+            else { echo '<table class="clean"><tr><th>Joueur</th><th>Rang</th><th></th></tr>'; foreach ($altRows as $al) echo '<tr><td><b>' . h((string)$al['username']) . '</b></td><td>' . rank_badge((int)$al['rank']) . '</td><td><a class="mini ghost" href="?p=user&id=' . (int)$al['id'] . '">Fiche →</a></td></tr>'; echo '</table>'; }
+            echo '</div>';
+        } catch (Throwable $e) {}
+    }
     echo '</section>';
 
     // ===== Onglet Messages & notes (échanges visibles du joueur + notes privées staff) =====
