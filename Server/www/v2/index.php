@@ -1111,8 +1111,9 @@ if ($p === 'profile') {
     }
     // on conserve hotelclient (lien ouvert depuis le jeu)
     $hc = isset($_GET['hotelclient']) ? ('&hotelclient=' . rawurlencode((string)$_GET['hotelclient'])) : '';
+    // $hc commence déjà par « & » (ou est vide) → concaténation directe, pas de « ? » en double.
     if ($who !== '') redirect('?p=home/' . rawurlencode($who) . $hc);
-    redirect('?p=me' . ($hc !== '' ? '?' . ltrim($hc, '&') : ''));
+    redirect('?p=me' . $hc);
 }
 
 /* ---------- 404 ---------- */
