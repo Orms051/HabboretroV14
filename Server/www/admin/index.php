@@ -3282,9 +3282,13 @@ function hotel_alert_presets(): array {
         '⚠️ Merci de respecter les autres joueurs. Les insultes = ban.',
     ];
 }
+/* Service d'avatars Minerva (port local 5123). */
+function minerva_running(): bool { $c = @fsockopen('127.0.0.1', 5123, $e, $s, 0.6); if ($c) { fclose($c); return true; } return false; }
+
 function page_server(): void {
     page_title('Serveur', 'État des services, contrôle de l\'émulateur et diagnostics');
     $up = emu_running();
+    $mav = minerva_running();
     $online = db()->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn();
     $dbver = ''; try { $dbver = (string)db()->query('SELECT VERSION()')->fetchColumn(); } catch (Throwable $e) {}
     $dbShort = $dbver !== '' ? (stripos($dbver, 'maria') !== false ? 'MariaDB' : 'MySQL') . ' ' . preg_replace('/[-+].*$/', '', $dbver) : 'Active';
@@ -3294,8 +3298,10 @@ function page_server(): void {
     echo '<div class="stat ' . ($up ? 'green' : 'red') . '"><div class="ic">' . ($up ? '🟢' : '🔴') . '</div><div><div class="num" style="font-size:17px">' . ($up ? 'En marche' : 'Arrêté') . '</div><div class="lbl">Émulateur · port 12321</div></div></div>';
     echo '<div class="stat green"><div class="ic">🗄️</div><div><div class="num" style="font-size:15px">' . h($dbShort) . '</div><div class="lbl">Base de données · 3306</div></div></div>';
     echo '<div class="stat green"><div class="ic">🌐</div><div><div class="num" style="font-size:15px">PHP ' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '</div><div class="lbl">Site web · Apache · 80</div></div></div>';
+    echo '<div class="stat ' . ($mav ? 'green' : 'red') . '"><div class="ic">' . ($mav ? '🎨' : '🔴') . '</div><div><div class="num" style="font-size:17px">' . ($mav ? 'En marche' : 'Arrêté') . '</div><div class="lbl">Avatars · Minerva · 5123</div></div></div>';
     echo '<div class="stat blue"><div class="ic">👥</div><div><div class="num">' . ($up ? ($online !== false ? $online : '0') : '—') . '</div><div class="lbl">Joueurs en ligne</div></div></div>';
     echo '</div>';
+    if (!$mav) echo '<div class="panel"><p class="sub" style="padding:10px 12px;margin:0">🎨 <b>Service d\'avatars (Minerva) arrêté</b> — les avatars déjà en cache restent affichés, les autres montrent une silhouette. Démarre-le avec <code>tools\\minerva-bin\\start-minerva.bat</code> (ou relance le serveur via <code>START-HABBORETROV14.bat</code>).</p></div>';
 
     /* --- Contrôle de l'émulateur --- */
     echo '<div class="panel"><div class="ph"><h3>🎮 Contrôle de l\'émulateur</h3><a class="mini ghost lnkbtn" href="?p=server" style="margin-left:auto">🔄 Rafraîchir l\'état</a></div>';
