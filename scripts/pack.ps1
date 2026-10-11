@@ -337,10 +337,12 @@ function Stop-Pack {
         if($go -and (-not ((Get-PackKeplerPids) -contains [int]$go.Pid))){
             $gameUncertain = $true
             Say 'WARN' "Port du jeu ($($Cfg.Ports.Game)) occupé par un processus NON identifié : $($go.Name) (PID $($go.Pid))."
-            Write-Host "   -> Peut-être un ancien Kepler (lancé sans marqueur) utilisant la base. Je ne le tue pas et je GARDE MariaDB." -ForegroundColor Yellow
-            Write-Host "   -> Pour l'arrêter proprement (base gardée jusqu'à sa fin) :" -ForegroundColor Yellow
-            Write-Host ("        taskkill /PID {0}      (sans /f : déclenche la sauvegarde)" -f $go.Pid) -ForegroundColor Gray
-            Write-Host "        attends la fin de ce processus, puis relance STOP." -ForegroundColor Gray
+            Write-Host "   -> Je ne le tue pas et je GARDE MariaDB (il peut encore utiliser la base)." -ForegroundColor Yellow
+            Write-Host "   -> IDENTIFIE d'abord ce processus avant toute action :" -ForegroundColor Yellow
+            Write-Host ("        powershell -NoProfile -Command ""Get-CimInstance Win32_Process -Filter 'ProcessId={0}' | Select-Object ProcessId,ExecutablePath,CommandLine | Format-List""" -f $go.Pid) -ForegroundColor Gray
+            Write-Host "      S'il s'agit bien d'un ancien Kepler du pack, arrête-le par ses propres moyens." -ForegroundColor Gray
+            Write-Host "      (Une sauvegarde propre de Kepler n'est PAS garantie par un simple arrêt du processus :" -ForegroundColor Gray
+            Write-Host "       vérifie-la dans server.log.) Puis relance STOP une fois le port du jeu libéré." -ForegroundColor Gray
             $fail += 'Kepler (non identifié)'
         }
 

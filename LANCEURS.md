@@ -94,20 +94,22 @@ n'a pas ce marqueur. Après la mise à jour :
   marqué **incomplet** — il n'est pas tué.
 
 **N'utilise pas l'ancien STOP** (il force des arrêts et coupe *tous* les
-`httpd.exe` d'Apache, partagé). Arrête l'ancien Kepler de façon **ciblée**, en
-gardant la base active jusqu'à sa fin :
+`httpd.exe` d'Apache, partagé — inadapté, surtout en panne partielle).
 
-```bat
-REM 1) Trouver le PID qui écoute le port du jeu (12321) :
-powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort 12321 -State Listen).OwningProcess"
-REM 2) Demander son arrêt PROPRE (sans /f : déclenche la sauvegarde JVM) :
-taskkill /PID <PID>
-REM 3) Attendre sa disparition (vérifier la sauvegarde dans Server\www\server.log),
-REM    la base reste active pendant ce temps.
-```
+Marche à suivre, en gardant la base active :
 
-Puis redémarre via le nouveau `START` : Kepler portera le marqueur et sera géré
-normalement (reconnu au START comme au STOP).
+1. **Identifie d'abord** le processus qui écoute le port du jeu (12321) — ne tue
+   rien à l'aveugle :
+   ```bat
+   powershell -NoProfile -Command "$p=(Get-NetTCPConnection -LocalPort 12321 -State Listen).OwningProcess; Get-CimInstance Win32_Process -Filter \"ProcessId=$p\" | Select-Object ProcessId,ExecutablePath,CommandLine | Format-List"
+   ```
+2. **Confirme** qu'il s'agit bien d'un ancien Kepler du pack (chemin / ligne de
+   commande) avant toute action.
+3. S'il l'est, **arrête-le par ses propres moyens** (sa fenêtre Émulateur, par
+   exemple). ⚠️ Une **sauvegarde propre n'est PAS garantie** par un simple arrêt
+   du processus : **vérifie-la dans `Server\www\server.log`**.
+4. Une fois le port du jeu libéré, redémarre via le nouveau `START` : Kepler
+   portera le marqueur et sera géré normalement (au START comme au STOP).
 
 ## Verrou anti-double-lancement
 
@@ -123,3 +125,58 @@ Les scripts du superviseur sont **versionnés** dans
 copies (versionné → `tools/minerva-bin/`) en **sauvegardant** l'ancienne
 (`*.ps1.bak`) et **sans toucher** au binaire, au runtime ni aux logs. Une simple
 fusion Git ne suffit donc pas : c'est le `START` qui met les copies à jour.
+
+## Procédure finale — installation & tests (à exécuter par toi, sous Windows)
+
+> Les lanceurs livrés n'ont **pas** été validés par un démarrage/arrêt réel : les
+> processus lancés depuis l'environnement d'assistance ne survivent pas à sa
+> session (ce n'est **pas** représentatif d'un double-clic Windows). La
+> validation ci-dessous se fait donc **par toi**, **sans joueur connecté**.
+
+### 1. Sauvegarder les fichiers actuellement utilisés
+Déjà fait côté dépôt : `_backups_refonte/lanceurs_avant_pr5_*` contient les
+`START/STOP-HABBORETROV14.bat`, `run.bat` et les scripts `tools/minerva-bin/*.ps1`
+d'avant. (Au besoin, refais une copie juste avant la mise à jour.)
+
+### 2. Installer **ensemble** la version cohérente
+Lanceurs, `run.bat` (marqueur Kepler) et scripts Minerva viennent de la **même**
+PR #5 : on les met à jour d'un bloc.
+```bat
+cd /d C:\laragon\www\HabboretroV14
+git fetch origin
+git merge --ff-only origin/main        REM apporte START/STOP + scripts\pack.ps1 + run.bat + minerva-scripts
+```
+Les copies ignorées de Minerva (`tools/minerva-bin/*.ps1`) seront **synchronisées
+au premier START** (sauvegarde `*.bak`, sans toucher binaire/runtime/logs).
+> ⚠️ Le marqueur d'identité de `run.bat` ne s'applique qu'à un Kepler **relancé
+> après** la mise à jour. Si l'ancien Kepler tourne encore, suis d'abord la
+> **transition** décrite plus haut (l'identifier, l'arrêter par ses moyens,
+> vérifier la sauvegarde dans `server.log`).
+
+### 3. Démarrer (double-clic) — sans joueur connecté
+Double-clique **`START-HABBORETROV14.bat`**. Vérifie que chaque étape affiche
+**Déjà actif / Démarrage / Prêt**, et que le **bilan** final est :
+MariaDB *prête*, Apache *prêt*, Kepler *prêt*, Minerva *prêt*.
+
+### 4. Vérifier le fonctionnement
+- **Jeu** : ouvre `http://localhost/client.php` dans **Basilisk**, entre dans
+  l'hôtel, connecte-toi en jeu.
+- **Avatar non caché** : ouvre la page d'un Habbo dont l'avatar n'a pas encore
+  été généré (ou vide le cache `Server/www/cache/avatars/` juste avant) → l'image
+  doit s'afficher (pas la silhouette).
+- **Maintien après fermeture du lanceur** : **ferme la fenêtre** du lanceur
+  principal (START). Vérifie que **MariaDB, Apache, Kepler et Minerva restent
+  actifs** (le site et le jeu continuent de répondre). C'est le point clé que je
+  n'ai pas pu valider moi-même.
+
+### 5. Arrêter et **constater la sauvegarde**
+Double-clique **`STOP-HABBORETROV14.bat`**. Avant de le déclarer « propre » :
+- vérifie dans `Server/www/server.log` la trace de **sauvegarde/arrêt** de Kepler
+  (le *shutdown hook* seul ne prouve rien) ;
+- vérifie le **bilan** : Kepler arrêté, **MariaDB arrêtée après lui**, **Apache
+  préservé** (partagé) ; aucun « ARRÊT INCOMPLET ».
+- (Optionnel) teste le refus de forcer : si Kepler tarde, réponds **N** au prompt
+  → Kepler reste actif, MariaDB conservée, arrêt marqué **incomplet**.
+
+Reporte-moi ce qui s'est passé à chaque point : on ajustera si besoin, puis on
+clôt le chantier.
