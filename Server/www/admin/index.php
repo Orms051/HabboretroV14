@@ -981,6 +981,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // pwreset_do est exclu : son $msg contient le mot de passe provisoire EN CLAIR
     // -> il est journalisé séparément, sans le secret (voir case 'pwreset_do').
     if ($ok && !in_array($a, ['note_add', 'note_del', 'cmd_fav_toggle', 'pwreset_do'], true)) admin_log($a, strip_tags($msg));
+    if ($ok) user_history_maybe($a); // historique par joueur (sans secret)
     if (is_ajax()) { header('Content-Type: application/json'); echo json_encode(['ok' => $ok, 'msg' => $msg]); exit; }
     flash($msg); redirect($back);
 }
@@ -2299,6 +2300,42 @@ function ensure_admin_log(): void {
 function admin_log(string $action, string $detail = ''): void {
     try { ensure_admin_log(); db()->prepare('INSERT INTO admin_log (author,action,detail) VALUES (?,?,?)')->execute([$_SESSION['admin']['username'] ?? '?', $action, mb_substr($detail, 0, 255)]); } catch (Throwable $e) {}
 }
+/* ---- Historique par joueur (journalise les actions visant un compte) ---- */
+function ensure_user_history(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS user_history (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, author VARCHAR(64) NOT NULL DEFAULT '', action VARCHAR(64) NOT NULL DEFAULT '', detail VARCHAR(255) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+function user_log(int $uid, string $action, string $detail = ''): void {
+    if ($uid <= 0) return;
+    try { ensure_user_history(); db()->prepare('INSERT INTO user_history (user_id,author,action,detail) VALUES (?,?,?,?)')->execute([$uid, $_SESSION['admin']['username'] ?? '?', $action, mb_substr($detail, 0, 255)]); } catch (Throwable $e) {}
+}
+/* Journalise une action POST si elle vise un joueur (jamais de secret). */
+function user_history_maybe(string $action): void {
+    static $watched = ['user_update' => 1, 'user_details' => 1, 'user_credits' => 1, 'user_hc' => 1, 'user_rank' => 1, 'user_password' => 1, 'badge_add' => 1, 'badge_remove' => 1, 'ban_add' => 1, 'ban_remove' => 1, 'clear_hand' => 1, 'note_add' => 1, 'umsg_send' => 1];
+    if (!isset($watched[$action])) return;
+    $uid = 0;
+    if (isset($_POST['id'])) $uid = (int)$_POST['id'];
+    elseif (isset($_POST['user_id'])) $uid = (int)$_POST['user_id'];
+    elseif (isset($_POST['username'])) { try { $st = db()->prepare('SELECT id FROM users WHERE username=?'); $st->execute([trim((string)$_POST['username'])]); $uid = (int)$st->fetchColumn(); } catch (Throwable $e) {} }
+    elseif ($action === 'ban_remove' && isset($_POST['value'])) $uid = (int)$_POST['value'];
+    if ($uid <= 0) return;
+    switch ($action) {
+        case 'user_password': $d = 'Mot de passe modifié'; break;
+        case 'user_credits': $cd = (int)($_POST['delta'] ?? 0); $d = 'Crédits ' . ($cd >= 0 ? '+' : '') . $cd; break;
+        case 'user_hc': $d = 'Club Habbo ' . (int)($_POST['days'] ?? 0) . ' j'; break;
+        case 'user_rank': $d = 'Rang → ' . (int)($_POST['rank'] ?? 0); break;
+        case 'ban_add': $d = 'Banni (' . (int)($_POST['days'] ?? 0) . ' j) — ' . mb_substr(trim((string)($_POST['message'] ?? '')), 0, 80); break;
+        case 'ban_remove': $d = 'Bannissement levé'; break;
+        case 'clear_hand': $d = 'Inventaire (main) vidé'; break;
+        case 'badge_add': $d = 'Badge ajouté : ' . mb_substr(strtoupper(trim((string)($_POST['badge'] ?? ''))), 0, 3); break;
+        case 'badge_remove': $d = 'Badge retiré'; break;
+        case 'note_add': $d = 'Note staff ajoutée'; break;
+        case 'umsg_send': $d = 'Message envoyé au joueur'; break;
+        case 'user_update': $d = 'Rang / crédits mis à jour'; break;
+        case 'user_details': $d = 'Infos (e-mail, mission…) mises à jour'; break;
+        default: $d = $action;
+    }
+    user_log($uid, $action, $d);
+}
 /* ---- Notes staff sur un joueur ---- */
 function ensure_admin_notes(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS admin_notes (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, author VARCHAR(64) NOT NULL, note VARCHAR(500) NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -2881,6 +2918,7 @@ function page_user(): void {
        . '<button type="button" data-t="ut-badges">📛 Badges</button>'
        . '<button type="button" data-t="ut-msg">✉️ Messages &amp; notes</button>'
        . '<button type="button" data-t="ut-mod">⚠️ Modération</button>'
+       . '<button type="button" data-t="ut-history">🕑 Historique</button>'
        . '</div>';
 
     // ===== Onglet Vue d'ensemble (cartes résumé + liens « Voir tout » vers les onglets) =====
@@ -3026,7 +3064,19 @@ function page_user(): void {
     echo '<form method="post" class="js" data-reload data-confirm="⚠️ SUPPRIMER TOUT l\'inventaire (tous les objets non posés) de ' . h($u['username']) . ' ? Irréversible." style="margin:0">' . csrf_field() . '<input type="hidden" name="action" value="clear_hand"><input type="hidden" name="username" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '"><button style="background:#c2603a">🧹 Vider TOUT l\'inventaire</button></form>';
     echo '<form method="post" class="js" data-reload data-confirm="Supprimer définitivement le compte ' . h($u['username']) . ' ? Irréversible." style="margin:0"><input type="hidden" name="action" value="user_delete"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="?p=users">' . csrf_field() . '<button style="background:var(--red)">🗑️ Supprimer ce compte</button></form>';
     echo '</div></div>';
-    echo '</section></div>'; // fin onglet Modération + conteneur d'onglets
+    echo '</section>';
+
+    // ===== Onglet Historique (journal des actions visant ce compte) =====
+    echo '<section class="utab" id="ut-history"><div class="panel"><div class="ph"><h3>🕑 Historique du compte</h3></div>';
+    echo '<p class="muted sm">Interventions du staff sur ce compte (crédits, rang, badges, sanctions, inventaire, messages…). Le journal se remplit <b>à partir de maintenant</b> : les actions antérieures à sa mise en place ne peuvent pas être reconstituées.</p>';
+    try {
+        ensure_user_history();
+        $hist = db()->prepare('SELECT author,action,detail,created_at FROM user_history WHERE user_id=? ORDER BY id DESC LIMIT 100'); $hist->execute([$id]); $histRows = $hist->fetchAll();
+        if (!$histRows) echo '<div class="empty">Aucune action enregistrée pour l\'instant.</div>';
+        else { echo '<table class="clean"><tr><th>Quand</th><th>Par</th><th>Action</th><th>Détail</th></tr>'; foreach ($histRows as $hR) echo '<tr><td class="sm muted" style="white-space:nowrap">' . h(date('d/m/Y H:i', strtotime((string)$hR['created_at']))) . '</td><td class="sm"><b>' . h((string)$hR['author']) . '</b></td><td><code class="sm">' . h((string)$hR['action']) . '</code></td><td class="sm">' . h((string)$hR['detail']) . '</td></tr>'; echo '</table>'; }
+    } catch (Throwable $e) { echo '<div class="empty">Historique indisponible.</div>'; }
+    echo '</div></section>';
+    echo '</div>'; // fin conteneur d'onglets
 }
 
 function page_bots(): void {
