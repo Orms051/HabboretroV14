@@ -9,7 +9,13 @@
 # --- Gros médias binaires ---
 /Server/www/c_images/
 /Server/www/c_imagestest/
-/Server/www/web-gallery/
+/Server/www/web-gallery/**
+# Exception : fonds de la galerie Apparence (petits, versionnés pour survivre à un clone/rebuild).
+# Les imports admin futurs dans ce dossier seront donc suivis par Git automatiquement.
+!/Server/www/web-gallery/v2/
+!/Server/www/web-gallery/v2/images/
+!/Server/www/web-gallery/v2/images/bg_patterns/
+!/Server/www/web-gallery/v2/images/bg_patterns/**
 /Server/www/lib/
 /Server/www/tools/
 /Server/www/dcr/sound/
