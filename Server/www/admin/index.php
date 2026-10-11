@@ -985,6 +985,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     flash($msg); redirect($back);
 }
 
+/* ---------- Éditeur d'actualités unique : ?p=news -> Gestion du Site ----------
+   Redirection AVANT tout affichage (sinon « headers already sent »). */
+if ($p === 'news') {
+    $to = '?p=sitemgr&sec=news';
+    if (isset($_GET['newsedit'])) $to .= '&newsedit=' . (int)$_GET['newsedit'];
+    elseif (isset($_GET['edit'])) $to .= '&newsedit=' . (int)$_GET['edit'];
+    elseif (isset($_GET['new'])) $to .= '&new=1';
+    redirect($to);
+}
+
 /* ---------- Contrôle d'accès aux onglets par rang ---------- */
 if (!tab_allowed($p)) { flash('🔒 Ton rang n\'a pas accès à « ' . $p . ' ».'); $p = 'dashboard'; }
 
@@ -2350,13 +2360,10 @@ function ensure_news(): void {
     )");
 }
 function page_news(): void {
-    // Éditeur unique : on fait converger « ?p=news » vers l'éditeur complet de
-    // Gestion du Site (titre, résumé, image, éditeur visuel, brouillon/publication).
-    // On conserve le paramètre d'édition éventuel (?edit=N -> ?newsedit=N).
+    // ?p=news est normalement redirigé AVANT l'affichage (voir en tête du script).
+    // Repli CÔTÉ CLIENT si jamais atteint ici (pas d'en-tête HTTP possible après rendu).
     $to = '?p=sitemgr&sec=news';
-    if (isset($_GET['edit'])) $to .= '&newsedit=' . (int)$_GET['edit'];
-    elseif (isset($_GET['new'])) $to .= '&new=1';
-    redirect($to);
+    echo '<meta http-equiv="refresh" content="0;url=' . h($to) . '"><p class="muted">Redirection vers l\'éditeur d\'actualités… <a href="' . h($to) . '">Clique ici</a> si rien ne se passe.</p>';
 }
 
 function page_vouchers(): void {
@@ -2838,7 +2845,7 @@ function page_user(): void {
     $rb = []; foreach (db()->query('SELECT badge FROM rank_badges WHERE rank=' . (int)$u['rank']) as $r) $rb[] = $r['badge'];
     $ob = []; $obs = db()->prepare('SELECT badge FROM users_badges WHERE user_id=?'); $obs->execute([$id]); foreach ($obs as $r) $ob[] = $r['badge'];
 
-    echo '<div style="margin-bottom:10px"><a class="mini ghost lnkbtn" href="?p=users">← Retour aux joueurs</a></div>';
+    echo '<div class="pwrap"><div style="margin-bottom:10px"><a class="mini ghost lnkbtn" href="?p=users">← Retour aux joueurs</a></div>';
     page_title('👤 ' . $u['username'], 'Fiche complète du joueur · ID ' . $id);
     echo '<div style="margin:-10px 0 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
        . '<img src="/avatar.php?user=' . h(rawurlencode((string)$u['username'])) . '&size=b&v=2" alt="Avatar de ' . h((string)$u['username']) . '" width="64" height="110" loading="lazy" style="image-rendering:pixelated;image-rendering:crisp-edges;vertical-align:bottom;background:#f3eecf;border:1px solid #d8cfa6;border-radius:4px">'
@@ -2928,6 +2935,7 @@ function page_user(): void {
     echo '<form method="post" class="js" data-reload data-confirm="⚠️ SUPPRIMER TOUT l\'inventaire (tous les objets non posés) de ' . h($u['username']) . ' ? Irréversible." style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="clear_hand"><input type="hidden" name="username" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '"><button class="mini warn">🧹 Vider TOUT l\'inventaire</button></form>';
     echo '<form method="post" class="js" data-reload data-confirm="Supprimer définitivement le compte ' . h($u['username']) . ' ? Irréversible." style="display:inline"><input type="hidden" name="action" value="user_delete"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="?p=users">' . csrf_field() . '<button class="mini" style="background:var(--red)">🗑️ Supprimer ce compte</button></form>';
     echo '</div></div>';
+    echo '</div>'; // fin .pwrap (fiche joueur à largeur confortable)
 }
 
 function page_bots(): void {
@@ -4190,7 +4198,7 @@ a{color:inherit}
 .side{width:238px;flex:0 0 238px;background:var(--sidebar);border-right:1px solid var(--line2);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
 .side .brand{padding:20px 18px;font-weight:900;color:var(--acc);font-size:17px;letter-spacing:.5px;border-bottom:1px solid var(--line2)}
 .side .brand small{display:block;color:var(--mut);font-weight:600;font-size:11px;letter-spacing:2px;margin-top:2px}
-.side nav{padding:12px 10px;display:flex;flex-direction:column;flex:1}
+.side nav{padding:12px 10px;display:flex;flex-direction:column;flex:1;overflow-y:auto;min-height:0}
 .side nav a{display:flex;align-items:center;padding:11px 13px;border-radius:11px;text-decoration:none;color:var(--mut);font-weight:600}
 .side nav a .i{font-size:17px;width:22px;text-align:center}
 .side nav .grp{display:flex;align-items:center;width:100%;background:none;border:0;border-top:1px solid var(--line2);cursor:pointer;font-family:inherit;text-align:left;font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--mut);opacity:.75;padding:11px 13px 6px;margin-top:8px}
@@ -4286,6 +4294,8 @@ body.sb-collapsed .side .brand::after{content:'H';font-size:18px}
 .editcols{display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-gap:18px;gap:18px;align-items:start}
 @media(max-width:1100px){.editcols{grid-template-columns:1fr}}
 .aside-panel{position:sticky;top:76px}
+/* Écrans denses en formulaires (fiche joueur, éditeurs) : largeur confortable, pas d'étirement plein écran */
+.pwrap{max-width:1360px}
 .side nav .grp .i{font-size:16px;width:22px;text-align:center}
 .side nav .grpitems a{padding-left:18px;font-size:13.5px}
 .side nav .grpitems a .i{font-size:15px}
