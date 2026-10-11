@@ -262,6 +262,22 @@ function render_head(string $active, ?string $err = null, ?array $crumb = null):
     $subs = sub_menus();
     [$section, $subItems] = $subs[$tab] ?? $subs['home'];
     $I = '/web-gallery/v2/images';
+    // Fond du site (réglable : admin → Gestion du site → Apparence). Défaut = d'origine (#083940).
+    $bgColor = function_exists('setting_get') ? setting_get('site.bg_color', '#083940') : '#083940';
+    if (!preg_match('/^#[0-9A-Fa-f]{6}$/', $bgColor)) $bgColor = '#083940';
+    $bgMode = function_exists('setting_get') ? setting_get('site.bg_mode', 'repeat') : 'repeat';
+    if (!in_array($bgMode, ['repeat', 'center', 'cover'], true)) $bgMode = 'repeat';
+    $bgImage = function_exists('setting_get') ? setting_get('site.bg_image', '') : '';
+    $bgDecl = 'background:' . $bgColor; $bgSize = ''; $bgRender = '';
+    if ($bgImage !== '' && preg_match('#^/web-gallery/v2/images/bg_patterns/[A-Za-z0-9._-]+\.(gif|png|jpe?g)$#i', $bgImage)) {
+        $bgAbs = dirname(__DIR__, 2) . $bgImage;                       // => Server/www + chemin
+        if (is_file($bgAbs)) {
+            $bgU = $bgImage . '?v=' . (int) @filemtime($bgAbs);        // anti-cache : nouveau fond visible sans vider le cache
+            if ($bgMode === 'cover') { $bgDecl = "background:$bgColor url('$bgU') no-repeat center center"; $bgSize = 'background-size:cover;'; }
+            elseif ($bgMode === 'center') { $bgDecl = "background:$bgColor url('$bgU') no-repeat center center"; }
+            else { $bgDecl = "background:$bgColor url('$bgU') repeat"; $bgRender = 'image-rendering:pixelated;'; }
+        }
+    }
     ?><!doctype html>
 <html lang="fr"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -269,7 +285,7 @@ function render_head(string $active, ?string $err = null, ?array $crumb = null):
 <link rel="icon" href="/web-gallery/v2/favicon.ico">
 <style>
 *{box-sizing:border-box}
-body{font:11px/1.5 Verdana,Geneva,Arial,sans-serif;color:#30384a;background:#083940 url(<?= $I ?>/bg_patterns/habbo.gif) repeat;margin:0;padding:12px 10px}
+body{font:11px/1.5 Verdana,Geneva,Arial,sans-serif;color:#30384a;<?= $bgDecl ?>;<?= $bgSize ?><?= $bgRender ?>margin:0;padding:12px 10px}
 a{color:#2f6f9f;text-decoration:none}a:hover{text-decoration:underline}
 img{border:0}
 h1,h2,h3,p,ul,li{margin:0;padding:0}
