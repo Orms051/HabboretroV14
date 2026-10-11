@@ -9,6 +9,12 @@ set "JAVA_BIN=C:\Program Files\Java\jdk-25.0.2\bin\java.exe"
 if not exist "%JAVA_BIN%" set "JAVA_BIN=java"
 REM Marqueur d'identite : permet au lanceur de reconnaitre NOTRE Kepler (ce dossier)
 REM et de ne jamais reutiliser/arreter un autre Kepler. %~dp0 = ...\Server\www\
-"%JAVA_BIN%" -Dhabbo.pack="%~dp0" -classpath "%CLASSPATH%" org.alexdev.kepler.Kepler %*
+REM ATTENTION : %~dp0 finit par un antislash. Colle au guillemet (...\www\") la
+REM   sequence \" est vue comme un guillemet echappe par Java : il avale -classpath
+REM   et la classe principale, affiche l'aide et quitte aussitot. On retire donc
+REM   l'antislash final avant de citer le chemin.
+set "PACK=%~dp0"
+set "PACK=%PACK:~0,-1%"
+"%JAVA_BIN%" -Dhabbo.pack="%PACK%" -classpath "%CLASSPATH%" org.alexdev.kepler.Kepler %*
 
 pause
