@@ -2743,7 +2743,9 @@ function page_user(): void {
 
     echo '<div style="margin-bottom:10px"><a class="mini ghost lnkbtn" href="?p=users">← Retour aux joueurs</a></div>';
     page_title('👤 ' . $u['username'], 'Fiche complète du joueur · ID ' . $id);
-    echo '<div style="margin:-10px 0 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' . rank_badge((int)$u['rank']) . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">Compte actif</span>');
+    echo '<div style="margin:-10px 0 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+       . '<img src="/avatar.php?user=' . h(rawurlencode((string)$u['username'])) . '&size=b&v=2" alt="Avatar de ' . h((string)$u['username']) . '" width="64" height="110" loading="lazy" style="image-rendering:pixelated;image-rendering:crisp-edges;vertical-align:bottom;background:#f3eecf;border:1px solid #d8cfa6;border-radius:4px">'
+       . rank_badge((int)$u['rank']) . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">Compte actif</span>');
     if ((int)($_SESSION['admin']['rank'] ?? 0) >= 7) echo '<form method="post" action="?p=user&id=' . $id . '" target="_blank" style="margin-left:auto" onsubmit="return confirm(\'Ouvrir le jeu connecté en tant que ' . h(addslashes($u['username'])) . ' ?\')">' . csrf_field() . '<input type="hidden" name="action" value="loginas"><input type="hidden" name="id" value="' . $id . '"><button class="mini ghost" title="Ouvre le jeu connecté en tant que ce joueur (nouvel onglet)">🎭 Se connecter en tant que…</button></form>';
     echo '</div>';
 
@@ -2884,7 +2886,7 @@ function page_users(): void {
         $seen = (int)$u['last_online'] > 0 ? date('d/m/Y H:i', (int)$u['last_online']) : '<span class="muted">jamais</span>';
         $isBan = isset($bans[(int)$u['id']]);
         echo '<tr>
-            <td class="muted">' . (int)$u['id'] . '</td><td><a class="ulink" href="?p=user&id=' . (int)$u['id'] . '">' . h($u['username']) . '</a><div class="muted sm">' . h($u['motto']) . '</div></td>
+            <td class="muted">' . (int)$u['id'] . '</td><td><div style="display:flex;align-items:center;gap:8px"><span style="flex:0 0 auto;width:28px;height:34px;overflow:hidden;background:#f3eecf;border:1px solid #d8cfa6;border-radius:3px;display:flex;justify-content:center"><img src="/avatar.php?user=' . h(rawurlencode((string)$u['username'])) . '&size=s&head=1&v=2" alt="" width="32" height="55" loading="lazy" style="image-rendering:pixelated;image-rendering:crisp-edges"></span><span><a class="ulink" href="?p=user&id=' . (int)$u['id'] . '">' . h($u['username']) . '</a><div class="muted sm">' . h($u['motto']) . '</div></span></div></td>
             <td>' . rank_badge((int)$u['rank']) . '</td><td>' . (int)$u['credits'] . '</td><td>' . badge_preview(array_merge($rb, $ub)) . '</td>
             <td>' . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">OK</span>') . '</td>
             <td style="text-align:right"><button class="mini ghost" onclick="tgl(\'ue' . (int)$u['id'] . '\')">Éditer</button>
@@ -3695,9 +3697,13 @@ function hotel_alert_presets(): array {
         '⚠️ Merci de respecter les autres joueurs. Les insultes = ban.',
     ];
 }
+/* Service d'avatars Minerva (port local 5123). */
+function minerva_running(): bool { $c = @fsockopen('127.0.0.1', 5123, $e, $s, 0.6); if ($c) { fclose($c); return true; } return false; }
+
 function page_server(): void {
     page_title('Serveur', 'État des services, contrôle de l\'émulateur et diagnostics');
     $up = emu_running();
+    $mav = minerva_running();
     $online = db()->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn();
     $dbver = ''; try { $dbver = (string)db()->query('SELECT VERSION()')->fetchColumn(); } catch (Throwable $e) {}
     $dbShort = $dbver !== '' ? (stripos($dbver, 'maria') !== false ? 'MariaDB' : 'MySQL') . ' ' . preg_replace('/[-+].*$/', '', $dbver) : 'Active';
@@ -3707,8 +3713,10 @@ function page_server(): void {
     echo '<div class="stat ' . ($up ? 'green' : 'red') . '"><div class="ic">' . ($up ? '🟢' : '🔴') . '</div><div><div class="num" style="font-size:17px">' . ($up ? 'En marche' : 'Arrêté') . '</div><div class="lbl">Émulateur · port 12321</div></div></div>';
     echo '<div class="stat green"><div class="ic">🗄️</div><div><div class="num" style="font-size:15px">' . h($dbShort) . '</div><div class="lbl">Base de données · 3306</div></div></div>';
     echo '<div class="stat green"><div class="ic">🌐</div><div><div class="num" style="font-size:15px">PHP ' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '</div><div class="lbl">Site web · Apache · 80</div></div></div>';
+    echo '<div class="stat ' . ($mav ? 'green' : 'red') . '"><div class="ic">' . ($mav ? '🎨' : '🔴') . '</div><div><div class="num" style="font-size:17px">' . ($mav ? 'En marche' : 'Arrêté') . '</div><div class="lbl">Avatars · Minerva · 5123</div></div></div>';
     echo '<div class="stat blue"><div class="ic">👥</div><div><div class="num">' . ($up ? ($online !== false ? $online : '0') : '—') . '</div><div class="lbl">Joueurs en ligne</div></div></div>';
     echo '</div>';
+    if (!$mav) echo '<div class="panel"><p class="sub" style="padding:10px 12px;margin:0">🎨 <b>Service d\'avatars (Minerva) arrêté</b> — les avatars déjà en cache restent affichés, les autres montrent une silhouette. Démarre-le avec <code>tools\\minerva-bin\\start-minerva.bat</code> (ou relance le serveur via <code>START-HABBORETROV14.bat</code>).</p></div>';
 
     /* --- Contrôle de l'émulateur --- */
     echo '<div class="panel"><div class="ph"><h3>🎮 Contrôle de l\'émulateur</h3><a class="mini ghost lnkbtn" href="?p=server" style="margin-left:auto">🔄 Rafraîchir l\'état</a></div>';

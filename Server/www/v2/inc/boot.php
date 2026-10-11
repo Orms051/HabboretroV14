@@ -289,3 +289,23 @@ function online_count(): int {
     try { $v = db()->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn(); return (int)$v; }
     catch (Throwable $e) { return 0; }
 }
+
+/**
+ * avatar_tag — <img> du vrai avatar V14 d'un joueur (rendu par /avatar.php, mis en cache).
+ * Options : head(bool miniature tête), size('s'|'b'), dir(2|4), w/h(px natifs recommandés),
+ * class, alt, style. Pixels nets (Chrome + Basilisk), proportions conservées.
+ */
+const AVATAR_URL_VER = '2';   // bump = force le rafraîchissement des <img> (contourne le cache immutable)
+function avatar_tag(string $username, array $o = []): string {
+    $head = !empty($o['head']);
+    $size = $o['size'] ?? ($head ? 's' : 'b');
+    $dir  = (int)($o['dir'] ?? 2);
+    $q = http_build_query(['user' => $username, 'size' => $size, 'direction' => $dir, 'head' => $head ? 1 : 0, 'v' => AVATAR_URL_VER]);
+    // dimensions natives par défaut (pas d'étirement) : corps 64x110, tête s 32x55
+    $w = $o['w'] ?? ($head ? 32 : 64);
+    $hgt = $o['h'] ?? ($head ? 55 : 110);
+    $style = 'image-rendering:pixelated;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;vertical-align:bottom;'
+           . 'width:' . (int)$w . 'px;height:' . (int)$hgt . 'px;' . ($o['style'] ?? '');
+    return '<img src="/avatar.php?' . h($q) . '" alt="' . h($o['alt'] ?? $username) . '" loading="lazy"'
+         . ' class="' . h($o['class'] ?? 'hb-av') . '" style="' . h($style) . '">';
+}
