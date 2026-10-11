@@ -2577,6 +2577,17 @@ function page_dashboard(): void {
         echo '<a class="alertbar" href="?p=messages">💬 <b>' . $inbox . ' élément' . ($inbox > 1 ? 's' : '') . '</b> en attente dans la messagerie (messages / demandes de mot de passe) — clique pour traiter &raquo;</a>';
     }
 
+    /* --- À TRAITER (en premier : ce qui demande une action du staff) --- */
+    $todo = [];
+    if (tab_allowed('homemod')) { try { $todo[] = ['🚩', (int)$d->query("SELECT COUNT(*) FROM home_reports WHERE status='new'")->fetchColumn(), 'Signalements Homes', '?p=homemod&sec=reports']; } catch (Throwable $e) {} }
+    if (tab_allowed('messages')) { try { $todo[] = ['💬', (int)$d->query("SELECT COUNT(*) FROM contact_messages WHERE status='new'")->fetchColumn(), "Demandes d'aide", '?p=messages']; } catch (Throwable $e) {} }
+    if (tab_allowed('messages')) { try { $todo[] = ['🔑', (int)$d->query("SELECT COUNT(*) FROM password_resets WHERE status='pending'")->fetchColumn(), 'Récupération de compte', '?p=messages']; } catch (Throwable $e) {} }
+    if ($todo) {
+        echo '<h3 class="sec" style="margin:2px 0 10px">À traiter</h3><div class="todo">';
+        foreach ($todo as $t) echo '<a class="todocard' . ($t[1] > 0 ? ' urgent' : '') . '" href="' . $t[3] . '"><span class="tn">' . $t[1] . '</span><span class="tl">' . $t[0] . ' ' . h($t[2]) . '</span></a>';
+        echo '</div>';
+    }
+
     /* --- Indicateurs utiles d'abord --- */
     echo '<div class="grid">';
     stat_box('🟢', $online !== false ? $online : '0', 'En ligne', 'green');
@@ -4365,6 +4376,13 @@ code{background:var(--bg);padding:2px 7px;border-radius:6px;color:var(--acc);fon
 .alertbar{display:block;background:linear-gradient(#f7a838,#ef8f13);color:#fff;font-size:13.5px;font-weight:600;padding:13px 18px;border-radius:14px;margin-bottom:16px;box-shadow:0 3px 10px rgba(239,143,19,.28);text-shadow:0 1px 0 rgba(0,0,0,.15)}
 .alertbar:hover{filter:brightness(1.05);text-decoration:none}
 .alertbar b{font-weight:800}
+.todo{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:18px}
+.todocard{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:14px 16px;text-decoration:none;color:var(--txt);transition:transform .12s,border-color .15s}
+.todocard .tn{font-size:26px;font-weight:800;line-height:1}
+.todocard .tl{color:var(--mut);font-size:12.5px;font-weight:600;margin-top:4px}
+.todocard:hover{border-color:var(--acc);transform:translateY(-2px)}
+.todocard.urgent{border-color:#ef8f13;background:linear-gradient(180deg,rgba(239,143,19,.10),transparent)}
+.todocard.urgent .tn{color:#ef8f13}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));grid-gap:14px;gap:14px;margin-bottom:18px}
 .stat{display:flex;align-items:center;background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:16px 18px}
 .stat .ic{font-size:24px;width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:var(--soft)}
