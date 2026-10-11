@@ -549,6 +549,34 @@ if ($p === 'games') {
 }
 
 /* ---- Messagerie : messages reçus du staff (intégration de la messagerie existante) ---- */
+/* ---- Joueur : créer une demande (conversation) ---- */
+if ($p === 'conv_new') {
+    $u = me();
+    if (!$u) redirect('?p=messages');
+    if (!csrf_ok()) redirect('?p=messages');
+    $subject = mb_substr(trim(strip_tags((string)($_POST['subject'] ?? ''))), 0, 150);
+    $cat = in_array(($_POST['category'] ?? ''), ['question', 'bug', 'signalement', 'compte'], true) ? $_POST['category'] : 'question';
+    $body = mb_substr(trim(strip_tags((string)($_POST['body'] ?? ''))), 0, 4000);
+    if ($subject === '') $subject = 'Demande à l\'équipe';
+    if ($body === '') redirect('?p=messages&done=empty');
+    $cid = function_exists('conv_create') ? conv_create((int)$u['id'], $subject, $cat, 'player', (string)$u['username'], $body) : 0;
+    redirect($cid ? '?p=messages&c=' . $cid . '&done=sent' : '?p=messages&done=err');
+}
+/* ---- Joueur : répondre dans une conversation ---- */
+if ($p === 'conv_reply') {
+    $u = me();
+    if (!$u) redirect('?p=messages');
+    $cid = (int)($_POST['cid'] ?? 0);
+    if (!csrf_ok() || $cid <= 0) redirect('?p=messages');
+    // Vérifie que la conversation appartient bien au joueur
+    $own = false; try { $st = db()->prepare('SELECT 1 FROM conversations WHERE id=? AND player_id=?'); $st->execute([$cid, (int)$u['id']]); $own = (bool)$st->fetchColumn(); } catch (Throwable $e) {}
+    if (!$own) redirect('?p=messages');
+    $body = mb_substr(trim(strip_tags((string)($_POST['body'] ?? ''))), 0, 4000);
+    if ($body === '') redirect('?p=messages&c=' . $cid);
+    if (function_exists('conv_add_message')) conv_add_message($cid, 'player', (string)$u['username'], $body, 0);
+    redirect('?p=messages&c=' . $cid . '&done=replied');
+}
+
 if ($p === 'messages') {
     render_head('home', null);
     $u = me();
@@ -557,22 +585,89 @@ if ($p === 'messages') {
         echo '<p class="muted">Connecte-toi pour voir tes messages. <a href="?p=register">Se connecter / s\'inscrire</a></p>';
         box_close(); render_foot(); exit;
     }
+    $uid = (int)$u['id'];
     ensure_user_msgs();
-    $list = db()->prepare('SELECT id,from_staff,subject,body,read_at,created_at FROM user_messages WHERE user_id=? ORDER BY id DESC'); $list->execute([(int)$u['id']]); $msgs = $list->fetchAll();
-    try { db()->prepare('UPDATE user_messages SET read_at=NOW() WHERE user_id=? AND read_at IS NULL')->execute([(int)$u['id']]); } catch (Throwable $e) {}
+    if (function_exists('ensure_conversations')) ensure_conversations();
+    $done = (string)($_GET['done'] ?? '');
+    $flash = ['sent' => '✅ Ta demande a bien été envoyée à l\'équipe.', 'replied' => '✅ Ta réponse a été envoyée.', 'empty' => '⚠️ Ton message était vide.', 'err' => '⚠️ Oups, l\'envoi a échoué, réessaie.'];
+    $flashHtml = isset($flash[$done]) ? '<div style="background:#e7f6ea;border:1px solid #9ed3ad;color:#1c5a2e;border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:11px">' . h($flash[$done]) . '</div>' : '';
+    $cid = (int)($_GET['c'] ?? 0);
+
+    /* === Détail d'une conversation === */
+    if ($cid > 0 && function_exists('conv_messages')) {
+        $conv = null; try { $st = db()->prepare('SELECT * FROM conversations WHERE id=? AND player_id=?'); $st->execute([$cid, $uid]); $conv = $st->fetch() ?: null; } catch (Throwable $e) {}
+        if (!$conv) redirect('?p=messages');
+        conv_mark_read_player($cid, $uid);
+        $statut = ['waiting_staff' => '⏳ En attente de l\'équipe', 'waiting_player' => '💬 L\'équipe t\'a répondu', 'resolved' => '✅ Résolu'];
+        box_open('✉ ' . h((string)($conv['subject'] ?: 'Ma demande')), 'b');
+        echo $flashHtml;
+        echo '<p style="margin-bottom:8px"><a href="?p=messages">← Toutes mes conversations</a> · <span class="muted">' . h($statut[(string)$conv['status']] ?? '') . '</span></p>';
+        foreach (conv_messages($cid, false) as $m) {
+            $staff = ((string)$m['sender'] !== 'player');
+            echo '<div style="border:1px solid ' . ($staff ? '#9fc6e8' : '#d9d2b8') . ';border-radius:4px;padding:8px;margin-bottom:6px;background:' . ($staff ? '#eef6fd' : '#fffef7') . '">'
+               . '<div style="font-size:10px;color:#8a97a3;margin-bottom:3px"><b style="color:#5b5b5b">' . ($staff ? '👮 ' : '🙂 ') . h((string)($m['sender_name'] ?: ($staff ? 'Équipe' : (string)$u['username']))) . '</b>'
+               . ' · ' . h(date('d/m/Y H:i', strtotime((string)$m['created_at']))) . '</div>'
+               . '<div style="font-size:11px;color:#5b5b5b">' . nl2br(h((string)$m['body'])) . '</div></div>';
+        }
+        echo '<form method="post" action="?p=conv_reply" style="margin-top:8px"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="cid" value="' . $cid . '">'
+           . '<textarea name="body" rows="3" maxlength="4000" required placeholder="Écris ta réponse…" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></textarea>'
+           . '<div style="margin-top:6px"><button class="new-button" type="submit"><b>Envoyer</b><i></i></button></div></form>';
+        box_close();
+        render_foot(); exit;
+    }
+
+    /* === Liste des conversations === */
+    $convs = [];
+    if (function_exists('conv_unread_player')) {
+        try {
+            $list = db()->prepare("SELECT c.id,c.subject,c.status,c.updated_at,
+                    (SELECT COUNT(*) FROM conversation_messages m WHERE m.conv_id=c.id AND m.is_internal=0 AND m.sender<>'player' AND m.read_player=0) AS unread,
+                    (SELECT body FROM conversation_messages m2 WHERE m2.conv_id=c.id AND m2.is_internal=0 ORDER BY m2.id DESC LIMIT 1) AS last_body
+                FROM conversations c WHERE c.player_id=? AND c.player_trashed=0 ORDER BY c.updated_at DESC");
+            $list->execute([$uid]); $convs = $list->fetchAll();
+        } catch (Throwable $e) { $convs = []; }
+    }
+    $statut = ['waiting_staff' => '⏳ En attente', 'waiting_player' => '💬 Réponse reçue', 'resolved' => '✅ Résolu'];
+
     box_open('✉ Mes messages', 'b');
-    echo '<p class="muted" style="margin-bottom:8px">Les messages de l\'équipe de l\'hôtel.</p>';
-    if (!$msgs) echo '<p class="muted">📭 Tu n\'as aucun message pour le moment.</p>';
-    else foreach ($msgs as $m) {
-        $new = empty($m['read_at']);
-        echo '<div style="border:1px solid #d9d2b8;border-radius:4px;padding:8px;margin-bottom:6px;background:' . ($new ? '#fff7e6' : '#fff') . '">'
-           . '<div style="font-size:10px;color:#8a97a3;margin-bottom:3px"><b style="color:#5b5b5b">👤 ' . h((string)($m['from_staff'] ?: 'Équipe')) . '</b>'
-           . ($new ? ' <span style="background:#e5820c;color:#fff;padding:0 5px;border-radius:2px;font-weight:bold">Nouveau</span>' : '')
-           . ' · ' . h(date('d/m/Y H:i', strtotime((string)$m['created_at']))) . '</div>';
-        if (trim((string)$m['subject']) !== '') echo '<div style="font-weight:bold;font-size:12px;margin-bottom:2px;color:#30384a">' . h((string)$m['subject']) . '</div>';
-        echo '<div style="font-size:11px;color:#5b5b5b">' . nl2br(h((string)$m['body'])) . '</div></div>';
+    echo $flashHtml;
+    echo '<p class="muted" style="margin-bottom:8px">Tes échanges avec l\'équipe de l\'hôtel.</p>';
+    if (!$convs) echo '<p class="muted">📭 Tu n\'as aucune conversation. Pose ta question ci-dessous 👇</p>';
+    else foreach ($convs as $c) {
+        $unread = (int)$c['unread'];
+        $snip = mb_strimwidth(trim(preg_replace('/\s+/', ' ', (string)$c['last_body'])), 0, 70, '…');
+        echo '<a href="?p=messages&c=' . (int)$c['id'] . '" style="display:block;border:1px solid #d9d2b8;border-radius:4px;padding:8px;margin-bottom:6px;background:' . ($unread ? '#fff7e6' : '#fff') . ';text-decoration:none;color:#30384a">'
+           . '<div style="font-size:12px;font-weight:bold">' . h((string)($c['subject'] ?: 'Ma demande'))
+           . ($unread ? ' <span style="background:#e5820c;color:#fff;padding:0 5px;border-radius:2px">Nouveau</span>' : '') . '</div>'
+           . '<div style="font-size:10px;color:#8a97a3;margin:2px 0">' . h($statut[(string)$c['status']] ?? '') . ' · ' . h(date('d/m/Y H:i', strtotime((string)$c['updated_at']))) . '</div>'
+           . '<div style="font-size:11px;color:#5b5b5b">' . h($snip) . '</div></a>';
     }
     box_close();
+
+    /* === Nouvelle demande === */
+    box_open('✍ Nouvelle demande à l\'équipe', 'g');
+    echo '<form method="post" action="?p=conv_new"><input type="hidden" name="csrf" value="' . h(csrf()) . '">'
+       . '<div style="margin-bottom:6px"><input type="text" name="subject" maxlength="150" placeholder="Sujet (ex : problème de connexion)" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></div>'
+       . '<div style="margin-bottom:6px"><select name="category" style="border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"><option value="question">Question</option><option value="bug">Bug / problème technique</option><option value="signalement">Signalement</option><option value="compte">Mon compte</option></select></div>'
+       . '<div style="margin-bottom:6px"><textarea name="body" rows="4" maxlength="4000" required placeholder="Explique ta demande à l\'équipe…" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></textarea></div>'
+       . '<button class="new-button" type="submit"><b>Envoyer ma demande</b><i></i></button></form>';
+    box_close();
+
+    /* === Archive : anciens messages de l'équipe (lecture seule, accès préservé) === */
+    $old = []; try { $ol = db()->prepare('SELECT from_staff,subject,body,read_at,created_at FROM user_messages WHERE user_id=? ORDER BY id DESC'); $ol->execute([$uid]); $old = $ol->fetchAll(); } catch (Throwable $e) {}
+    if ($old) {
+        box_open('🗂 Anciens messages de l\'équipe', 'p');
+        echo '<p class="muted" style="margin-bottom:6px">Tes anciens messages, conservés ici pour consultation.</p>';
+        foreach ($old as $m) {
+            echo '<div style="border:1px solid #d9d2b8;border-radius:4px;padding:8px;margin-bottom:6px;background:#fff">'
+               . '<div style="font-size:10px;color:#8a97a3;margin-bottom:3px"><b style="color:#5b5b5b">👤 ' . h((string)($m['from_staff'] ?: 'Équipe')) . '</b> · ' . h(date('d/m/Y H:i', strtotime((string)$m['created_at']))) . '</div>'
+               . (trim((string)$m['subject']) !== '' ? '<div style="font-weight:bold;font-size:12px;margin-bottom:2px;color:#30384a">' . h((string)$m['subject']) . '</div>' : '')
+               . '<div style="font-size:11px;color:#5b5b5b">' . nl2br(h((string)$m['body'])) . '</div></div>';
+        }
+        box_close();
+        // Comportement d'origine : ouvrir la page marque les anciens messages comme lus.
+        try { db()->prepare('UPDATE user_messages SET read_at=NOW() WHERE user_id=? AND read_at IS NULL')->execute([$uid]); } catch (Throwable $e) {}
+    }
     render_foot(); exit;
 }
 
@@ -759,6 +854,9 @@ $SUBREF = [
     'habbo_way'=>['Habbo Attitude','help','habbo_way.php'], 'email'=>['Vérifie ton email !','help','email.php'], 'habbo_x'=>['Habbo X','help','habbo_x.php'],
     'habboredac'=>['HabboRédac','help','HabboRedac.php'], 'account_security'=>['Conseils de sécurité','help','Account_security.php'],
 ];
+/* ---- Contacte-nous → nouvelle messagerie (assistance) ---- */
+if ($p === 'contact') { redirect('?p=messages'); }
+
 if (isset($SUBREF[$p])) {
     [$title, $parent, $ref] = $SUBREF[$p];
     render_head($parent, null);
