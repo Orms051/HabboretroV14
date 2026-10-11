@@ -1357,6 +1357,17 @@ function hm_view_reports(): void {
     }
     echo '</div>';
 
+    // Éléments de la Home (widgets, stickers, notes…) — retirer un élément précis sans chercher.
+    try { $items = db()->prepare('SELECT id,type,resource FROM home_items WHERE user_id=? ORDER BY id'); $items->execute([$ownerId]); $itemRows = $items->fetchAll(); } catch (Throwable $e) { $itemRows = []; }
+    echo '<div class="panel"><div class="ph"><h3>🧩 Éléments de la Home (' . count($itemRows) . ')</h3></div>';
+    echo '<p class="sub" style="margin:-6px 0 8px">Retire un widget ou un élément précis directement depuis le dossier (motif journalisé). Retirer un élément ne touche pas au reste de la Home.</p>';
+    if (!$itemRows) echo '<div class="empty">Aucun élément.</div>';
+    else {
+        echo '<table class="clean"><tr><th>#</th><th>Type</th><th>Ressource</th><th style="text-align:right">Retirer</th></tr>';
+        foreach ($itemRows as $it) echo '<tr><td class="sub">' . (int)$it['id'] . '</td><td>' . h((string)$it['type']) . '</td><td class="sub">' . h((string)($it['resource'] ?: '—')) . '</td><td style="text-align:right">' . hm_reason_action('hm_item_del', ['item_id' => (int)$it['id'], 'back' => $backUrl], 'Retirer', 'sm-btn danger') . '</td></tr>';
+        echo '</table>';
+    }
+    echo '</div>';
     // Anti double-traitement : alerte si un autre modérateur l'a déjà pris en charge.
     if ($r['status'] === 'progress' && (string)$r['handled_by'] !== '' && (string)$r['handled_by'] !== (string)($_SESSION['admin']['username'] ?? '')) {
         echo '<div class="warn" style="border-color:#8a5216"><b>⚠️ Dossier déjà pris en charge par ' . h((string)$r['handled_by']) . '.</b> Vérifie avec cette personne avant d\'enregistrer une décision, pour éviter un double traitement.</div>';
