@@ -1157,9 +1157,10 @@ function ensure_home_admin(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS home_guestbook (id INT AUTO_INCREMENT PRIMARY KEY, owner_id INT NOT NULL, author_id INT NOT NULL, author_name VARCHAR(64) NOT NULL DEFAULT '', message VARCHAR(255) NOT NULL DEFAULT '', hidden TINYINT NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(owner_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     db()->exec("CREATE TABLE IF NOT EXISTS home_assets_disabled (kind VARCHAR(8) NOT NULL, resource VARCHAR(160) NOT NULL, PRIMARY KEY (kind,resource)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     db()->exec("CREATE TABLE IF NOT EXISTS home_reports (id INT AUTO_INCREMENT PRIMARY KEY, target_type VARCHAR(12) NOT NULL, target_id INT NOT NULL, owner_id INT NOT NULL DEFAULT 0, reporter_id INT NOT NULL, reporter_name VARCHAR(64) NOT NULL DEFAULT '', reason VARCHAR(40) NOT NULL DEFAULT '', detail VARCHAR(400) NOT NULL DEFAULT '', status VARCHAR(12) NOT NULL DEFAULT 'new', handled_by VARCHAR(64) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(status), INDEX(owner_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    // Décision motivée du dossier (ajout rétro-compatible)
+    // Décision motivée + snapshot du contenu signalé (ajouts rétro-compatibles)
     try { if (!col_exists('home_reports', 'decision')) db()->exec("ALTER TABLE home_reports ADD COLUMN decision VARCHAR(400) NOT NULL DEFAULT ''"); } catch (Throwable $e) {}
     try { if (!col_exists('home_reports', 'handled_at')) db()->exec("ALTER TABLE home_reports ADD COLUMN handled_at DATETIME NULL"); } catch (Throwable $e) {}
+    try { if (!col_exists('home_reports', 'snapshot')) db()->exec("ALTER TABLE home_reports ADD COLUMN snapshot VARCHAR(400) NOT NULL DEFAULT ''"); } catch (Throwable $e) {}
 }
 function sitemgr_sections(): array {
     return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'apparence' => ['🎨', 'Apparence'], 'ressources' => ['🏠', 'Ressources Homes'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
@@ -1352,8 +1353,16 @@ function hm_view_reports(): void {
     echo '<p><span class="muted">Propriétaire :</span> <a href="?p=user&id=' . $ownerId . '">' . h($owner) . '</a> · <span class="muted">Cible :</span> ' . ($r['target_type'] === 'gb' ? 'Message du livre d\'or #' . (int)$r['target_id'] : 'Home entière') . '</p>';
     if ((string)$r['detail'] !== '') echo '<p><span class="muted">Explication du signalant :</span> « ' . h((string)$r['detail']) . ' »</p>';
     if ($r['target_type'] === 'gb') {
-        if ($gb) echo '<div class="warn">« ' . h((string)$gb['message']) . ' »<div class="sub" style="margin-top:4px">— écrit par <b>' . h((string)$gb['author_name']) . '</b>' . ((int)$gb['author_id'] !== $ownerId ? ' <span class="pill off">auteur ≠ propriétaire</span>' : '') . ((int)$gb['hidden'] ? ' · <span class="rk red">déjà masqué</span>' : '') . '</div></div>';
-        else echo '<div class="warn">Contenu d\'origine non disponible (message supprimé). Aucune preuve n\'est reconstituée.</div>';
+        $snap = (string)($r['snapshot'] ?? '');
+        if ($snap !== '') echo '<p class="sub" style="margin-top:8px">Contenu <b>signalé</b> (copie au moment du signalement) :</p><div class="warn">« ' . h($snap) . ' »</div>';
+        if ($gb) {
+            $changed = ($snap !== '' && (string)$gb['message'] !== $snap);
+            echo '<p class="sub" style="margin-top:8px">Contenu <b>actuel</b>' . ($changed ? ' <span class="pill off">modifié depuis</span>' : '') . ' :</p>'
+               . '<div class="warn">« ' . h((string)$gb['message']) . ' »<div class="sub" style="margin-top:4px">— écrit par <b>' . h((string)$gb['author_name']) . '</b>' . ((int)$gb['author_id'] !== $ownerId ? ' <span class="pill off">auteur ≠ propriétaire</span>' : '') . ((int)$gb['hidden'] ? ' · <span class="rk red">déjà masqué</span>' : '') . '</div></div>';
+        } else {
+            echo '<p class="sub" style="margin-top:8px">Contenu <b>actuel</b> : <span class="rk red">supprimé depuis</span></p>';
+            if ($snap === '') echo '<div class="warn">Contenu d\'origine non disponible (message supprimé avant conservation). Aucune preuve n\'est reconstituée.</div>';
+        }
     }
     echo '</div>';
 
