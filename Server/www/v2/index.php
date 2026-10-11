@@ -1070,7 +1070,7 @@ if (strpos($p, 'home/') === 0) {
     echo '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">';
     echo '<div style="width:34px;height:40px;background:#f3eecf;border:1px solid #d8cfa6;border-radius:3px;overflow:hidden;display:flex;align-items:flex-start;justify-content:center">' . avatar_tag((string)$owner['username'], ['head' => true, 'alt' => (string)$owner['username']]) . '</div>';
     echo '<div style="flex:1"><b style="font-size:13px">La Habbo Home de ' . h((string)$owner['username']) . '</b><div class="muted" style="font-size:10px">' . h((string)$owner['motto']) . '</div></div>';
-    $url = 'http://' . h($_SERVER['HTTP_HOST'] ?? 'localhost') . '/v2/?p=home/' . h(rawurlencode((string)$owner['username']));
+    $url = h(site_url('?p=home/' . rawurlencode((string)$owner['username'])));
     echo '<input readonly value="' . $url . '" onclick="this.select()" style="width:230px;border:1px solid #b9c7cf;padding:3px 5px;font-size:10px" title="Copier le lien de cette Home">';
     if ($isOwner) echo ' ' . nbtn('✎ Personnaliser ma Home', '?p=home_edit');
     echo '</div>';
@@ -1102,7 +1102,21 @@ if (strpos($p, 'home/') === 0) {
     render_foot(); exit;
 }
 
+/* ---------- Profil (lien ouvert par le client : ?p=profile&id=ID ou &u=pseudo) ---------- */
+if ($p === 'profile') {
+    $who = trim((string)($_GET['u'] ?? ''));
+    if ($who === '' && isset($_GET['id'])) {
+        try { $st = db()->prepare('SELECT username FROM users WHERE id=?'); $st->execute([(int)$_GET['id']]); $who = (string)($st->fetchColumn() ?: ''); }
+        catch (Throwable $e) {}
+    }
+    // on conserve hotelclient (lien ouvert depuis le jeu)
+    $hc = isset($_GET['hotelclient']) ? ('&hotelclient=' . rawurlencode((string)$_GET['hotelclient'])) : '';
+    if ($who !== '') redirect('?p=home/' . rawurlencode($who) . $hc);
+    redirect('?p=me' . ($hc !== '' ? '?' . ltrim($hc, '&') : ''));
+}
+
 /* ---------- 404 ---------- */
+http_response_code(404);
 render_head('home');
 box_open('Page introuvable', 'o');
 echo '<div class="wip"><span class="ico">❓</span><h3>Cette page n\'existe pas</h3><p>Le lien « ' . h($p) . ' » ne correspond à aucune page.</p><p style="margin-top:8px">' . nbtn('Retour à l\'accueil', '?p=home') . '</p></div>';

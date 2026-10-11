@@ -14,6 +14,18 @@ const HOTEL = 'Habbo';
 const DEFAULT_FIGURE = '1000118001270012900121001';
 const GAME_URL = '/client.php';   // loader Shockwave (racine, inchangé)
 
+/* Base du site, configurable pour servir à la racine (/) après bascule — ou sous
+   /v2/ avant. Déduite du host de la requête (pas de localhost/host en dur), afin
+   que l'accès depuis un autre PC (adresse réseau des joueurs) fonctionne. */
+if (!defined('SITE_BASE_PATH')) define('SITE_BASE_PATH', '/');
+function site_url(string $path = ''): string {
+    $https = (($_SERVER['HTTPS'] ?? '') !== '' && ($_SERVER['HTTPS'] ?? '') !== 'off');
+    $host  = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
+    return ($https ? 'https' : 'http') . '://' . $host . SITE_BASE_PATH . ltrim($path, '/');
+}
+/* Version des assets (cache-busting CSS/JS sans vidage manuel du cache navigateur). */
+if (!defined('ASSET_VER')) define('ASSET_VER', '20261011');
+
 function db(): PDO {
     static $p = null;
     if ($p === null) $p = new PDO('mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . DB_NAME . ';charset=utf8mb4', DB_USER, DB_PASS, [

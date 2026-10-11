@@ -1,17 +1,42 @@
 # HabboretroV14 — service Apache (Laragon)
 # Types MIME Shockwave/Director : indispensables pour que le client se charge
 # et sauvegarde correctement (sinon Apache renvoie octet-stream et ça casse).
-AddType application/x-director .dcr .cct .cst .cxt .cxt
+AddType application/x-director .dcr .cct .cst .cxt
 AddType application/x-shockwave-flash .swf
 
-# Page par défaut = le site
-DirectoryIndex index.php index.html
+# ===== Bascule V2 -> site principal =====
+# La V2 est servie à la racine (boot.php inclus via __DIR__, OK en DirectoryIndex).
+# La V1 reste le fichier index.php (conservé pour rollback) mais n'est plus
+# atteignable publiquement : /index.php est redirigé vers / (voir plus bas).
+# ROLLBACK = restaurer l'ancien .htaccess (DirectoryIndex index.php, sans ces règles).
+# Racine -> v2/index.php ; les sous-dossiers (ex. /admin/) retombent sur leur index.php.
+DirectoryIndex v2/index.php index.php index.html
 
 # Pas de listing de dossier
 Options -Indexes
 
-# Anciennes adresses d'aide Habbo (/help, /help/75, /help/36…) -> Centre d'aide du site
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteRule ^help(/.*)?$ /?p=help [R=301,L]
+
+    # Anciennes adresses /v2/... -> racine (301), en conservant les paramètres.
+    RewriteRule ^v2/?$        /   [R=301,L,QSA]
+    RewriteRule ^v2/index\.php$ / [R=301,L,QSA]
+    RewriteRule ^v2/(.+)$     /$1 [R=301,L,QSA]
+
+    # Ancienne V1 (si on tombe sur /index.php) -> racine (V2).
+    RewriteRule ^index\.php$  /   [R=301,L,QSA]
+
+    # Anciennes adresses d'aide Habbo (/help, /help/75…) -> Centre d'aide.
+    RewriteRule ^help(/.*)?$  /?p=help [R=301,L]
 </IfModule>
+
+# ===== Blindage : rien de sensible accessible depuis le navigateur =====
+# Logs, dumps SQL, scripts et docs internes.
+<FilesMatch "\.(log|sql|md|ps1|bat|sh|ini|bak|example)$">
+    Require all denied
+</FilesMatch>
+# Dossiers d'outils / migrations / sauvegardes éventuelles sous la racine web.
+RedirectMatch 404 ^/(tools|_migrations|_backups_refonte)(/|$)
+# Données internes du manuel des commandes et du convertisseur d'avatars.
+RedirectMatch 404 ^/admin/(tools|data)(/|$)
+RedirectMatch 404 ^/avatar/(cache|minerva-scripts)(/|$)
