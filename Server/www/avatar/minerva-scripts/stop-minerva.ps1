@@ -1,4 +1,4 @@
-# Arrêt propre du service d'avatars Minerva (superviseur + processus).
+﻿# Arrêt propre du service d'avatars Minerva (superviseur + processus).
 $ErrorActionPreference = 'Continue'
 $base    = $PSScriptRoot
 $pidFile = Join-Path $base 'minerva.supervisor.pid'
