@@ -2350,45 +2350,13 @@ function ensure_news(): void {
     )");
 }
 function page_news(): void {
-    ensure_news();
-    $colors = ['blue' => 'Bleu', 'green' => 'Vert', 'purple' => 'Violet', 'orange' => 'Orange'];
-    $edit = null;
-    if (isset($_GET['edit'])) { $st = db()->prepare('SELECT * FROM site_news WHERE id=?'); $st->execute([(int)$_GET['edit']]); $edit = $st->fetch() ?: null; }
-    $rows = db()->query('SELECT * FROM site_news ORDER BY created_at DESC, id DESC')->fetchAll();
-
-    // Formulaire (ajout ou édition)
-    echo '<div class="panel"><div class="ph"><h3>' . ($edit ? '✏️ Modifier l\'actualité' : '📰 Nouvelle actualité') . '</h3>';
-    if ($edit) echo '<a class="lnk" href="?p=news">+ Nouvelle</a>';
-    echo '</div><form method="post" class="js" data-reload>' . csrf_field();
-    echo '<input type="hidden" name="action" value="' . ($edit ? 'news_update' : 'news_add') . '">';
-    if ($edit) echo '<input type="hidden" name="id" value="' . (int)$edit['id'] . '">';
-    echo '<div class="row">';
-    echo '<label style="flex:2">Titre<input name="title" maxlength="150" required value="' . h($edit['title'] ?? '') . '"></label>';
-    echo '<label style="flex:1">Étiquette<input name="category" maxlength="40" placeholder="À la une, Astuce…" value="' . h($edit['category'] ?? 'À la une') . '"></label>';
-    echo '<label>Couleur<select name="color">';
-    foreach ($colors as $k => $lbl) echo '<option value="' . $k . '"' . (($edit['color'] ?? 'blue') === $k ? ' selected' : '') . '>' . $lbl . '</option>';
-    echo '</select></label>';
-    echo '</div>';
-    echo '<label style="margin-top:10px">Texte<textarea name="body" rows="4" required>' . h($edit['body'] ?? '') . '</textarea></label>';
-    echo '<button style="margin-top:12px">' . ($edit ? '💾 Enregistrer' : '📢 Publier') . '</button>';
-    echo '</form></div>';
-
-    // Liste
-    echo '<div class="panel"><div class="ph"><h3>🗂️ Actualités publiées (' . count($rows) . ')</h3></div>';
-    if (!$rows) echo '<p class="muted sm">Aucune actualité. Publie la première ci-dessus — elle apparaîtra sur le site.</p>';
-    else {
-        echo '<table class="clean"><thead><tr><th>Date</th><th>Étiquette</th><th>Titre</th><th>Auteur</th><th></th></tr></thead><tbody>';
-        foreach ($rows as $r) {
-            echo '<tr><td class="sm">' . h(date('d/m/Y H:i', strtotime((string)$r['created_at']))) . '</td>';
-            echo '<td><span class="tag ' . h($r['color']) . '">' . h($r['category']) . '</span></td>';
-            echo '<td><b>' . h($r['title']) . '</b></td>';
-            echo '<td class="sm">' . h($r['author']) . '</td>';
-            echo '<td class="ta-r"><a class="mini ghost" href="?p=news&edit=' . (int)$r['id'] . '">Éditer</a> ';
-            echo '<form method="post" class="js" data-reload data-confirm="Supprimer cette actualité ?" style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="news_delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="mini warn">Suppr.</button></form></td></tr>';
-        }
-        echo '</tbody></table>';
-    }
-    echo '</div>';
+    // Éditeur unique : on fait converger « ?p=news » vers l'éditeur complet de
+    // Gestion du Site (titre, résumé, image, éditeur visuel, brouillon/publication).
+    // On conserve le paramètre d'édition éventuel (?edit=N -> ?newsedit=N).
+    $to = '?p=sitemgr&sec=news';
+    if (isset($_GET['edit'])) $to .= '&newsedit=' . (int)$_GET['edit'];
+    elseif (isset($_GET['new'])) $to .= '&new=1';
+    redirect($to);
 }
 
 function page_vouchers(): void {
@@ -2587,7 +2555,7 @@ function page_dashboard(): void {
     echo '<div class="panel"><div class="ph"><h3>⚡ Actions fréquentes</h3></div><div class="qa">';
     echo '<a class="qabtn" href="?p=users">➕<span>Créer un compte</span></a>';
     echo '<a class="qabtn" href="?p=search">🔍<span>Rechercher un joueur</span></a>';
-    echo '<a class="qabtn" href="?p=news">📰<span>Publier une actualité</span></a>';
+    echo '<a class="qabtn" href="?p=sitemgr&sec=news&new=1">📰<span>Publier une actualité</span></a>';
     echo '<a class="qabtn" href="?p=server">📢<span>Alerte à l\'hôtel</span></a>';
     echo '<a class="qabtn" href="?p=server">💾<span>Sauvegarder la base</span></a>';
     echo '</div>';
@@ -2596,14 +2564,17 @@ function page_dashboard(): void {
 
     /* --- Journal admin + bannissements --- */
     echo '<div class="cols">';
-    echo '<div class="panel"><div class="ph"><h3>📜 Dernières actions admin</h3><a class="lnk" href="?p=audit">Voir tout →</a></div>';
-    try {
-        ensure_admin_log();
-        $logs = $d->query('SELECT author,action,detail,created_at FROM admin_log ORDER BY id DESC LIMIT 8')->fetchAll();
-        if (!$logs) echo '<div class="empty">Aucune action enregistrée.</div>';
-        else { echo '<table class="clean"><tr><th>Quand</th><th>Qui</th><th>Action</th></tr>'; foreach ($logs as $l) echo '<tr><td class="sm muted" style="white-space:nowrap">' . h(date('d/m H:i', strtotime((string)$l['created_at']))) . '</td><td class="sm"><b>' . h($l['author']) . '</b></td><td class="sm">' . h(($l['detail'] ?? '') !== '' ? $l['detail'] : $l['action']) . '</td></tr>'; echo '</table>'; }
-    } catch (Throwable $e) { echo '<div class="empty">Journal indisponible.</div>'; }
-    echo '</div>';
+    // Aperçu du journal admin : SOUS le même contrôle d'accès que l'onglet Journal.
+    if (tab_allowed('audit')) {
+        echo '<div class="panel"><div class="ph"><h3>📜 Dernières actions admin</h3><a class="lnk" href="?p=audit">Voir tout →</a></div>';
+        try {
+            ensure_admin_log();
+            $logs = $d->query('SELECT author,action,detail,created_at FROM admin_log ORDER BY id DESC LIMIT 8')->fetchAll();
+            if (!$logs) echo '<div class="empty">Aucune action enregistrée.</div>';
+            else { echo '<table class="clean"><tr><th>Quand</th><th>Qui</th><th>Action</th></tr>'; foreach ($logs as $l) echo '<tr><td class="sm muted" style="white-space:nowrap">' . h(date('d/m H:i', strtotime((string)$l['created_at']))) . '</td><td class="sm"><b>' . h($l['author']) . '</b></td><td class="sm">' . h(($l['detail'] ?? '') !== '' ? $l['detail'] : $l['action']) . '</td></tr>'; echo '</table>'; }
+        } catch (Throwable $e) { echo '<div class="empty">Journal indisponible.</div>'; }
+        echo '</div>';
+    }
     echo '<div class="panel"><div class="ph"><h3>🚫 Bannissements récents</h3><a class="lnk" href="?p=moderation">Gérer →</a></div>';
     $br = $d->query('SELECT b.banned_value,b.message,b.ban_type,u.username FROM users_bans b LEFT JOIN users u ON (b.ban_type=\'USER_ID\' AND u.id=b.banned_value) ORDER BY b.banned_until DESC LIMIT 6')->fetchAll();
     if (!$br) echo '<div class="empty">Aucun bannissement 🎉</div>';
@@ -2892,7 +2863,7 @@ function page_user(): void {
         <form method="post" class="js row" style="margin-top:8px" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="user_password"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">
         <label style="flex:1">🔑 Nouveau mot de passe<input name="newpass"></label><button class="ghost">Changer</button></form>
         <div class="row" style="margin-top:8px;gap:6px">' . uquick($id, 'user_credits', 'delta', 1000, '💰 +1 000') . uquick($id, 'user_credits', 'delta', 10000, '💰 +10 000') . uquick($id, 'user_hc', 'days', 30, '⭐ HC 30j') . uquick($id, 'user_hc', 'days', 0, '⭐ Retirer HC') . '</div>
-        <div class="row" style="margin-top:6px;gap:6px;align-items:center"><span class="muted sm">Rang rapide :</span>' . uquick($id, 'user_rank', 'rank', 1, '👤 Joueur') . uquick($id, 'user_rank', 'rank', 6, '🛡️ Modérateur') . uquick($id, 'user_rank', 'rank', 7, '⭐ Admin') . '<form method="post" class="js" data-reload data-confirm="Vider la main (objets non posés) de ' . h($u['username']) . ' ?" style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="clear_hand"><input type="hidden" name="username" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '"><button class="mini ghost">🎒 Vider la main</button></form></div></div>';
+        <div class="row" style="margin-top:6px;gap:6px;align-items:center"><span class="muted sm">Rang rapide :</span>' . uquick($id, 'user_rank', 'rank', 1, '👤 Joueur') . uquick($id, 'user_rank', 'rank', 6, '🛡️ Modérateur') . uquick($id, 'user_rank', 'rank', 7, '⭐ Admin') . '<form method="post" class="js" data-reload data-confirm="⚠️ SUPPRIMER TOUT l\'inventaire (tous les objets non posés) de ' . h($u['username']) . ' ? Irréversible." style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="clear_hand"><input type="hidden" name="username" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '"><button class="mini warn">🧹 Vider l\'inventaire</button></form></div></div>';
     echo '<div class="panel"><div class="ph"><h3>ℹ️ Détails (modifiables)</h3></div>
         <form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="user_details"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">
         <div class="row"><label style="flex:1">E-mail<input name="email" value="' . h($u['email']) . '"></label><label>Naissance<input name="birthday" placeholder="JJ/MM/AAAA" value="' . h(fr_date($u['birthday'])) . '"></label><label>Sexe<select name="sex"><option value="M"' . ($u['sex'] !== 'F' ? ' selected' : '') . '>Garçon</option><option value="F"' . ($u['sex'] === 'F' ? ' selected' : '') . '>Fille</option></select></label></div>
@@ -2991,7 +2962,7 @@ function page_users(): void {
     page_title('Joueurs', 'Gère les comptes, rangs, crédits et mots de passe');
     echo '<div class="panel"><div class="ph"><h3>➕ Créer un compte</h3></div><form method="post" class="js row" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="user_create">
         <label>Nom<input name="username" required></label><label>Mot de passe<input name="newpass" required></label><label>Anniversaire<input name="birthday" placeholder="JJ/MM/AAAA" value="01/01/1990"></label><label>Rang<select name="rank">' . rank_options(1) . '</select></label><button>Créer</button>
-        <span class="muted sm" style="align-self:center">Rangs 1→6 (6 = Admin). Kepler n\'a pas de rang « HabboX ».</span></form></div>';
+        <span class="muted sm" style="align-self:center">Rangs 1→7 (5 = Super Hobba, 6 = Modérateur, 7 = Administrateur). Kepler n\'a pas de rang « HabboX ».</span></form></div>';
 
     echo '<div class="panel"><div class="ph"><h3>👥 Comptes</h3><form method="get" class="srch"><input type="hidden" name="p" value="users"><input name="q" list="dl_pseudos" autocomplete="off" value="' . h($q) . '" placeholder="🔍 Nom du joueur..."><button class="mini">OK</button></form></div>';
     $bans = []; foreach (db()->query("SELECT banned_value FROM users_bans WHERE ban_type='USER_ID'") as $b) $bans[(int)$b['banned_value']] = true;
@@ -3131,7 +3102,7 @@ function page_games(): void {
 
 function page_ranks(): void {
     page_title('Rangs & permissions', 'Ce que débloque chaque rang dans Kepler');
-    echo '<div class="warn">Kepler gère les rangs <b>1 à 6</b> (6 = Administrateur, le maximum). Il n\'existe pas de rang « HabboX » séparé dans cet émulateur.</div>';
+    echo '<div class="warn">Rangs <b>1 à 7</b> (5 = Super Hobba, 6 = Modérateur, 7 = Administrateur, le maximum — comme l\'onglet « Accès admin »). Il n\'existe pas de rang « HabboX » séparé dans cet émulateur.</div>';
     $fr = [];
     foreach (db()->query('SELECT DISTINCT min_rank,fuseright FROM rank_fuserights ORDER BY min_rank') as $r) $fr[(int)$r['min_rank']][] = $r['fuseright'];
     $counts = [];
@@ -3238,8 +3209,12 @@ function page_moderation(): void {
         <label>Durée (jours · 0 = définitif)<input type="number" name="days" value="0" style="width:110px"></label>
         <label style="flex:1">Motif<input name="message" value="Comportement inapproprié"></label><button>🚫 Bannir</button></form></div>';
     echo '<div class="panel"><div class="ph"><h3>Bannissements actifs</h3></div>';
-    $rows = db()->query('SELECT b.ban_type,b.banned_value,b.message,b.banned_until,u.username FROM users_bans b LEFT JOIN users u ON (b.ban_type=\'USER_ID\' AND u.id=b.banned_value) ORDER BY b.banned_until DESC')->fetchAll();
-    if (!$rows) echo '<div class="empty">Aucun bannissement 🎉</div>';
+    // Actifs = échéance encore dans le futur (banned_until en millisecondes). Les bans
+    // expirés ne sont plus listés ici comme « actifs ».
+    $nowMs = time() * 1000;
+    $st = db()->prepare('SELECT b.ban_type,b.banned_value,b.message,b.banned_until,u.username FROM users_bans b LEFT JOIN users u ON (b.ban_type=\'USER_ID\' AND u.id=b.banned_value) WHERE b.banned_until > ? ORDER BY b.banned_until DESC');
+    $st->execute([$nowMs]); $rows = $st->fetchAll();
+    if (!$rows) echo '<div class="empty">Aucun bannissement actif 🎉</div>';
     else { echo '<table class="clean"><tr><th>Type</th><th>Cible</th><th>Motif</th><th>Jusqu\'à</th><th></th></tr>';
         foreach ($rows as $b) { $until = (int)$b['banned_until'] >= BAN_PERMANENT ? '♾️ Définitif' : date('d/m/Y H:i', (int)($b['banned_until'] / 1000)); $cible = $b['ban_type'] === 'USER_ID' ? ('👤 ' . h($b['username'] ?? ('#' . $b['banned_value']))) : h($b['banned_value']);
             echo '<tr><td class="muted sm">' . h($b['ban_type']) . '</td><td>' . $cible . '</td><td class="muted">' . h($b['message']) . '</td><td class="sm">' . $until . '</td><td><form method="post" class="js" data-reload data-confirm="Lever ce bannissement ?"><input type="hidden" name="action" value="ban_remove">' . csrf_field() . '<input type="hidden" name="value" value="' . h($b['banned_value']) . '"><button class="mini ghost">Lever</button></form></td></tr>'; }
@@ -3285,8 +3260,8 @@ function page_moderation(): void {
 
     // --- Débloquer l'inventaire ---
     echo '<div class="panel"><div class="ph"><h3>🧹 Débloquer un inventaire</h3></div>';
-    echo '<p class="muted sm">Objet coincé dans la main (jukebox, etc.) impossible à poser/supprimer ? Vide la « main » du joueur. Il devra <b>se reconnecter</b> ensuite.</p>';
-    echo '<form method="post" class="js row" data-reload data-confirm="Vider les objets en main de ce joueur ?"><input type="hidden" name="action" value="clear_hand">' . csrf_field() . '<label style="flex:1">Nom du joueur<input name="username" list="dl_pseudos" autocomplete="off" required></label><button class="mini warn">🧹 Vider la main</button></form></div>';
+    echo '<p class="muted sm">⚠️ Attention : cette action <b>SUPPRIME TOUT l\'inventaire</b> du joueur (tous les objets non posés, pas seulement l\'objet coincé) et est <b>irréversible</b>. À n\'utiliser qu\'en dernier recours ; le joueur devra <b>se reconnecter</b> ensuite. <i>(Une suppression ciblée objet par objet est prévue — voir l\'inventaire du joueur.)</i></p>';
+    echo '<form method="post" class="js row" data-reload data-confirm="⚠️ SUPPRIMER TOUT l\'inventaire (tous les objets non posés) de ce joueur ? Irréversible."><input type="hidden" name="action" value="clear_hand">' . csrf_field() . '<label style="flex:1">Nom du joueur<input name="username" list="dl_pseudos" autocomplete="off" required></label><button class="mini warn">🧹 Vider TOUT l\'inventaire</button></form></div>';
 
     echo '<div class="panel"><div class="ph"><h3>💬 Alertes en jeu</h3></div><p class="muted">Les annonces aux joueurs connectés se font <b>en jeu</b> avec ton compte admin : tape <code>:alert Ton message</code> dans le chat, ou utilise l\'outil de modération intégré.</p></div>';
 }
