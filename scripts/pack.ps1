@@ -108,6 +108,30 @@ function Get-PackKepler {
     }
 }
 function Get-PackKeplerPids { @(Get-PackKepler | ForEach-Object { [int]$_.ProcessId }) }
+# Arrêt PROPRE de Kepler : envoie un vrai Ctrl+C (CTRL_C_EVENT) à SA console, ce qui
+# déclenche le shutdown hook dispose() de la JVM (sauvegarde items/chat/joueurs, puis
+# fermeture des sockets). Un java.exe en console N'A PAS de fenêtre : un taskkill SANS
+# /f ne lui parvient pas. On opère dans un process PowerShell ISOLÉ (sa propre console)
+# pour ne pas perturber la console de ce lanceur.
+function Request-KeplerShutdown([int]$kpid){
+    $code = @"
+`$ErrorActionPreference='SilentlyContinue'
+Add-Type -Namespace Kp -Name Con -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern bool AttachConsole(uint p);
+[DllImport("kernel32.dll")] public static extern bool FreeConsole();
+[DllImport("kernel32.dll")] public static extern bool SetConsoleCtrlHandler(System.IntPtr h, bool a);
+[DllImport("kernel32.dll")] public static extern bool GenerateConsoleCtrlEvent(uint e, uint g);
+'@
+[Kp.Con]::FreeConsole() | Out-Null
+if([Kp.Con]::AttachConsole($kpid)){
+  [Kp.Con]::SetConsoleCtrlHandler([System.IntPtr]::Zero,`$true) | Out-Null  # ce helper ignore le Ctrl+C
+  [Kp.Con]::GenerateConsoleCtrlEvent(0,0) | Out-Null                         # 0 = CTRL_C_EVENT
+  Start-Sleep -Milliseconds 500
+}
+"@
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
+    Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$enc -WindowStyle Hidden -Wait
+}
 
 # ============================================================================
 #  Disponibilité RÉELLE
@@ -317,14 +341,22 @@ function Stop-Pack {
             else { Say 'INFO' "Port $($Cfg.Ports.Minerva) occupé par un processus étranger : préservé." }
         } else { Say 'INFO' "Avatars (Minerva) déjà arrêtés." }
 
-        # 2) Kepler (pack, marqueur) : arrêt propre (shutdown hook via taskkill SANS /f).
+        # 2) Kepler (pack, marqueur) : arrêt PROPRE via Ctrl+C -> shutdown hook dispose()
+        #    (sauvegarde items/chat/joueurs). /f reste un DERNIER recours explicite.
         $kepler = @(Get-PackKepler)
         $keplerStopped = $true
         if($kepler.Count){
-            foreach($k in $kepler){ Say 'STOP' "Émulateur Kepler : demande d'arrêt propre (PID $($k.ProcessId))…"; & taskkill /PID $k.ProcessId *> $null }
+            # mémoriser les fenêtres cmd parentes (run.bat) pour les nettoyer après coup
+            $parents = @($kepler | ForEach-Object { [int]$_.ParentProcessId } | Where-Object { $_ -gt 0 } | Select-Object -Unique)
+            foreach($k in $kepler){ Say 'STOP' "Émulateur Kepler : arrêt propre (Ctrl+C -> sauvegarde, PID $($k.ProcessId))…"; Request-KeplerShutdown ([int]$k.ProcessId) }
             $sw=[Diagnostics.Stopwatch]::StartNew(); $gone=$false
             while($sw.Elapsed.TotalSeconds -lt $Cfg.StopTimeoutKepler){ if(-not (Get-PackKepler)){ $gone=$true; break }; Start-Sleep -Milliseconds 700 }
-            if($gone){ Say 'OK' "Kepler : arrêt demandé effectué. ⚠ Arrêt PROPRE À VALIDER : vérifie dans server.log que la sauvegarde a bien eu lieu." }
+            if($gone){
+                # fenêtres run.bat restées sur « Terminate batch job (Y/N)? » : Kepler a
+                # déjà sauvegardé et quitté, ces cmd ne sont plus que cosmétiques.
+                foreach($pp in $parents){ $pc = Get-Process -Id $pp -EA SilentlyContinue; if($pc -and $pc.ProcessName -eq 'cmd'){ & taskkill /F /PID $pp *> $null } }
+                Say 'OK' "Kepler : arrêt propre demandé (Ctrl+C). ⚠ Sauvegarde À CONSTATER dans server.log (« Shutting down server! » + sauvegardes items/chat)."
+            }
             else {
                 Say 'FAIL' "Kepler ne s'est pas arrêté en $($Cfg.StopTimeoutKepler)s."
                 $force = $false
