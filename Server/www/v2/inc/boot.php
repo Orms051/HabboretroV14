@@ -203,11 +203,14 @@ function ensure_home(): void {
         reporter_name VARCHAR(64) NOT NULL DEFAULT '',
         reason VARCHAR(40) NOT NULL DEFAULT '',
         detail VARCHAR(400) NOT NULL DEFAULT '',
+        snapshot VARCHAR(400) NOT NULL DEFAULT '',
         status VARCHAR(12) NOT NULL DEFAULT 'new',
         handled_by VARCHAR(64) NOT NULL DEFAULT '',
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         INDEX(status), INDEX(owner_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // Colonne snapshot ajoutée après coup (copie du contenu au moment du signalement)
+    try { if (!(int)db()->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='home_reports' AND COLUMN_NAME='snapshot'")->fetchColumn()) db()->exec("ALTER TABLE home_reports ADD COLUMN snapshot VARCHAR(400) NOT NULL DEFAULT ''"); } catch (Throwable $e) {}
 }
 function home_guestbook_count(int $uid): int {
     ensure_home();

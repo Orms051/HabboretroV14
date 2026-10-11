@@ -815,9 +815,9 @@ if ($p === 'home_report') {
     $tid  = (int)($_POST['tid'] ?? 0);
     ensure_home();
     // Résoudre owner + lien retour
-    $ownerId = 0; $ownerName = '';
+    $ownerId = 0; $ownerName = ''; $snapshot = '';
     if ($type === 'home') { try { $o = db()->prepare('SELECT id,username FROM users WHERE id=?'); $o->execute([$tid]); if ($r = $o->fetch()) { $ownerId = (int)$r['id']; $ownerName = (string)$r['username']; } } catch (Throwable $e) {} }
-    else { try { $o = db()->prepare('SELECT g.owner_id,usr.username FROM home_guestbook g JOIN users usr ON usr.id=g.owner_id WHERE g.id=?'); $o->execute([$tid]); if ($r = $o->fetch()) { $ownerId = (int)$r['owner_id']; $ownerName = (string)$r['username']; } } catch (Throwable $e) {} }
+    else { try { $o = db()->prepare('SELECT g.owner_id,usr.username,g.message FROM home_guestbook g JOIN users usr ON usr.id=g.owner_id WHERE g.id=?'); $o->execute([$tid]); if ($r = $o->fetch()) { $ownerId = (int)$r['owner_id']; $ownerName = (string)$r['username']; $snapshot = mb_substr((string)($r['message'] ?? ''), 0, 400); } } catch (Throwable $e) {} }
     $back = $ownerName !== '' ? '?p=home/' . rawurlencode($ownerName) : '?p=community';
     if (!$u) redirect($back . '&need=login');
     if (!csrf_ok()) redirect($back);
@@ -829,8 +829,8 @@ if ($p === 'home_report') {
         $c = db()->prepare('SELECT COUNT(*) FROM home_reports WHERE target_type=? AND target_id=? AND reporter_id=? AND created_at > (NOW() - INTERVAL 1 DAY)');
         $c->execute([$type, $tid, (int)$u['id']]);
         if ((int)$c->fetchColumn() === 0)
-            db()->prepare('INSERT INTO home_reports (target_type,target_id,owner_id,reporter_id,reporter_name,reason,detail) VALUES (?,?,?,?,?,?,?)')
-                ->execute([$type, $tid, $ownerId, (int)$u['id'], (string)$u['username'], $reason, $detail]);
+            db()->prepare('INSERT INTO home_reports (target_type,target_id,owner_id,reporter_id,reporter_name,reason,detail,snapshot) VALUES (?,?,?,?,?,?,?,?)')
+                ->execute([$type, $tid, $ownerId, (int)$u['id'], (string)$u['username'], $reason, $detail, $snapshot]);
     } catch (Throwable $e) {}
     redirect($back . '&done=reported');
 }
