@@ -1380,6 +1380,13 @@ function hm_view_reports(): void {
     echo '</div>';
     echo '<p class="sub" style="margin-top:12px">Pour sanctionner le compte (bannissement), ouvre la <a href="?p=user&id=' . $ownerId . '">fiche du propriétaire</a> → onglet Modération.</p>';
     echo '</div>';
+    // Notifier le propriétaire (aperçu éditable ; ne révèle jamais le signalant)
+    $tpl = 'Bonjour, suite à une vérification de modération concernant ta Habbo Home';
+    if ((string)($r['decision'] ?? '') !== '') $tpl .= ' : ' . (string)$r['decision'];
+    $tpl .= '. Pour toute question, tu peux contacter l\'assistance.';
+    echo '<div class="panel"><div class="ph"><h3>✉️ Prévenir le propriétaire</h3></div>';
+    echo '<p class="sub" style="margin:-6px 0 8px">Message lu par le joueur sur le site. Ne révèle jamais l\'identité du signalant. Relis l\'aperçu avant d\'envoyer.</p>';
+    echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="umsg_send"><input type="hidden" name="id" value="' . $ownerId . '"><input type="hidden" name="back" value="' . h($backUrl) . '"><label>Sujet<input name="subject" maxlength="100" value="Au sujet de ta Habbo Home"></label><label style="margin-top:6px">Message (aperçu éditable)<textarea name="body" rows="3" maxlength="2000" required>' . h($tpl) . '</textarea></label><button class="sm-btn primary" style="margin-top:8px">✉️ Envoyer au propriétaire</button></form></div>';
     echo '</div></div></div>'; // card + hmdetail + hmwrap
 }
 function hm_view_restrictions(): void {
