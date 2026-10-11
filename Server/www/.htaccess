@@ -22,18 +22,29 @@ Options -Indexes
     # IMPORTANT : on ne redirige que les requêtes RÉELLES vers /v2/ (THE_REQUEST),
     # jamais la sous-requête interne de DirectoryIndex (/ -> v2/index.php) : sinon
     # boucle de redirection entre / et /v2/index.php.
-    # POST -> 308 (préserve la méthode et le corps : pas de perte de données de
-    # formulaire) ; GET -> 301 (permanent, mis en cache).
+    # POST -> 308 (préserve méthode + corps) EN UN SEUL SAUT vers / (sinon
+    # /v2/index.php ferait 308 vers /index.php puis 301 vers /, perdant le POST).
+    # GET -> 301 (permanent, mis en cache).
+
+    # 1) POST sur /v2/ ou /v2/index.php -> / directement (308, un seul saut).
     RewriteCond %{THE_REQUEST} \s/+v2/ [NC]
     RewriteCond %{REQUEST_METHOD} =POST
-    RewriteRule ^v2/(.*)$ /$1 [R=308,L,QSA]
-
+    RewriteRule ^v2/?(index\.php)?$ / [R=308,L,QSA]
+    # 2) POST sur /v2/autre-chose -> /autre-chose (308).
+    RewriteCond %{THE_REQUEST} \s/+v2/ [NC]
+    RewriteCond %{REQUEST_METHOD} =POST
+    RewriteRule ^v2/(.+)$ /$1 [R=308,L,QSA]
+    # 3) GET /v2/ ou /v2/index.php -> / (301).
     RewriteCond %{THE_REQUEST} \s/+v2/ [NC]
     RewriteRule ^v2/?(index\.php)?$ / [R=301,L,QSA]
+    # 4) GET /v2/autre-chose -> /autre-chose (301).
     RewriteCond %{THE_REQUEST} \s/+v2/ [NC]
     RewriteRule ^v2/(.+)$ /$1 [R=301,L,QSA]
 
-    # Ancienne V1 : /index.php -> racine (V2). Uniquement sur requête réelle.
+    # Ancienne V1 : /index.php -> racine (V2). POST en 308, GET en 301.
+    RewriteCond %{THE_REQUEST} \s/+index\.php [NC]
+    RewriteCond %{REQUEST_METHOD} =POST
+    RewriteRule ^index\.php$ / [R=308,L,QSA]
     RewriteCond %{THE_REQUEST} \s/+index\.php [NC]
     RewriteRule ^index\.php$ / [R=301,L,QSA]
 
