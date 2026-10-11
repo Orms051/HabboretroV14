@@ -39,7 +39,7 @@ $Cfg = @{
     Ports       = @{ Db=3306; Web=80; Game=12321; Rcon=12309; Minerva=5123 }
     WebUrl      = 'http://localhost/'
     WebMarker   = "l'H"
-    StartTimeoutDb=45; StartTimeoutWeb=15; StartTimeoutGame=30; StartTimeoutMinerva=25
+    StartTimeoutDb=45; StartTimeoutWeb=15; StartTimeoutGame=120; StartTimeoutMinerva=25
     StopTimeoutKepler=25; StopTimeoutDb=25
 }
 
