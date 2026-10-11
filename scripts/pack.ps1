@@ -259,7 +259,15 @@ function Start-Pack {
             Say 'RUN' "Émulateur Kepler…"
             Start-Process 'cmd.exe' -ArgumentList '/c','run.bat' -WorkingDirectory $Cfg.Www -WindowStyle Minimized
             if(Wait-KeplerReady $Cfg.StartTimeoutGame){ Say 'OK' "Kepler démarré (jeu sur $($Cfg.Ports.Game))."; $state.kepler='prêt' }
-            else { Say 'FAIL' "Kepler n'écoute pas sur $($Cfg.Ports.Game) après $($Cfg.StartTimeoutGame)s (voir fenêtre Émulateur / server.log)."; $state.kepler='échec'; Show-Summary $state; return 1 }
+            else {
+                # Distinguer les deux échecs : rien n'écoute (Java a quitté au lancement)
+                # vs un AUTRE processus écoute sans être notre Kepler identifié.
+                $o = Get-PortOwner $Cfg.Ports.Game
+                if(-not $o){ Say 'FAIL' "Kepler n'a pas démarré : rien n'écoute sur $($Cfg.Ports.Game) après $($Cfg.StartTimeoutGame)s. Java a probablement quitté au lancement — regarde la fenêtre « Émulateur » (dernières lignes) et server.log." }
+                elseif(-not ((Get-PackKeplerPids) -contains [int]$o.Pid)){ Say 'FAIL' "Le port $($Cfg.Ports.Game) est tenu par un processus NON reconnu comme le Kepler du pack : $($o.Name) (PID $($o.Pid)) — $($o.Path). Vérifie-le avant d'agir." }
+                else { Say 'FAIL' "Kepler (pack) tourne mais n'écoute pas sur $($Cfg.Ports.Game) après $($Cfg.StartTimeoutGame)s." }
+                $state.kepler='échec'; Show-Summary $state; return 1
+            }
         }
 
         # 4) Minerva (FACULTATIF) — ne bloque jamais le reste
