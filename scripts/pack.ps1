@@ -83,7 +83,13 @@ function Get-PortOwner([int]$port){
     $nm = (Get-Process -Id $c.OwningProcess -EA SilentlyContinue).ProcessName
     [pscustomobject]@{ Pid=$c.OwningProcess; Name=$nm; Path=$path }
 }
-function Under([string]$path,[string]$dir){ return ($path -and $dir -and ($path.ToLower().StartsWith($dir.ToLower()))) }
+function Norm([string]$p){ if(-not $p){ return '' }; try { return ([IO.Path]::GetFullPath($p)).TrimEnd('\').ToLower() } catch { return $p.TrimEnd('\').ToLower() } }
+function Under([string]$path,[string]$dir){
+    # Frontière de dossier : évite que "…\HabboretroV14-dev" soit vu sous "…\HabboretroV14".
+    if(-not $path -or -not $dir){ return $false }
+    $p = Norm $path; $d = Norm $dir
+    return ($p -eq $d -or $p.StartsWith($d + '\'))
+}
 function Resolve-ApacheDir {
     if($Cfg.ApacheDir -and (Test-Path (Join-Path $Cfg.ApacheDir 'bin\httpd.exe'))){ return $Cfg.ApacheDir }
     $dirs = @(Get-ChildItem $Cfg.ApacheGlob -Directory -EA SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName 'bin\httpd.exe') })
@@ -91,7 +97,17 @@ function Resolve-ApacheDir {
     return $null
 }
 function Get-PackMysqld { Get-CimInstance Win32_Process -Filter "Name='mysqld.exe'" -EA SilentlyContinue | Where-Object { Under $_.ExecutablePath $Cfg.MariaDir } }
-function Get-PackKepler { Get-CimInstance Win32_Process -Filter "Name='java.exe'" -EA SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine -like '*habbo.pack*' -and $_.CommandLine -like "*$($Cfg.Www)*" } }
+# Kepler du pack = java dont le marqueur -Dhabbo.pack pointe EXACTEMENT sur notre Server\www.
+function Get-PackKepler {
+    $want = Norm $Cfg.Www
+    Get-CimInstance Win32_Process -Filter "Name='java.exe'" -EA SilentlyContinue | Where-Object {
+        if(-not $_.CommandLine){ return $false }
+        $m = [regex]::Match($_.CommandLine, '-Dhabbo\.pack=("?)([^"]+?)\1(\s|$)')
+        if(-not $m.Success){ return $false }
+        (Norm ($m.Groups[2].Value)) -eq $want
+    }
+}
+function Get-PackKeplerPids { @(Get-PackKepler | ForEach-Object { [int]$_.ProcessId }) }
 
 # ============================================================================
 #  Disponibilité RÉELLE
@@ -115,7 +131,12 @@ function Test-WebReady {
     try{ $r = Invoke-WebRequest -Uri $Cfg.WebUrl -UseBasicParsing -TimeoutSec 4; return ($r.StatusCode -eq 200 -and $r.Content -like "*$($Cfg.WebMarker)*") }catch{ return $false }
 }
 function Wait-WebReady([int]$t){ $sw=[Diagnostics.Stopwatch]::StartNew(); while($sw.Elapsed.TotalSeconds -lt $t){ if(Test-WebReady){return $true}; Start-Sleep -Milliseconds 1000 }; return $false }
-function Test-KeplerReady { [bool](Get-NetTCPConnection -LocalPort $Cfg.Ports.Game -State Listen -EA SilentlyContinue) -and ((Get-PackKepler) -ne $null) }
+function Test-KeplerReady {
+    # Le PID qui ÉCOUTE le port du jeu doit être celui de NOTRE Kepler identifié.
+    $c = Get-NetTCPConnection -LocalPort $Cfg.Ports.Game -State Listen -EA SilentlyContinue | Select-Object -First 1
+    if(-not $c){ return $false }
+    return ((Get-PackKeplerPids) -contains [int]$c.OwningProcess)
+}
 function Wait-KeplerReady([int]$t){ $sw=[Diagnostics.Stopwatch]::StartNew(); while($sw.Elapsed.TotalSeconds -lt $t){ if(Test-KeplerReady){return $true}; Start-Sleep -Milliseconds 800 }; return $false }
 function Test-MinervaReady {  # fonctionnel : rend une image PNG valide (un port ouvert ne suffit pas)
     $u = "http://localhost:$($Cfg.Ports.Minerva)/habbo-imaging/avatarimage?figure=hr-100-1-1.hd-180-1.ch-210-1.lg-270-1.sh-290-1&size=b"
@@ -150,17 +171,27 @@ function Test-MinervaInstalled {
 #  Une fusion Git ne met PAS à jour les copies ignorées : on les synchronise ici.
 # ============================================================================
 function Sync-MinervaScripts {
-    if(-not (Test-Path $Cfg.MinervaSrc)){ return }
-    if(-not (Test-Path $Cfg.MinervaDir)){ return }  # pas installé : rien à synchroniser
+    # Les scripts versionnés (MinervaSrc) sont copiés vers tools\minerva-bin (ignoré).
+    # Exécuté à CHAQUE démarrage, que Minerva tourne ou non : on ne redémarre PAS le
+    # moteur actif ; la nouvelle version s'applique au prochain redémarrage de Minerva.
+    if(-not (Test-Path $Cfg.MinervaSrc) -or -not (Test-Path $Cfg.MinervaDir)){ return }
     foreach($n in @('start-minerva.ps1','stop-minerva.ps1')){
         $src = Join-Path $Cfg.MinervaSrc $n; $dst = Join-Path $Cfg.MinervaDir $n
         if(-not (Test-Path $src)){ continue }
         $diff = $true
         if(Test-Path $dst){ try { $diff = ((Get-FileHash $src).Hash -ne (Get-FileHash $dst).Hash) } catch { $diff = $true } }
-        if($diff){
-            if(Test-Path $dst){ Copy-Item $dst "$dst.bak" -Force -EA SilentlyContinue }   # sauvegarde l'ancienne copie
-            Copy-Item $src $dst -Force -EA SilentlyContinue
-            Log "Script Minerva mis à jour : $n (ancienne copie -> $n.bak)"
+        if(-not $diff){ continue }
+        try {
+            if(Test-Path $dst){ Copy-Item $dst "$dst.bak" -Force -ErrorAction Stop }   # sauvegarde l'ancienne copie
+            Copy-Item $src $dst -Force -ErrorAction Stop
+            # On vérifie RÉELLEMENT que la copie est conforme avant d'annoncer le succès.
+            if((Get-FileHash $src).Hash -eq (Get-FileHash $dst).Hash){
+                Say 'INFO' "Script Minerva mis à jour : $n (appliqué au prochain redémarrage de Minerva ; ancienne copie -> $n.bak)."
+            } else {
+                Say 'WARN' "Mise à jour du script Minerva $n NON conforme (copie différente de la source)."; Log "ECHEC sync $n (hash different apres copie)"
+            }
+        } catch {
+            Say 'WARN' "Impossible de mettre à jour le script Minerva $n : $($_.Exception.Message)"; Log "ECHEC sync $n : $($_.Exception.Message)"
         }
     }
 }
@@ -190,6 +221,7 @@ function Start-Pack {
         $apacheDir = Resolve-ApacheDir
         $minervaOk = Test-MinervaInstalled
         if(-not $minervaOk){ Say 'WARN' "Minerva (avatars) non installé : démarrage en MODE SECOURS. Voir Server\www\avatar\README.md." }
+        else { Sync-MinervaScripts }   # met à jour les scripts, même si Minerva tourne déjà (pas de redémarrage)
 
         # 1) MariaDB (pack)
         if(Get-PackMysqld){
@@ -237,7 +269,6 @@ function Start-Pack {
             $o = Get-PortOwner $Cfg.Ports.Minerva
             if($o){ Say 'WARN' "Port $($Cfg.Ports.Minerva) occupé mais Minerva ne rend pas d'image valide → MODE SECOURS (je ne tue rien)."; $state.minerva='secours' }
             else {
-                Sync-MinervaScripts
                 Say 'RUN' "Avatars (Minerva)…"
                 $sup = Join-Path $Cfg.MinervaDir 'start-minerva.ps1'
                 if(Test-Path $sup){ Start-Process 'powershell' -ArgumentList '-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',$sup -WindowStyle Hidden }
@@ -264,7 +295,7 @@ function Stop-Pack {
     $mtx = Lock-Pack
     if(-not $mtx){ Say 'FAIL' "Un autre lanceur (START/STOP) est déjà en cours pour ce pack. Réessaie dans un instant."; return 1 }
     try {
-        $fail = @()
+        $fail = @()   # composants du PACK restés actifs (processus étrangers préservés exclus)
 
         # 1) Minerva : couper la supervision AVANT le process
         if((Get-PortOwner $Cfg.Ports.Minerva) -or (Test-Path (Join-Path $Cfg.MinervaDir 'minerva.supervisor.pid'))){
@@ -272,31 +303,51 @@ function Stop-Pack {
             $sm = Join-Path $Cfg.MinervaDir 'stop-minerva.ps1'
             if(Test-Path $sm){ & powershell -NoProfile -ExecutionPolicy Bypass -File $sm *> $null }
             Start-Sleep -Milliseconds 400
-            if(Get-PortOwner $Cfg.Ports.Minerva){ Say 'WARN' "Minerva répond encore sur $($Cfg.Ports.Minerva) (non bloquant)." } else { Say 'OK' "Avatars arrêtés." }
+            $mo = Get-PortOwner $Cfg.Ports.Minerva
+            if(-not $mo){ Say 'OK' "Avatars arrêtés." }
+            elseif(Under $mo.Path $Cfg.MinervaDir){ Say 'FAIL' "Minerva (pack) répond encore sur $($Cfg.Ports.Minerva)."; $fail += 'Minerva' }
+            else { Say 'INFO' "Port $($Cfg.Ports.Minerva) occupé par un processus étranger : préservé." }
         } else { Say 'INFO' "Avatars (Minerva) déjà arrêtés." }
 
-        # 2) Kepler : arrêt propre (shutdown hook via taskkill SANS /f), puis attente.
+        # 2) Kepler (pack, marqueur) : arrêt propre (shutdown hook via taskkill SANS /f).
         $kepler = @(Get-PackKepler)
         $keplerStopped = $true
         if($kepler.Count){
             foreach($k in $kepler){ Say 'STOP' "Émulateur Kepler : demande d'arrêt propre (PID $($k.ProcessId))…"; & taskkill /PID $k.ProcessId *> $null }
             $sw=[Diagnostics.Stopwatch]::StartNew(); $gone=$false
             while($sw.Elapsed.TotalSeconds -lt $Cfg.StopTimeoutKepler){ if(-not (Get-PackKepler)){ $gone=$true; break }; Start-Sleep -Milliseconds 700 }
-            if($gone){ Say 'OK' "Kepler arrêté (vérifie la sauvegarde dans server.log si besoin)." }
+            if($gone){ Say 'OK' "Kepler : arrêt demandé effectué. ⚠ Arrêt PROPRE À VALIDER : vérifie dans server.log que la sauvegarde a bien eu lieu." }
             else {
                 Say 'FAIL' "Kepler ne s'est pas arrêté en $($Cfg.StopTimeoutKepler)s."
                 $force = $false
                 if([Environment]::UserInteractive){
                     try { $ans = Read-Host "   Forcer l'arrêt CIBLÉ de Kepler (risque de perte des données non sauvegardées) ? (o/N)"; $force = ($ans -match '^(o|oui|y|yes)$') } catch { $force = $false }
                 }
-                if($force){ foreach($k in (Get-PackKepler)){ & taskkill /F /PID $k.ProcessId *> $null; Say 'STOP' "Kepler forcé (PID $($k.ProcessId))." }; Start-Sleep -Milliseconds 500; if(Get-PackKepler){ $keplerStopped=$false; $fail += 'Kepler' } }
-                else { Say 'WARN' "Kepler laissé actif (aucun arrêt forcé)."; $keplerStopped=$false; $fail += 'Kepler' }
+                if($force){ foreach($k in (Get-PackKepler)){ & taskkill /F /PID $k.ProcessId *> $null; Say 'STOP' "Kepler forcé (PID $($k.ProcessId))." }; Start-Sleep -Milliseconds 500 }
+                else { Say 'WARN' "Kepler laissé actif (aucun arrêt forcé)." }
+                if(Get-PackKepler){ $keplerStopped=$false; $fail += 'Kepler' }
             }
-        } else { Say 'INFO' "Émulateur Kepler (pack) déjà arrêté." }
+        } else { Say 'INFO' "Aucun Kepler du pack (marqueur) en cours." }
 
-        # 3) MariaDB (pack) : UNIQUEMENT si Kepler est bien arrêté, et si le 3306 est à NOUS.
-        if(-not $keplerStopped){
-            Say 'WARN' "MariaDB NON arrêtée : Kepler est encore actif (on ne coupe pas la base sous lui)."
+        # 2b) INCERTITUDE : un processus NON identifié écoute le port du jeu (ex. ancien
+        #     Kepler sans marqueur, susceptible d'utiliser NOTRE base). On ne le tue pas,
+        #     on signale, et on NE COUPE PAS MariaDB.
+        $gameUncertain = $false
+        $go = Get-PortOwner $Cfg.Ports.Game
+        if($go -and (-not ((Get-PackKeplerPids) -contains [int]$go.Pid))){
+            $gameUncertain = $true
+            Say 'WARN' "Port du jeu ($($Cfg.Ports.Game)) occupé par un processus NON identifié : $($go.Name) (PID $($go.Pid))."
+            Write-Host "   -> Peut-être un ancien Kepler (lancé sans marqueur) utilisant la base. Je ne le tue pas et je GARDE MariaDB." -ForegroundColor Yellow
+            Write-Host "   -> Pour l'arrêter proprement (base gardée jusqu'à sa fin) :" -ForegroundColor Yellow
+            Write-Host ("        taskkill /PID {0}      (sans /f : déclenche la sauvegarde)" -f $go.Pid) -ForegroundColor Gray
+            Write-Host "        attends la fin de ce processus, puis relance STOP." -ForegroundColor Gray
+            $fail += 'Kepler (non identifié)'
+        }
+
+        # 3) MariaDB (pack) : seulement si Kepler est bien arrêté ET sans incertitude,
+        #    et uniquement si le port 3306 est tenu par NOTRE MariaDB.
+        if((-not $keplerStopped) -or $gameUncertain){
+            Say 'WARN' "MariaDB NON arrêtée : Kepler encore actif ou incertain (on ne coupe pas la base sous lui)."
         } elseif(Get-PackMysqld){
             if(Test-DbPackOnPort){
                 Say 'STOP' "Base MariaDB (pack) : arrêt propre…"
@@ -306,7 +357,8 @@ function Stop-Pack {
                 while($sw.Elapsed.TotalSeconds -lt $Cfg.StopTimeoutDb){ if(-not (Get-PackMysqld)){ $gone=$true; break }; Start-Sleep -Milliseconds 700 }
                 if($gone){ Say 'OK' "Base arrêtée proprement." } else { Say 'FAIL' "MariaDB (pack) ne s'est pas arrêtée en $($Cfg.StopTimeoutDb)s (non forcée)."; $fail += 'MariaDB' }
             } else {
-                Say 'WARN' "Le port $($Cfg.Ports.Db) n'est pas tenu par NOTRE MariaDB : je ne lance pas mysqladmin shutdown."
+                Say 'FAIL' "Notre MariaDB (pack) tourne mais pas sur le port $($Cfg.Ports.Db) : arrêt non tenté — composant du pack encore actif."
+                $fail += 'MariaDB'
             }
         } else { Say 'INFO' "Base MariaDB (pack) déjà arrêtée." }
 
@@ -318,7 +370,7 @@ function Stop-Pack {
             Write-Host "Rétro arrêté. (Le MySQL de Laragon reste disponible pour tes autres projets.)" -ForegroundColor Green
             Log 'ARRET terminé (complet)'; return 0
         } else {
-            Write-Host ("ARRÊT INCOMPLET — composant(s) encore actif(s) : {0}." -f ($fail -join ', ')) -ForegroundColor Red
+            Write-Host ("ARRÊT INCOMPLET — à régler : {0}." -f ($fail -join ', ')) -ForegroundColor Red
             Write-Host ("Journal : {0}\pack.log" -f $Cfg.LogDir) -ForegroundColor DarkGray
             Log ("ARRET incomplet : " + ($fail -join ', ')); return 1
         }

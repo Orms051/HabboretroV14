@@ -87,11 +87,27 @@ dans `Server/www/run.bat`) tenant à CE dossier : le lanceur ne réutilisera ni
 n'arrêtera **jamais** un autre Kepler.
 
 **Transition (une seule fois)** : un Kepler déjà lancé par l'**ancien** `run.bat`
-n'a pas ce marqueur. Après la mise à jour, le nouveau lanceur ne le reconnaîtra
-pas (il signalera un conflit de port, sans le tuer) et le nouveau STOP ne
-l'arrêtera pas. **Arrête ce Kepler une fois manuellement** (ancien STOP, ou la
-fenêtre Émulateur), puis redémarre via le nouveau `START` : Kepler portera alors
-le marqueur et sera géré normalement.
+n'a pas ce marqueur. Après la mise à jour :
+- au **START**, il est signalé comme **conflit** de port (sans être tué) ;
+- au **STOP**, il est signalé comme **processus non identifié sur le port du jeu**,
+  **MariaDB est conservée** (il peut encore utiliser la base), et l'arrêt est
+  marqué **incomplet** — il n'est pas tué.
+
+**N'utilise pas l'ancien STOP** (il force des arrêts et coupe *tous* les
+`httpd.exe` d'Apache, partagé). Arrête l'ancien Kepler de façon **ciblée**, en
+gardant la base active jusqu'à sa fin :
+
+```bat
+REM 1) Trouver le PID qui écoute le port du jeu (12321) :
+powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort 12321 -State Listen).OwningProcess"
+REM 2) Demander son arrêt PROPRE (sans /f : déclenche la sauvegarde JVM) :
+taskkill /PID <PID>
+REM 3) Attendre sa disparition (vérifier la sauvegarde dans Server\www\server.log),
+REM    la base reste active pendant ce temps.
+```
+
+Puis redémarre via le nouveau `START` : Kepler portera le marqueur et sera géré
+normalement (reconnu au START comme au STOP).
 
 ## Verrou anti-double-lancement
 
