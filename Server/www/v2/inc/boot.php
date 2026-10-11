@@ -165,8 +165,11 @@ function ensure_home(): void {
         published TINYINT NOT NULL DEFAULT 1,
         hidden TINYINT NOT NULL DEFAULT 0,
         edit_locked TINYINT NOT NULL DEFAULT 0,
+        hidden_until DATETIME NULL,
+        locked_until DATETIME NULL,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try { if (!(int)db()->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='home_pages' AND COLUMN_NAME='hidden_until'")->fetchColumn()) db()->exec("ALTER TABLE home_pages ADD COLUMN hidden_until DATETIME NULL, ADD COLUMN locked_until DATETIME NULL"); } catch (Throwable $e) {}
     db()->exec("CREATE TABLE IF NOT EXISTS home_items (
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT NOT NULL,
@@ -240,6 +243,13 @@ function home_for_user(int $uid): array {
         catch (Throwable $e) {}
         $st->execute([$uid]); $h = $st->fetch() ?: ['user_id' => $uid, 'background' => '', 'published' => 1, 'hidden' => 0, 'edit_locked' => 0];
     }
+    // Expiration PARESSEUSE des restrictions temporaires (sans CRON) : si la date est
+    // dépassée, on lève la restriction au premier accès à la Home.
+    try {
+        $now = date('Y-m-d H:i:s');
+        if ((int)($h['hidden'] ?? 0) === 1 && !empty($h['hidden_until']) && $h['hidden_until'] <= $now) { db()->prepare('UPDATE home_pages SET hidden=0, hidden_until=NULL WHERE user_id=?')->execute([$uid]); $h['hidden'] = 0; $h['hidden_until'] = null; }
+        if ((int)($h['edit_locked'] ?? 0) === 1 && !empty($h['locked_until']) && $h['locked_until'] <= $now) { db()->prepare('UPDATE home_pages SET edit_locked=0, locked_until=NULL WHERE user_id=?')->execute([$uid]); $h['edit_locked'] = 0; $h['locked_until'] = null; }
+    } catch (Throwable $e) {}
     return $h;
 }
 function home_items(int $uid): array {
