@@ -4427,6 +4427,8 @@ function toggleGrp(btn){var g=btn.parentNode;g.classList.toggle('open');try{var 
 (function(){try{var o=JSON.parse(localStorage.getItem('r14nav')||'{}');var l=document.querySelectorAll('.navgrp');for(var i=0;i<l.length;i++){var g=l[i];if(g.getAttribute('data-cur'))continue;var k=g.getAttribute('data-g');if(k in o){if(o[k])g.classList.add('open');else g.classList.remove('open');}}}catch(e){}})();
 function toggleSidebar(){var c=document.body.classList.toggle('sb-collapsed');try{localStorage.setItem('r14sb',c?'1':'0');}catch(e){}}
 (function(){try{if(localStorage.getItem('r14sb')==='1')document.body.classList.add('sb-collapsed');}catch(e){}})();
+/* Mémorise la position de défilement du menu latéral (reste au même endroit après navigation) */
+(function(){var n=document.querySelector('.side nav');if(!n)return;try{var y=sessionStorage.getItem('r14navscroll');if(y)n.scrollTop=parseInt(y,10)||0;}catch(e){}n.addEventListener('scroll',function(){try{sessionStorage.setItem('r14navscroll',String(n.scrollTop));}catch(e){}});})();
 if(window.__flash)toast(window.__flash,true);
 /* Avertissement si un formulaire a des changements non enregistrés (exclut recherche/filtres) */
 var __dirty=false;
