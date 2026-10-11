@@ -34,12 +34,22 @@ nom ou un port ouvert. Double-cliquer deux fois ne crée pas de doublon.
 
 1. **Minerva** : la supervision est désactivée **avant** d'arrêter le service
    (pas de relance intempestive).
-2. **Kepler** : arrêt **propre** (déclenche la sauvegarde via le *shutdown hook*
-   de la JVM), puis attente de sa fin. Arrêt forcé = **dernier recours explicite**
-   seulement s'il refuse de s'arrêter dans le délai.
-3. **MariaDB** (pack) : arrêt propre (`mysqladmin shutdown`), **après** Kepler.
-4. **Apache** : **laissé en marche** (service partagé Laragon, utilisé par
-   d'autres projets). Jamais de `taskkill` global sur `httpd.exe` ou `java.exe`.
+2. **Kepler** : demande d'arrêt **propre** (`taskkill` **sans** `/f`, qui déclenche
+   le *shutdown hook* de la JVM), puis attente de sa fin.
+   - **Pas d'arrêt forcé automatique.** S'il refuse de s'arrêter dans le délai, le
+     lanceur **demande explicitement** s'il faut forcer l'arrêt ciblé de ce PID ;
+     sinon le processus est **laissé actif**.
+   - ⚠️ Vérifie la **sauvegarde** dans `server.log` pour confirmer que l'arrêt
+     propre a bien eu lieu (le *shutdown hook* existe, mais il faut le constater
+     sur ta machine).
+3. **MariaDB** (pack) : arrêt propre (`mysqladmin shutdown`), **après** Kepler, et
+   **seulement** si le port 3306 est bien tenu par NOTRE MariaDB. **Si Kepler est
+   encore actif, la base n'est PAS arrêtée** (on ne coupe pas la base sous lui).
+4. **Apache** : **laissé en marche** (service partagé Laragon). Jamais de
+   `taskkill` global sur `httpd.exe` ou `java.exe`.
+
+Si un composant n'a pas pu être arrêté, le lanceur l'affiche clairement et se
+termine en **échec** (pas de faux « Rétro arrêté »).
 
 ## Fenêtre Minerva
 
@@ -69,3 +79,31 @@ seule instance**. Un **arrêt volontaire** (via STOP) **désactive** la relance.
 
 En cas d'erreur, le lanceur affiche une explication courte **et** le chemin du
 journal — il ne masque pas les erreurs derrière un faux « succès ».
+
+## Identité de Kepler & première mise à jour (important)
+
+Kepler est reconnu par un **marqueur de lancement** (`-Dhabbo.pack="…"` ajouté
+dans `Server/www/run.bat`) tenant à CE dossier : le lanceur ne réutilisera ni
+n'arrêtera **jamais** un autre Kepler.
+
+**Transition (une seule fois)** : un Kepler déjà lancé par l'**ancien** `run.bat`
+n'a pas ce marqueur. Après la mise à jour, le nouveau lanceur ne le reconnaîtra
+pas (il signalera un conflit de port, sans le tuer) et le nouveau STOP ne
+l'arrêtera pas. **Arrête ce Kepler une fois manuellement** (ancien STOP, ou la
+fenêtre Émulateur), puis redémarre via le nouveau `START` : Kepler portera alors
+le marqueur et sera géré normalement.
+
+## Verrou anti-double-lancement
+
+Un **verrou par installation** (mutex nommé) entoure START et STOP : si tu
+double-cliques deux fois, le second affiche « un autre lanceur est déjà en
+cours ». Le superviseur Minerva a aussi son propre verrou.
+
+## Scripts Minerva : livraison reproductible
+
+Les scripts du superviseur sont **versionnés** dans
+`Server/www/avatar/minerva-scripts/`, mais exécutés depuis `tools/minerva-bin/`
+(non versionné). Au démarrage, le lanceur **synchronise** automatiquement les
+copies (versionné → `tools/minerva-bin/`) en **sauvegardant** l'ancienne
+(`*.ps1.bak`) et **sans toucher** au binaire, au runtime ni aux logs. Une simple
+fusion Git ne suffit donc pas : c'est le `START` qui met les copies à jour.

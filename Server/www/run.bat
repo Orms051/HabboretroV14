@@ -7,6 +7,8 @@ set CLASSPATH=kepler.jar;lib\HikariCP-3.4.1.jar;lib\mariadb-java-client-2.3.0.ja
 REM Kepler est compile pour Java 17 -> on force un JDK compatible (Java 25 installe).
 set "JAVA_BIN=C:\Program Files\Java\jdk-25.0.2\bin\java.exe"
 if not exist "%JAVA_BIN%" set "JAVA_BIN=java"
-"%JAVA_BIN%" -classpath "%CLASSPATH%" org.alexdev.kepler.Kepler %*
+REM Marqueur d'identite : permet au lanceur de reconnaitre NOTRE Kepler (ce dossier)
+REM et de ne jamais reutiliser/arreter un autre Kepler. %~dp0 = ...\Server\www\
+"%JAVA_BIN%" -Dhabbo.pack="%~dp0" -classpath "%CLASSPATH%" org.alexdev.kepler.Kepler %*
 
 pause
