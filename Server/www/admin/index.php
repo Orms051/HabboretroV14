@@ -2875,6 +2875,7 @@ function page_user(): void {
     echo '<div class="uptabs" id="uptabs"><div class="utabbar">'
        . '<button type="button" data-t="ut-compte" class="on">👤 Compte</button>'
        . '<button type="button" data-t="ut-home">🏠 Habbo Home</button>'
+       . '<button type="button" data-t="ut-inv">📦 Inventaire</button>'
        . '<button type="button" data-t="ut-appts">🏠 Appartements</button>'
        . '<button type="button" data-t="ut-badges">📛 Badges</button>'
        . '<button type="button" data-t="ut-msg">✉️ Messages &amp; notes</button>'
@@ -2910,6 +2911,29 @@ function page_user(): void {
        . '<button type="button" class="mini ghost" onclick="utCopy(\'' . h($homeUrl) . '\')">📋 Copier le lien public</button>'
        . '<a class="mini ghost" href="?p=homemod">🛡️ Modération des Homes</a></div>';
     echo '<p class="muted sm">Le <b>statut</b> (publiée / masquée / édition bloquée), les <b>signalements</b> en attente, le <b>livre d\'or</b> et les actions de modération (masquer / rendre visible / bloquer — avec motif et permissions) sont gérés dans <a href="?p=homemod">Modération des Homes</a> : on ne duplique pas l\'éditeur ici. ⚠️ Un message du livre d\'or publié par <b>un autre joueur</b> n\'est pas une faute du propriétaire.</p>';
+    echo '</div></section>';
+
+    // ===== Onglet Inventaire (consultation + filtre ; suppression ciblée = étape suivante sur base de test) =====
+    echo '<section class="utab" id="ut-inv"><div class="panel"><div class="ph"><h3>📦 Inventaire (objets en main)</h3></div>';
+    try {
+        $inv = db()->prepare('SELECT i.id,i.definition_id,i.custom_data,i.created_at,d.name,d.sprite FROM items i LEFT JOIN items_definitions d ON d.id=i.definition_id WHERE i.user_id=? AND i.room_id=0 ORDER BY i.id DESC');
+        $inv->execute([$id]); $invRows = $inv->fetchAll();
+        $placed = (int)db()->query('SELECT COUNT(*) FROM items WHERE user_id=' . (int)$id . ' AND room_id<>0')->fetchColumn();
+        $invq = trim((string)($_GET['invq'] ?? ''));
+        echo '<p class="muted sm">Objets <b>non posés</b> (en main) : <b>' . count($invRows) . '</b> · objets <b>posés</b> en salle : <b>' . $placed . '</b>.</p>';
+        echo '<form method="get" class="srch" style="margin:6px 0"><input type="hidden" name="p" value="user"><input type="hidden" name="id" value="' . $id . '"><input name="invq" value="' . h($invq) . '" placeholder="🔍 Filtrer par nom ou sprite…"><button class="mini">OK</button></form>';
+        if (!$invRows) echo '<div class="empty">Aucun objet en main.</div>';
+        else {
+            echo '<table class="clean"><tr><th>#</th><th>Objet</th><th>Sprite</th><th>Déf.</th><th>Données</th><th>Reçu</th></tr>';
+            foreach ($invRows as $it) {
+                $nm = (string)($it['name'] ?? ''); $sp = (string)($it['sprite'] ?? '');
+                if ($invq !== '' && stripos($nm . ' ' . $sp . ' ' . $it['id'], $invq) === false) continue;
+                echo '<tr><td class="muted">' . (int)$it['id'] . '</td><td><b>' . h($nm !== '' ? $nm : '(sans nom)') . '</b></td><td class="sm muted">' . h($sp) . '</td><td class="sm muted">' . (int)$it['definition_id'] . '</td><td class="sm muted">' . h(mb_strimwidth((string)($it['custom_data'] ?? ''), 0, 30, '…')) . '</td><td class="sm muted">' . h(date('d/m/Y', strtotime((string)$it['created_at']))) . '</td></tr>';
+            }
+            echo '</table>';
+        }
+        echo '<p class="muted sm" style="margin-top:10px">🔧 <b>Suppression ciblée d\'un objet</b> (au lieu de « Vider TOUT ») : étape suivante — testée d\'abord sur une <b>base de test distincte</b>, sans toucher à l\'ému en fonctionnement.</p>';
+    } catch (Throwable $e) { echo '<div class="empty">Inventaire indisponible.</div>'; }
     echo '</div></section>';
 
     // ===== Onglet Badges =====
