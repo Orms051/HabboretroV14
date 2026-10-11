@@ -2845,28 +2845,48 @@ function page_user(): void {
     $rb = []; foreach (db()->query('SELECT badge FROM rank_badges WHERE rank=' . (int)$u['rank']) as $r) $rb[] = $r['badge'];
     $ob = []; $obs = db()->prepare('SELECT badge FROM users_badges WHERE user_id=?'); $obs->execute([$id]); foreach ($obs as $r) $ob[] = $r['badge'];
 
+    $uname = (string)$u['username']; $rankSelf = (int)($_SESSION['admin']['rank'] ?? 0);
+    $homeUrl = '/v2/?p=home/' . rawurlencode($uname);
     echo '<div style="margin-bottom:10px"><a class="mini ghost lnkbtn" href="?p=users">← Retour aux joueurs</a></div>';
-    page_title('👤 ' . $u['username'], 'Fiche complète du joueur · ID ' . $id);
-    echo '<div style="margin:-10px 0 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
-       . '<img src="/avatar.php?user=' . h(rawurlencode((string)$u['username'])) . '&size=b&v=2" alt="Avatar de ' . h((string)$u['username']) . '" width="64" height="110" loading="lazy" style="image-rendering:pixelated;image-rendering:crisp-edges;vertical-align:bottom;background:#f3eecf;border:1px solid #d8cfa6;border-radius:4px">'
-       . rank_badge((int)$u['rank']) . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">Compte actif</span>');
-    if ((int)($_SESSION['admin']['rank'] ?? 0) >= 7) echo '<form method="post" action="?p=user&id=' . $id . '" target="_blank" style="margin-left:auto" onsubmit="return confirm(\'Ouvrir le jeu connecté en tant que ' . h(addslashes($u['username'])) . ' ?\')">' . csrf_field() . '<input type="hidden" name="action" value="loginas"><input type="hidden" name="id" value="' . $id . '"><button class="mini ghost" title="Ouvre le jeu connecté en tant que ce joueur (nouvel onglet)">🎭 Se connecter en tant que…</button></form>';
+    page_title('👤 ' . $uname, 'Fiche complète du joueur · ID ' . $id);
+    // ===== Bandeau joueur (gauche: identité · centre: état/mission/activité · droite: actions) =====
+    echo '<div class="ubanner">';
+    echo '<div class="ub-id"><img class="ub-av" src="/avatar.php?user=' . h(rawurlencode($uname)) . '&size=b&v=2" alt="Avatar de ' . h($uname) . '" width="58" height="100" loading="lazy"><div><div class="ub-name">' . h($uname) . '</div><div class="muted sm">ID #' . $id . '</div></div></div>';
+    echo '<div class="ub-meta">' . rank_badge((int)$u['rank']) . ' ' . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">Compte actif</span>')
+       . '<div class="muted sm" style="margin-top:6px">Mission : <b>' . h($u['motto'] !== '' ? $u['motto'] : '—') . '</b></div>'
+       . '<div class="muted sm">Dernière activité : ' . h($seen) . ' · Club : ' . ($hcActive ? h($hc) : 'non membre') . '</div></div>';
+    echo '<div class="ub-act"><a class="mini" href="' . h($homeUrl) . '" target="_blank">🏠 Voir sa Home</a>'
+       . '<button type="button" class="mini ghost" onclick="utShow(\'ut-msg\')">✉️ Message</button>'
+       . '<details class="ub-menu"><summary class="mini ghost">⚙️ Actions</summary><div class="ub-menu-pop">'
+       . '<a class="mini ghost" href="?p=homemod">🛡️ Modération des Homes</a>';
+    if ($rankSelf >= 7) echo '<form method="post" action="?p=user&id=' . $id . '" target="_blank" onsubmit="return confirm(\'Ouvrir le jeu connecté en tant que ' . h(addslashes($uname)) . ' ?\')">' . csrf_field() . '<input type="hidden" name="action" value="loginas"><input type="hidden" name="id" value="' . $id . '"><button class="mini ghost">🎭 Se connecter en tant que…</button></form>';
+    echo '</div></details></div>';
     echo '</div>';
 
     echo '<div class="grid">';
     stat_box('💰', number_format((int)$u['credits'], 0, ',', ' '), 'Crédits', 'gold');
     stat_box('🎟️', (int)$u['tickets'], 'Tickets', 'blue');
-    stat_box('⭐', $hcActive ? 'Oui' : 'Non', 'Club Habbo', 'gold');
+    stat_box('⭐', $hcActive ? date('d/m/Y', (int)$u['club_expiration']) : 'Non', $hcActive ? 'Club Habbo (expire le)' : 'Club Habbo', 'gold');
     stat_box('📅', $created, 'Inscrit le', 'blue');
-    stat_box('🕑', $seen, 'Vu', 'green');
+    stat_box('🕑', $seen, 'Dernière activité', 'green');
     echo '</div>';
 
-    echo '<div class="cols">';
-    echo '<div class="panel"><div class="ph"><h3>✏️ Modifier</h3></div>
+    // ===== Onglets internes (fail-safe : toutes les sections restent visibles sans JS) =====
+    echo '<div class="uptabs" id="uptabs"><div class="utabbar">'
+       . '<button type="button" data-t="ut-compte" class="on">👤 Compte</button>'
+       . '<button type="button" data-t="ut-home">🏠 Habbo Home</button>'
+       . '<button type="button" data-t="ut-appts">🏠 Appartements</button>'
+       . '<button type="button" data-t="ut-badges">📛 Badges</button>'
+       . '<button type="button" data-t="ut-msg">✉️ Messages &amp; notes</button>'
+       . '<button type="button" data-t="ut-mod">⚠️ Modération</button>'
+       . '</div>';
+
+    echo '<section class="utab on" id="ut-compte"><div class="cols">';
+    echo '<div class="panel"><div class="ph"><h3>✏️ Réglages du compte</h3></div>
         <form method="post" class="js row" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="user_update"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">
         <label>Rang<select name="rank">' . rank_options((int)$u['rank']) . '</select></label>
-        <label>Crédits<input type="number" name="credits" value="' . (int)$u['credits'] . '" style="width:120px"></label>
-        <label style="flex:1">Motto<input name="motto" value="' . h($u['motto']) . '"></label><button>💾</button></form>
+        <label>Crédits<input type="number" name="credits" value="' . (int)$u['credits'] . '" style="width:130px"></label>
+        <input type="hidden" name="motto" value="' . h($u['motto']) . '"><button>💾 Enregistrer</button></form>
         <form method="post" class="js row" style="margin-top:8px" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="user_password"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">
         <label style="flex:1">🔑 Nouveau mot de passe<input name="newpass"></label><button class="ghost">Changer</button></form>
         <div class="row" style="margin-top:8px;gap:6px">' . uquick($id, 'user_credits', 'delta', 1000, '💰 +1 000') . uquick($id, 'user_credits', 'delta', 10000, '💰 +10 000') . uquick($id, 'user_hc', 'days', 30, '⭐ HC 30j') . uquick($id, 'user_hc', 'days', 0, '⭐ Retirer HC') . '</div>
@@ -2882,13 +2902,26 @@ function page_user(): void {
         <tr><td class="muted">Points SnowStorm</td><td>' . (int)$u['snowstorm_points'] . '</td></tr>
         <tr><td class="muted">Figure</td><td class="sm"><code>' . h($u['figure']) . '</code></td></tr>
         </table></div></div>';
+    echo '</section>';
 
+    // ===== Onglet Habbo Home (relie aux outils existants, pas de 2e éditeur) =====
+    echo '<section class="utab" id="ut-home"><div class="panel"><div class="ph"><h3>🏠 Habbo Home de ' . h($uname) . '</h3></div>';
+    echo '<div class="row" style="gap:8px;margin-bottom:8px"><a class="mini" href="' . h($homeUrl) . '" target="_blank">↗ Ouvrir sa Home</a>'
+       . '<button type="button" class="mini ghost" onclick="utCopy(\'' . h($homeUrl) . '\')">📋 Copier le lien public</button>'
+       . '<a class="mini ghost" href="?p=homemod">🛡️ Modération des Homes</a></div>';
+    echo '<p class="muted sm">Le <b>statut</b> (publiée / masquée / édition bloquée), les <b>signalements</b> en attente, le <b>livre d\'or</b> et les actions de modération (masquer / rendre visible / bloquer — avec motif et permissions) sont gérés dans <a href="?p=homemod">Modération des Homes</a> : on ne duplique pas l\'éditeur ici. ⚠️ Un message du livre d\'or publié par <b>un autre joueur</b> n\'est pas une faute du propriétaire.</p>';
+    echo '</div></section>';
+
+    // ===== Onglet Badges =====
+    echo '<section class="utab" id="ut-badges">';
     echo '<div class="panel"><div class="ph"><h3>📛 Badges</h3></div>
         <p class="muted sm">🎖️ De rang (automatiques) :</p><div class="badgegrid" style="margin-bottom:10px">' . rank_badges_html($rb) . '</div>
         <p class="muted sm">📛 Possédés :</p><div class="badgegrid">' . user_badges_html($id, $ob) . '</div>
         <form method="post" class="js row" data-reload style="margin-top:10px">' . csrf_field() . '<input type="hidden" name="action" value="badge_add"><input type="hidden" name="username" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '"><label>Ajouter un badge<input name="badge" maxlength="3" style="width:90px;text-transform:uppercase"></label><button>+ Ajouter</button><a class="mini ghost lnkbtn" href="?p=badges" style="align-self:flex-end">Galerie</a></form></div>';
+    echo '</section>';
 
-    echo '<div class="cols">';
+    // ===== Onglet Appartements (salles + IP techniques) =====
+    echo '<section class="utab" id="ut-appts"><div class="cols">';
     echo '<div class="panel"><div class="ph"><h3>🏠 Salles du joueur</h3></div>';
     $rms = db()->prepare('SELECT id,name FROM rooms WHERE owner_id=?'); $rms->execute([(string)$id]); $rml = $rms->fetchAll();
     if (!$rml) echo '<div class="empty">Aucune salle.</div>';
@@ -2899,7 +2932,10 @@ function page_user(): void {
     if (!$ipl) echo '<div class="empty">Aucune IP enregistrée.</div>';
     else { echo '<table class="clean"><tr><th>IP</th><th>Date</th></tr>'; foreach ($ipl as $r) echo '<tr><td><code>' . h($r['ip_address']) . '</code></td><td class="sm muted">' . h(date('d/m/Y H:i', strtotime((string)$r['created_at']))) . '</td></tr>'; echo '</table>'; }
     echo '</div></div>';
+    echo '</section>';
 
+    // ===== Onglet Messages & notes (échanges visibles du joueur + notes privées staff) =====
+    echo '<section class="utab" id="ut-msg">';
     // Notes staff (item 4)
     ensure_admin_notes();
     $notes = db()->prepare('SELECT * FROM admin_notes WHERE user_id=? ORDER BY id DESC'); $notes->execute([$id]); $noteList = $notes->fetchAll();
@@ -2925,7 +2961,10 @@ function page_user(): void {
         echo '</table>';
     }
     echo '</div>';
+    echo '</section>';
 
+    // ===== Onglet Modération =====
+    echo '<section class="utab" id="ut-mod">';
     // Zone sensible : modération + actions irréversibles, isolées du reste de la fiche.
     echo '<div class="panel" style="border-color:#6b2c2c"><div class="ph"><h3 style="color:var(--red)">⚠️ Zone sensible — actions à fort impact</h3></div>';
     echo '<p class="muted sm" style="margin:-4px 0 12px">Modération et actions <b>irréversibles</b>, regroupées ici et séparées du reste de la fiche.</p>';
@@ -2935,6 +2974,7 @@ function page_user(): void {
     echo '<form method="post" class="js" data-reload data-confirm="⚠️ SUPPRIMER TOUT l\'inventaire (tous les objets non posés) de ' . h($u['username']) . ' ? Irréversible." style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="clear_hand"><input type="hidden" name="username" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '"><button class="mini warn">🧹 Vider TOUT l\'inventaire</button></form>';
     echo '<form method="post" class="js" data-reload data-confirm="Supprimer définitivement le compte ' . h($u['username']) . ' ? Irréversible." style="display:inline"><input type="hidden" name="action" value="user_delete"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="?p=users">' . csrf_field() . '<button class="mini" style="background:var(--red)">🗑️ Supprimer ce compte</button></form>';
     echo '</div></div>';
+    echo '</section></div>'; // fin onglet Modération + conteneur d'onglets
 }
 
 function page_bots(): void {
@@ -4293,6 +4333,23 @@ body.sb-collapsed .side .brand::after{content:'H';font-size:18px}
 .editcols{display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-gap:18px;gap:18px;align-items:start}
 @media(max-width:1100px){.editcols{grid-template-columns:1fr}}
 .aside-panel{position:sticky;top:76px}
+/* Fiche joueur : bandeau + onglets internes (fail-safe) */
+.ubanner{display:flex;align-items:center;gap:18px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:14px 18px;margin:-6px 0 14px}
+.ubanner>*+*{margin-left:18px}
+.ub-id{display:flex;align-items:center;gap:12px}.ub-id>*+*{margin-left:12px}
+.ub-av{image-rendering:pixelated;background:#f3eecf;border:1px solid #d8cfa6;border-radius:6px;vertical-align:bottom}
+.ub-name{font-size:19px;font-weight:800}
+.ub-meta{flex:1;min-width:200px}
+.ub-act{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ub-act>*+*{margin-left:8px}
+.ub-menu{position:relative}
+.ub-menu>summary{list-style:none;cursor:pointer}.ub-menu>summary::-webkit-details-marker{display:none}
+.ub-menu-pop{position:absolute;right:0;top:calc(100% + 6px);background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:240px;z-index:30;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+.ub-menu-pop>*{margin:0}.ub-menu-pop>*+*{margin-top:6px}
+.uptabs .utabbar{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 16px;border-bottom:1px solid var(--line2);padding-bottom:12px;position:sticky;top:60px;background:var(--bg);z-index:10}
+.uptabs .utabbar>*{margin:0 8px 8px 0}
+.uptabs .utabbar button{padding:9px 16px;border-radius:10px;background:var(--panel);border:1px solid var(--line2);color:var(--mut);font-weight:700;font-size:13px;cursor:pointer}
+.uptabs .utabbar button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.uptabs.js .utab{display:none}.uptabs.js .utab.on{display:block}
 .side nav .grp .i{font-size:16px;width:22px;text-align:center}
 .side nav .grpitems a{padding-left:18px;font-size:13.5px}
 .side nav .grpitems a .i{font-size:15px}
@@ -4422,6 +4479,10 @@ function toggleSidebar(){var c=document.body.classList.toggle('sb-collapsed');tr
 (function(){try{if(localStorage.getItem('r14sb')==='1')document.body.classList.add('sb-collapsed');}catch(e){}})();
 /* Mémorise la position de défilement du menu latéral (reste au même endroit après navigation) */
 (function(){var n=document.querySelector('.side nav');if(!n)return;try{var y=sessionStorage.getItem('r14navscroll');if(y)n.scrollTop=parseInt(y,10)||0;}catch(e){}n.addEventListener('scroll',function(){try{sessionStorage.setItem('r14navscroll',String(n.scrollTop));}catch(e){}});})();
+/* Onglets internes de la fiche joueur (fail-safe : sans JS, toutes les sections restent visibles) */
+function utShow(id){var w=document.getElementById('uptabs');if(!w)return;var t=w.querySelectorAll('.utab');for(var i=0;i<t.length;i++)t[i].classList.toggle('on',t[i].id===id);var b=w.querySelectorAll('.utabbar button');for(var j=0;j<b.length;j++)b[j].classList.toggle('on',b[j].getAttribute('data-t')===id);try{sessionStorage.setItem('r14utab',id);}catch(e){}}
+function utCopy(path){var u=location.origin+path;try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(u);}else{var ta=document.createElement('textarea');ta.value=u;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(e2){}ta.remove();}toast('Lien copié : '+u,true);}catch(e){toast('Copie impossible — '+u,false);}}
+(function(){var w=document.getElementById('uptabs');if(!w)return;w.classList.add('js');var b=w.querySelectorAll('.utabbar button');for(var j=0;j<b.length;j++)b[j].addEventListener('click',function(){utShow(this.getAttribute('data-t'));});var saved='';try{saved=sessionStorage.getItem('r14utab')||'';}catch(e){}var t=w.querySelectorAll('.utab');var start=t.length?t[0].id:'';if(saved){for(var k=0;k<t.length;k++){if(t[k].id===saved){start=saved;break;}}}if(start)utShow(start);})();
 if(window.__flash)toast(window.__flash,true);
 /* Avertissement si un formulaire a des changements non enregistrés (exclut recherche/filtres) */
 var __dirty=false;
