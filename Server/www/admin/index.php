@@ -514,6 +514,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $val = mb_substr(trim((string)($_POST['value'] ?? '')), 0, 400);
                 db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute([$key, $val]);
                 $msg = '✅ Réglage « ' . $key . ' » enregistré.'; break;
+            /* --- Apparence : fond du site (couleur + motif/image + mode) --- */
+            case 'site_bg_apply': {
+                $color = strtoupper(trim((string)($_POST['color'] ?? '')));
+                if ($color !== '' && $color[0] !== '#') $color = '#' . $color;
+                if (!preg_match('/^#[0-9A-F]{6}$/', $color)) { $ok = false; $msg = '❌ Couleur invalide (format #RRGGBB).'; break; }
+                $mode = (string)($_POST['mode'] ?? 'repeat');
+                if (!in_array($mode, ['repeat', 'center', 'cover'], true)) $mode = 'repeat';
+                $img = trim((string)($_POST['image'] ?? ''));
+                $imgVal = '';
+                if ($img !== '') {
+                    $bn = basename($img);
+                    $bgdir = dirname(__DIR__) . '/web-gallery/v2/images/bg_patterns';
+                    if (!preg_match('/^[A-Za-z0-9._-]+\.(gif|png|jpe?g)$/i', $bn) || !is_file($bgdir . '/' . $bn)) { $ok = false; $msg = '❌ Image de fond introuvable.'; break; }
+                    $imgVal = '/web-gallery/v2/images/bg_patterns/' . $bn;
+                }
+                foreach (['site.bg_color' => $color, 'site.bg_mode' => $mode, 'site.bg_image' => $imgVal] as $k => $v)
+                    db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute([$k, $v]);
+                admin_log('site_bg', "color=$color mode=$mode img=$imgVal");
+                $msg = '🎨 Fond du site appliqué.'; break;
+            }
+            case 'site_bg_upload': {
+                $f = $_FILES['file'] ?? null;
+                if (!$f || ($f['error'] ?? 1) !== 0) { $ok = false; $msg = '❌ Aucun fichier reçu.'; break; }
+                $info = @getimagesize($f['tmp_name']);
+                $allowed = [IMAGETYPE_GIF => 'gif', IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png'];
+                if (!$info || !isset($allowed[$info[2]])) { $ok = false; $msg = '❌ Format non supporté (GIF, JPG ou PNG).'; break; }
+                if (($f['size'] ?? 0) > 3 * 1024 * 1024) { $ok = false; $msg = '❌ Fichier trop lourd (max 3 Mo).'; break; }
+                if ($info[0] < 1 || $info[1] < 1 || $info[0] > 2000 || $info[1] > 2000) { $ok = false; $msg = '❌ Dimensions invalides (max 2000×2000 px).'; break; }
+                $base = preg_replace('/[^A-Za-z0-9._-]/', '_', pathinfo((string)$f['name'], PATHINFO_FILENAME));
+                $base = $base === '' ? 'fond' : mb_substr($base, 0, 60);
+                $bgdir = dirname(__DIR__) . '/web-gallery/v2/images/bg_patterns';
+                if (!is_dir($bgdir)) @mkdir($bgdir, 0777, true);
+                $name = $base . '.' . $allowed[$info[2]]; $i = 1;
+                while (is_file($bgdir . '/' . $name)) { $name = $base . '_' . $i . '.' . $allowed[$info[2]]; $i++; }
+                if (!@move_uploaded_file($f['tmp_name'], $bgdir . '/' . $name)) { $ok = false; $msg = '❌ Échec de l\'enregistrement.'; break; }
+                admin_log('site_bg_upload', $name);
+                $msg = '🖼️ Fond importé : ' . $name . ' — sélectionne-le puis clique Appliquer.'; break;
+            }
+            case 'site_bg_reset':
+                foreach (['site.bg_color' => '#083940', 'site.bg_mode' => 'repeat', 'site.bg_image' => ''] as $k => $v)
+                    db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute([$k, $v]);
+                admin_log('site_bg', 'reset');
+                $msg = '↩️ Fond par défaut restauré.'; break;
             case 'sitepage_save': {
                 ensure_site_pages_admin();
                 $slug = preg_replace('/[^a-z0-9_]/', '', (string)($_POST['slug'] ?? ''));
@@ -1098,7 +1141,7 @@ function ensure_home_admin(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS home_reports (id INT AUTO_INCREMENT PRIMARY KEY, target_type VARCHAR(12) NOT NULL, target_id INT NOT NULL, owner_id INT NOT NULL DEFAULT 0, reporter_id INT NOT NULL, reporter_name VARCHAR(64) NOT NULL DEFAULT '', reason VARCHAR(40) NOT NULL DEFAULT '', detail VARCHAR(400) NOT NULL DEFAULT '', status VARCHAR(12) NOT NULL DEFAULT 'new', handled_by VARCHAR(64) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(status), INDEX(owner_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
 function sitemgr_sections(): array {
-    return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
+    return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'apparence' => ['🎨', 'Apparence'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
 }
 function sitemgr_style(): void {
     static $done = false; if ($done) return; $done = true;
@@ -1345,6 +1388,7 @@ function page_sitemgr(): void {
         case 'accueil': case 'blocs': sitemgr_accueil(); break;
         case 'events': sitemgr_events(); break;
         case 'media': sitemgr_media(); break;
+        case 'apparence': sitemgr_apparence(); break;
         case 'settings': sitemgr_settings(); break;
         case 'history': sitemgr_history(); break;
         default: sitemgr_overview(); break;
@@ -2086,6 +2130,85 @@ function sitemgr_media(): void {
     }
     echo '<p class="muted sm">⬜ À compléter (point 10) : catégories, recherche, alt, liste précise des pages qui utilisent chaque image, garde-fou de suppression.</p></div>';
 }
+function sitemgr_apparence(): void {
+    $bgdir = dirname(__DIR__) . '/web-gallery/v2/images/bg_patterns';
+    $bgurl = '/web-gallery/v2/images/bg_patterns';
+    if (!is_dir($bgdir)) @mkdir($bgdir, 0777, true);
+    $color = site_setting_get('site.bg_color', '#083940');
+    if (!preg_match('/^#[0-9A-Fa-f]{6}$/', $color)) $color = '#083940';
+    $mode = site_setting_get('site.bg_mode', 'repeat');
+    if (!in_array($mode, ['repeat', 'center', 'cover'], true)) $mode = 'repeat';
+    $curName = ($img = site_setting_get('site.bg_image', '')) !== '' ? basename($img) : '';
+    $files = is_dir($bgdir) ? array_values(array_filter(scandir($bgdir), fn($f) => !in_array($f, ['.', '..'], true) && is_file($bgdir . '/' . $f) && preg_match('/\.(gif|png|jpe?g)$/i', $f))) : [];
+
+    page_title('Apparence — Fond du site', 'Change l\'image ou la couleur visible derrière et sur les côtés du site. Le cadre blanc, les colonnes, les boutons et les dimensions ne changent pas.');
+
+    echo '<form method="post" class="js" data-reload id="bgform">' . csrf_field() . '<input type="hidden" name="action" value="site_bg_apply"><input type="hidden" name="image" id="bgImage" value="' . h($curName) . '">';
+
+    // Aperçu live (le cadre blanc est figuré, non modifiable)
+    echo '<div class="panel"><div class="ph"><h3>👁️ Aperçu</h3><span class="muted sm" style="margin-left:auto">rendu derrière le cadre blanc</span></div>';
+    echo '<div id="bgPreview" data-baseurl="' . $bgurl . '" style="border:1px solid var(--line2);border-radius:6px;height:190px;display:flex;align-items:center;justify-content:center;overflow:hidden">'
+       . '<div style="width:70%;max-width:360px;height:120px;background:#fff;border:1px solid #06252b;border-radius:0 0 9px 9px;box-shadow:0 2px 8px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;color:#9aa;font-size:11px">cadre du site (inchangé)</div></div></div>';
+
+    // Couleur + mode
+    echo '<div class="panel"><div class="ph"><h3>🎨 Couleur & affichage</h3></div><div class="row" style="gap:18px;flex-wrap:wrap;align-items:flex-end">';
+    echo '<label>Couleur de fond<br><input type="color" id="bgColor" name="color" value="' . h($color) . '" style="width:56px;height:34px;padding:0;border:1px solid var(--line2);border-radius:5px;vertical-align:middle"> <input type="text" id="bgColorHex" value="' . h($color) . '" maxlength="7" style="width:92px;font-family:var(--mono)"></label>';
+    echo '<label>Affichage<br><select id="bgMode" name="mode">'
+       . '<option value="repeat"' . ($mode === 'repeat' ? ' selected' : '') . '>Motif répété (pixels nets)</option>'
+       . '<option value="center"' . ($mode === 'center' ? ' selected' : '') . '>Image centrée (taille d\'origine)</option>'
+       . '<option value="cover"' . ($mode === 'cover' ? ' selected' : '') . '>Couvrir l\'écran</option></select></label></div></div>';
+
+    // Galerie
+    echo '<div class="panel"><div class="ph"><h3>🖼️ Galerie de fonds</h3><span class="muted sm" style="margin-left:auto">' . count($files) . ' fond(s)</span></div>';
+    echo '<div style="display:flex;flex-wrap:wrap;gap:8px;padding:4px 0">';
+    echo '<div class="bgtile" data-name="" onclick="bgPick(this)" style="width:110px;height:84px;border:1px solid var(--line2);border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;text-align:center;font-size:10px;color:#eee;background:' . h($color) . ';' . ($curName === '' ? 'outline:3px solid var(--green)' : '') . '">Couleur seule<br>(aucune image)</div>';
+    foreach ($files as $f) {
+        $sz = @getimagesize($bgdir . '/' . $f); $dim = $sz ? $sz[0] . '×' . $sz[1] : '?';
+        echo '<div class="bgtile" data-name="' . h($f) . '" onclick="bgPick(this)" title="' . h($f . ' · ' . $dim) . '" style="width:110px;height:84px;border:1px solid var(--line2);border-radius:6px;cursor:pointer;background:#20303a url(\'' . $bgurl . '/' . h($f) . '\') repeat;image-rendering:pixelated;' . ($f === $curName ? 'outline:3px solid var(--green)' : '') . '"></div>';
+    }
+    echo '</div></div>';
+
+    echo '<div class="sm-actions"><button class="sm-btn primary" type="submit">✅ Appliquer</button><a class="sm-btn" href="?p=sitemgr&sec=apparence">↩️ Annuler</a></div></form>';
+
+    // Import
+    echo '<div class="panel"><div class="ph"><h3>⬆️ Importer un fond</h3></div>';
+    echo '<form method="post" class="js" data-reload enctype="multipart/form-data"><div class="row">' . csrf_field() . '<input type="hidden" name="action" value="site_bg_upload"><input type="file" name="file" accept="image/png,image/jpeg,image/gif" required><button>⬆️ Importer</button></div>';
+    echo '<p class="muted sm" style="margin-top:4px">PNG, JPG ou GIF (animation conservée). Max 3 Mo, 2000×2000 px. Stocké dans <code>web-gallery/v2/images/bg_patterns/</code>. Pixel-art : garde sa taille d\'origine en mode « Motif répété ».</p></div>';
+
+    // Restaurer
+    echo '<form method="post" class="js" data-reload style="margin-top:8px"><div class="panel"><div class="ph"><h3>↩️ Fond par défaut</h3></div>' . csrf_field() . '<input type="hidden" name="action" value="site_bg_reset">';
+    echo '<p class="muted sm">Restaure le fond d\'origine : couleur <code>#083940</code>, motif répété, sans image.</p><button class="sm-btn" onclick="return confirm(\'Restaurer le fond par défaut ?\')">Restaurer</button></div></form>';
+
+    echo <<<'JS'
+<script>
+(function(){
+ var pv=document.getElementById('bgPreview'); if(!pv) return;
+ var base=pv.getAttribute('data-baseurl');
+ function render(){
+   var color=document.getElementById('bgColor').value;
+   var mode=document.getElementById('bgMode').value;
+   var name=document.getElementById('bgImage').value;
+   pv.style.backgroundSize=''; pv.style.imageRendering='pixelated';
+   if(name){
+     var u="url('"+base+'/'+name+"')";
+     if(mode==='cover'){pv.style.background=color+' '+u+' no-repeat center center';pv.style.backgroundSize='cover';}
+     else if(mode==='center'){pv.style.background=color+' '+u+' no-repeat center center';}
+     else{pv.style.background=color+' '+u+' repeat';}
+   } else { pv.style.background=color; }
+ }
+ window.bgPick=function(el){
+   document.getElementById('bgImage').value=el.getAttribute('data-name')||'';
+   var ts=document.querySelectorAll('.bgtile'); for(var i=0;i<ts.length;i++){ts[i].style.outline='';}
+   el.style.outline='3px solid var(--green)'; render();
+ };
+ document.getElementById('bgColor').addEventListener('input',function(){document.getElementById('bgColorHex').value=this.value;render();});
+ document.getElementById('bgColorHex').addEventListener('input',function(){var v=this.value.trim();if(/^#?[0-9A-Fa-f]{6}$/.test(v)){if(v[0]!=='#')v='#'+v;document.getElementById('bgColor').value=v;render();}});
+ document.getElementById('bgMode').addEventListener('change',render);
+ render();
+})();
+</script>
+JS;
+}
 function sitemgr_settings(): void {
     echo '<div class="panel"><div class="ph"><h3>⚙️ Réglages du site</h3></div>';
     $settings = [
@@ -2102,7 +2225,7 @@ function sitemgr_settings(): void {
 function sitemgr_history(): void {
     echo '<div class="panel"><div class="ph"><h3>🕑 Historique des modifications du site</h3></div>';
     ensure_admin_log();
-    $rows = db()->query("SELECT author,action,detail,created_at FROM admin_log WHERE action IN ('sitepage_save','carousel_save','site_setting','nav_tab_save','nav_item_save','nav_move','nav_flag','media_upload','news_add','news_update','news_delete') ORDER BY id DESC LIMIT 40")->fetchAll();
+    $rows = db()->query("SELECT author,action,detail,created_at FROM admin_log WHERE action IN ('sitepage_save','carousel_save','site_setting','nav_tab_save','nav_item_save','nav_move','nav_flag','media_upload','site_bg','site_bg_upload','news_add','news_update','news_delete') ORDER BY id DESC LIMIT 40")->fetchAll();
     if (!$rows) echo '<p class="muted" style="padding:4px 0">Aucune action enregistrée.</p>';
     else { echo '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr class="muted sm"><th style="text-align:left">Date</th><th style="text-align:left">Staff</th><th style="text-align:left">Action</th><th style="text-align:left">Détail</th></tr>';
         foreach ($rows as $r) echo '<tr><td style="padding:3px 0">' . h((string)$r['created_at']) . '</td><td>' . h((string)$r['author']) . '</td><td>' . h((string)$r['action']) . '</td><td class="muted sm">' . h((string)$r['detail']) . '</td></tr>';
@@ -2115,7 +2238,7 @@ function action_tab(string $a): string {
     static $map = [
         // Gestion du Site (v2)
         'carousel_save' => 'sitemgr', 'site_setting' => 'sitemgr', 'sitepage_save' => 'sitemgr', 'sitepage_block_save' => 'sitemgr', 'sitepage_arrange' => 'sitemgr',
-        'nav_tab_save' => 'sitemgr', 'nav_item_save' => 'sitemgr', 'nav_move' => 'sitemgr', 'nav_flag' => 'sitemgr', 'media_upload' => 'sitemgr',
+        'nav_tab_save' => 'sitemgr', 'nav_item_save' => 'sitemgr', 'nav_move' => 'sitemgr', 'nav_flag' => 'sitemgr', 'media_upload' => 'sitemgr', 'site_bg' => 'sitemgr', 'site_bg_upload' => 'sitemgr',
         'page_pin' => 'sitemgr', 'site_page_create' => 'sitemgr', 'site_news_save' => 'news', 'site_news_delete' => 'news',
         'hm_report_status' => 'homemod', 'hm_home_hide' => 'homemod', 'hm_home_lock' => 'homemod', 'hm_gb_hide' => 'homemod', 'hm_item_del' => 'homemod', 'hm_asset_toggle' => 'homemod',
         // Joueurs
