@@ -672,8 +672,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ensure_home_admin();
                 $sid = (int)($_POST['id'] ?? 0);
                 $status = in_array(($_POST['status'] ?? ''), ['new', 'progress', 'handled'], true) ? $_POST['status'] : 'new';
-                db()->prepare('UPDATE home_reports SET status=?, handled_by=? WHERE id=?')->execute([$status, (string)($_SESSION['admin']['username'] ?? '?'), $sid]);
-                admin_log('hm_report_status', '#' . $sid . ' → ' . $status); $msg = '✅ Signalement mis à jour.'; break;
+                $decision = mb_substr(trim((string)($_POST['reason'] ?? '')), 0, 400);
+                if ($status === 'handled' && $decision === '') { $ok = false; $msg = '❌ Un motif/décision est obligatoire pour clore le dossier.'; break; }
+                $handledAt = ($status === 'handled') ? date('Y-m-d H:i:s') : null;
+                db()->prepare('UPDATE home_reports SET status=?, handled_by=?, decision=?, handled_at=? WHERE id=?')->execute([$status, (string)($_SESSION['admin']['username'] ?? '?'), $decision, $handledAt, $sid]);
+                admin_log('hm_report_status', '#' . $sid . ' → ' . $status . ($decision ? ' · ' . $decision : ''));
+                $msg = '✅ Décision enregistrée.'; break;
             }
             case 'hm_home_hide': {
                 ensure_home_admin();
@@ -1153,6 +1157,9 @@ function ensure_home_admin(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS home_guestbook (id INT AUTO_INCREMENT PRIMARY KEY, owner_id INT NOT NULL, author_id INT NOT NULL, author_name VARCHAR(64) NOT NULL DEFAULT '', message VARCHAR(255) NOT NULL DEFAULT '', hidden TINYINT NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(owner_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     db()->exec("CREATE TABLE IF NOT EXISTS home_assets_disabled (kind VARCHAR(8) NOT NULL, resource VARCHAR(160) NOT NULL, PRIMARY KEY (kind,resource)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     db()->exec("CREATE TABLE IF NOT EXISTS home_reports (id INT AUTO_INCREMENT PRIMARY KEY, target_type VARCHAR(12) NOT NULL, target_id INT NOT NULL, owner_id INT NOT NULL DEFAULT 0, reporter_id INT NOT NULL, reporter_name VARCHAR(64) NOT NULL DEFAULT '', reason VARCHAR(40) NOT NULL DEFAULT '', detail VARCHAR(400) NOT NULL DEFAULT '', status VARCHAR(12) NOT NULL DEFAULT 'new', handled_by VARCHAR(64) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(status), INDEX(owner_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // Décision motivée du dossier (ajout rétro-compatible)
+    try { if (!col_exists('home_reports', 'decision')) db()->exec("ALTER TABLE home_reports ADD COLUMN decision VARCHAR(400) NOT NULL DEFAULT ''"); } catch (Throwable $e) {}
+    try { if (!col_exists('home_reports', 'handled_at')) db()->exec("ALTER TABLE home_reports ADD COLUMN handled_at DATETIME NULL"); } catch (Throwable $e) {}
 }
 function sitemgr_sections(): array {
     return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'apparence' => ['🎨', 'Apparence'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
@@ -1282,41 +1289,84 @@ function page_homemod(): void {
 }
 function hm_view_reports(): void {
     $st = preg_replace('/[^a-z]/', '', (string)($_GET['st'] ?? ''));
-    echo '<div class="card"><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">';
-    foreach (['' => 'Tous', 'new' => 'Nouveaux', 'progress' => 'En cours', 'handled' => 'Traités'] as $k => $l)
-        echo '<a class="sm-btn' . ($st === $k ? ' primary' : '') . '" href="?p=homemod&sec=reports' . ($k ? '&st=' . $k : '') . '">' . h($l) . '</a>';
+    $rid = (int)($_GET['r'] ?? 0);
+    // Compteurs d'état (bandeau cliquable)
+    $cnt = ['new' => 0, 'progress' => 0, 'handled' => 0];
+    try { foreach (db()->query("SELECT status, COUNT(*) n FROM home_reports GROUP BY status") as $c) { if (isset($cnt[$c['status']])) $cnt[$c['status']] = (int)$c['n']; } } catch (Throwable $e) {}
+    echo '<div class="todo" style="margin-bottom:14px">';
+    foreach (['' => ['🚩', 'Tous', array_sum($cnt)], 'new' => ['🆕', 'Nouveaux', $cnt['new']], 'progress' => ['⏳', 'En cours', $cnt['progress']], 'handled' => ['✅', 'Clos', $cnt['handled']]] as $k => $v)
+        echo '<a class="todocard' . ($st === $k ? ' urgent' : '') . '" href="?p=homemod&sec=reports' . ($k ? '&st=' . $k : '') . '"><span class="tn">' . (int)$v[2] . '</span><span class="tl">' . $v[0] . ' ' . h($v[1]) . '</span></a>';
     echo '</div>';
+
     $sql = 'SELECT * FROM home_reports' . ($st !== '' ? ' WHERE status=' . db()->quote($st) : '') . ' ORDER BY (status="new") DESC, id DESC LIMIT 100';
     $rows = db()->query($sql)->fetchAll();
-    if (!$rows) { echo '<p class="sub" style="padding:6px 0">Aucun signalement' . ($st ? ' (' . h($st) . ')' : '') . '.</p></div>'; return; }
-    $pill = ['new' => '<span class="pill off">Nouveau</span>', 'progress' => '<span class="pill draft">En cours</span>', 'handled' => '<span class="pill on">Traité</span>'];
-    echo '<table class="lst"><tr class="sub"><td>Date</td><td>Cible</td><td>Propriétaire</td><td>Motif</td><td>Statut</td><td style="text-align:right">Actions</td></tr>';
-    foreach ($rows as $r) {
+
+    echo '<div class="hmwrap">';
+    // --- Liste des signalements (gauche) ---
+    echo '<div class="hmlist">';
+    if (!$rows) echo '<div class="empty">Aucun signalement' . ($st ? ' (' . h($st) . ')' : '') . '.</div>';
+    else foreach ($rows as $r) {
         $owner = hm_uname((int)$r['owner_id']);
-        if ($r['target_type'] === 'gb') {
-            $gm = db()->prepare('SELECT message,author_name,hidden FROM home_guestbook WHERE id=?'); $gm->execute([(int)$r['target_id']]); $gmrow = $gm->fetch();
-            if ($gmrow) {
-                $cible = 'Message #' . (int)$r['target_id'] . ((int)$gmrow['hidden'] ? ' <span class="pill off">masqué</span>' : '')
-                       . '<div class="sub" style="max-width:280px;white-space:normal">« ' . h(mb_strimwidth((string)$gmrow['message'], 0, 140, '…')) . ' »<br>— ' . h((string)$gmrow['author_name']) . '</div>';
-            } else {
-                $cible = 'Message #' . (int)$r['target_id'] . ' <span class="sub">(supprimé)</span>';
-            }
-        } else {
-            $cible = 'Home <a href="/v2/?p=home/' . h(rawurlencode($owner)) . '" target="_blank" class="sub">(voir ↗)</a>';
-        }
-        echo '<tr><td class="sub">' . h(substr((string)$r['created_at'], 0, 16)) . '</td>'
-           . '<td>' . $cible . '</td>'
-           . '<td><a href="/v2/?p=home/' . h(rawurlencode($owner)) . '" target="_blank">' . h($owner) . ' ↗</a></td>'
-           . '<td>' . h((string)$r['reason']) . ($r['detail'] !== '' ? '<div class="sub">' . h((string)$r['detail']) . '</div>' : '') . '<div class="sub" style="font-size:10px">signalé par ' . h((string)$r['reporter_name']) . '</div></td>'
-           . '<td>' . ($pill[$r['status']] ?? h((string)$r['status'])) . '</td><td style="text-align:right">';
-        // statut rapide
-        echo '<form method="post" class="js" data-reload style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="hm_report_status"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><select name="status" onchange="this.form.requestSubmit?this.form.requestSubmit():this.form.submit()"><option value="new"' . ($r['status'] === 'new' ? ' selected' : '') . '>Nouveau</option><option value="progress"' . ($r['status'] === 'progress' ? ' selected' : '') . '>En cours</option><option value="handled"' . ($r['status'] === 'handled' ? ' selected' : '') . '>Traité</option></select></form> ';
-        if ($r['target_type'] === 'gb') echo hm_reason_action('hm_gb_hide', ['mid' => (int)$r['target_id'], 'val' => 1], 'Masquer le message');
-        echo hm_reason_action('hm_home_hide', ['user_id' => (int)$r['owner_id'], 'val' => 1], 'Masquer la Home', 'sm-btn danger');
-        echo hm_reason_action('hm_home_lock', ['user_id' => (int)$r['owner_id'], 'val' => 1], 'Bloquer l\'édition');
-        echo '</td></tr>';
+        $ico = ['new' => '🆕', 'progress' => '⏳', 'handled' => '✅'][$r['status']] ?? '';
+        echo '<a class="hmitem' . ($rid === (int)$r['id'] ? ' on' : '') . '" href="?p=homemod&sec=reports' . ($st ? '&st=' . $st : '') . '&r=' . (int)$r['id'] . '">'
+           . '<div class="hmi-top"><b>' . h($owner) . '</b><span>' . $ico . '</span></div>'
+           . '<div class="sub">' . ($r['target_type'] === 'gb' ? 'Livre d\'or' : 'Home') . ' · ' . h((string)$r['reason']) . '</div>'
+           . '<div class="sub" style="font-size:10px">' . h(substr((string)$r['created_at'], 0, 16)) . ' · par ' . h((string)$r['reporter_name']) . '</div></a>';
     }
-    echo '</table></div>';
+    echo '</div>';
+
+    // --- Dossier sélectionné (droite) ---
+    echo '<div class="hmdetail">';
+    if ($rid <= 0) { echo '<div class="card"><p class="sub" style="padding:24px;text-align:center">← Sélectionne un signalement dans la liste pour l\'examiner.</p></div></div></div>'; return; }
+    $dr = db()->prepare('SELECT * FROM home_reports WHERE id=?'); $dr->execute([$rid]); $r = $dr->fetch();
+    if (!$r) { echo '<div class="card"><div class="empty">Signalement introuvable.</div></div></div></div>'; return; }
+    $ownerId = (int)$r['owner_id']; $owner = hm_uname($ownerId); $homeUrl = '/v2/?p=home/' . rawurlencode($owner);
+    $backUrl = '?p=homemod&sec=reports' . ($st ? '&st=' . $st : '') . '&r=' . (int)$r['id'];
+    $hp = db()->prepare('SELECT hidden,edit_locked FROM home_pages WHERE user_id=?'); $hp->execute([$ownerId]); $home = $hp->fetch() ?: ['hidden' => 0, 'edit_locked' => 0];
+    $hidden = (int)$home['hidden']; $locked = (int)$home['edit_locked'];
+    $gb = null; if ($r['target_type'] === 'gb') { $gm = db()->prepare('SELECT message,author_name,author_id,hidden FROM home_guestbook WHERE id=?'); $gm->execute([(int)$r['target_id']]); $gb = $gm->fetch() ?: null; }
+
+    echo '<div class="card">';
+    echo '<div class="ph"><h3>Signalement n°' . (int)$r['id'] . ' · Home de ' . h($owner) . '</h3></div>';
+    echo '<p class="sub" style="margin:-6px 0 12px">Motif : <b>' . h((string)$r['reason']) . '</b> · signalé par <b>' . h((string)$r['reporter_name']) . '</b> le ' . h(substr((string)$r['created_at'], 0, 16)) . '</p>';
+    echo '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px"><a class="sm-btn primary" href="' . h($homeUrl) . '" target="_blank">🏠 Voir la Home ↗</a><a class="sm-btn" href="?p=user&id=' . $ownerId . '">👤 Fiche du propriétaire</a>';
+    if ($r['target_type'] === 'gb') echo '<a class="sm-btn" href="' . h($homeUrl) . '#gb" target="_blank">💬 Voir le livre d\'or ↗</a>';
+    echo '</div>';
+
+    echo '<div class="cols">';
+    echo '<div class="panel"><div class="ph"><h3>📋 Dossier</h3></div><table class="clean">'
+       . '<tr><td class="muted">Statut</td><td>' . (['new' => '🆕 Nouveau', 'progress' => '⏳ En cours', 'handled' => '✅ Clos'][$r['status']] ?? h((string)$r['status'])) . '</td></tr>'
+       . '<tr><td class="muted">Traité par</td><td>' . h((string)($r['handled_by'] ?: '—')) . '</td></tr>'
+       . '<tr><td class="muted">Décision</td><td>' . h((string)($r['decision'] ?? '') ?: '—') . '</td></tr>'
+       . (!empty($r['handled_at']) ? '<tr><td class="muted">Le</td><td>' . h(substr((string)$r['handled_at'], 0, 16)) . '</td></tr>' : '')
+       . '</table></div>';
+    echo '<div class="panel"><div class="ph"><h3>🏠 État de la Home</h3></div><table class="clean">'
+       . '<tr><td class="muted">Visibilité</td><td>' . ($hidden ? '<span class="rk red">Masquée</span>' : '<span class="rk green">Visible</span>') . '</td></tr>'
+       . '<tr><td class="muted">Édition</td><td>' . ($locked ? '<span class="rk red">Bloquée</span>' : '<span class="rk green">Autorisée</span>') . '</td></tr>'
+       . '</table><p class="sub" style="margin-top:6px">Un dossier clos ne masque pas la Home : états distincts.</p></div></div>';
+
+    echo '<div class="panel"><div class="ph"><h3>📝 Contenu signalé</h3></div>';
+    echo '<p><span class="muted">Propriétaire :</span> <a href="?p=user&id=' . $ownerId . '">' . h($owner) . '</a> · <span class="muted">Cible :</span> ' . ($r['target_type'] === 'gb' ? 'Message du livre d\'or #' . (int)$r['target_id'] : 'Home entière') . '</p>';
+    if ((string)$r['detail'] !== '') echo '<p><span class="muted">Explication du signalant :</span> « ' . h((string)$r['detail']) . ' »</p>';
+    if ($r['target_type'] === 'gb') {
+        if ($gb) echo '<div class="warn">« ' . h((string)$gb['message']) . ' »<div class="sub" style="margin-top:4px">— écrit par <b>' . h((string)$gb['author_name']) . '</b>' . ((int)$gb['author_id'] !== $ownerId ? ' <span class="pill off">auteur ≠ propriétaire</span>' : '') . ((int)$gb['hidden'] ? ' · <span class="rk red">déjà masqué</span>' : '') . '</div></div>';
+        else echo '<div class="warn">Contenu d\'origine non disponible (message supprimé). Aucune preuve n\'est reconstituée.</div>';
+    }
+    echo '</div>';
+
+    echo '<div class="panel"><div class="ph"><h3>⚖️ Décision</h3></div>';
+    echo '<form method="post" class="js" data-reload style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;max-width:760px">' . csrf_field() . '<input type="hidden" name="action" value="hm_report_status"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($backUrl) . '">'
+       . '<label>Statut du dossier<select name="status"><option value="new"' . ($r['status'] === 'new' ? ' selected' : '') . '>Nouveau</option><option value="progress"' . ($r['status'] === 'progress' ? ' selected' : '') . '>En cours</option><option value="handled"' . ($r['status'] === 'handled' ? ' selected' : '') . '>Clos (décision prise)</option></select></label>'
+       . '<label style="flex:1;min-width:240px">Motif / décision<input name="reason" value="' . h((string)($r['decision'] ?? '')) . '" placeholder="Ex. Message masqué (insulte) ; Home laissée visible"></label>'
+       . '<button class="sm-btn primary">💾 Enregistrer la décision</button></form>';
+    echo '<p class="sub" style="margin:12px 0 6px">Actions sur la Home (chacune demande un motif, journalisé) :</p><div style="display:flex;flex-wrap:wrap;gap:4px">';
+    if ($r['target_type'] === 'gb' && $gb) echo hm_reason_action('hm_gb_hide', ['mid' => (int)$r['target_id'], 'val' => ((int)$gb['hidden'] ? 0 : 1), 'back' => $backUrl], ((int)$gb['hidden'] ? 'Rétablir le message' : 'Masquer le message'));
+    echo hm_reason_action('hm_home_hide', ['user_id' => $ownerId, 'val' => ($hidden ? 0 : 1), 'back' => $backUrl], ($hidden ? 'Rendre la Home visible' : 'Masquer la Home'), ($hidden ? 'sm-btn' : 'sm-btn danger'));
+    echo hm_reason_action('hm_home_lock', ['user_id' => $ownerId, 'val' => ($locked ? 0 : 1), 'back' => $backUrl], ($locked ? 'Débloquer l\'édition' : 'Bloquer l\'édition'));
+    echo '</div>';
+    echo '<p class="sub" style="margin-top:12px">Pour sanctionner le compte (bannissement), ouvre la <a href="?p=user&id=' . $ownerId . '">fiche du propriétaire</a> → onglet Modération.</p>';
+    echo '</div>';
+    echo '</div></div></div>'; // card + hmdetail + hmwrap
 }
 function hm_view_search(): void {
     $q = trim((string)($_GET['q'] ?? ''));
@@ -4395,6 +4445,15 @@ code{background:var(--bg);padding:2px 7px;border-radius:6px;color:var(--acc);fon
 .todocard:hover{border-color:var(--acc);transform:translateY(-2px)}
 .todocard.urgent{border-color:#ef8f13;background:linear-gradient(180deg,rgba(239,143,19,.10),transparent)}
 .todocard.urgent .tn{color:#ef8f13}
+/* Modération Homes : dossier maître-détail (liste gauche / dossier droite) */
+.hmwrap{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px;align-items:start}
+@media(max-width:900px){.hmwrap{grid-template-columns:1fr}}
+.hmlist{display:flex;flex-direction:column;gap:8px;max-height:74vh;overflow:auto}
+.hmitem{display:block;background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:10px 12px;text-decoration:none;color:var(--txt)}
+.hmitem:hover{border-color:var(--acc)}
+.hmitem.on{border-color:var(--acc);background:var(--soft)}
+.hmi-top{display:flex;justify-content:space-between;align-items:center}
+.hmdetail{min-width:0}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));grid-gap:14px;gap:14px;margin-bottom:18px}
 .stat{display:flex;align-items:center;background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:16px 18px}
 .stat .ic{font-size:24px;width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:var(--soft)}
