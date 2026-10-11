@@ -683,17 +683,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ensure_home_admin();
                 $uid = (int)($_POST['user_id'] ?? 0); $val = (int)!!($_POST['val'] ?? 0);
                 $reason = mb_substr(trim((string)($_POST['reason'] ?? '')), 0, 255);
-                db()->prepare('INSERT INTO home_pages (user_id,hidden) VALUES (?,?) ON DUPLICATE KEY UPDATE hidden=VALUES(hidden)')->execute([$uid, $val]);
-                admin_log('hm_home_hide', 'user#' . $uid . ' hidden=' . $val . ($reason ? ' · ' . $reason : ''));
-                $msg = $val ? '🚫 Home masquée.' : '✅ Home rétablie.'; break;
+                $until = null; if ($val) { $u2 = trim((string)($_POST['until'] ?? '')); if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $u2)) $until = $u2 . ' 23:59:59'; }
+                db()->prepare('INSERT INTO home_pages (user_id,hidden,hidden_until) VALUES (?,?,?) ON DUPLICATE KEY UPDATE hidden=VALUES(hidden), hidden_until=VALUES(hidden_until)')->execute([$uid, $val, $until]);
+                admin_log('hm_home_hide', 'user#' . $uid . ' hidden=' . $val . ($until ? ' jusqu\'au ' . substr($until, 0, 10) : '') . ($reason ? ' · ' . $reason : ''));
+                $msg = $val ? ('🚫 Home masquée' . ($until ? ' jusqu\'au ' . substr($until, 0, 10) : '') . '.') : '✅ Home rétablie.'; break;
             }
             case 'hm_home_lock': {
                 ensure_home_admin();
                 $uid = (int)($_POST['user_id'] ?? 0); $val = (int)!!($_POST['val'] ?? 0);
                 $reason = mb_substr(trim((string)($_POST['reason'] ?? '')), 0, 255);
-                db()->prepare('INSERT INTO home_pages (user_id,edit_locked) VALUES (?,?) ON DUPLICATE KEY UPDATE edit_locked=VALUES(edit_locked)')->execute([$uid, $val]);
-                admin_log('hm_home_lock', 'user#' . $uid . ' locked=' . $val . ($reason ? ' · ' . $reason : ''));
-                $msg = $val ? '🔒 Édition bloquée.' : '🔓 Édition débloquée.'; break;
+                $until = null; if ($val) { $u2 = trim((string)($_POST['until'] ?? '')); if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $u2)) $until = $u2 . ' 23:59:59'; }
+                db()->prepare('INSERT INTO home_pages (user_id,edit_locked,locked_until) VALUES (?,?,?) ON DUPLICATE KEY UPDATE edit_locked=VALUES(edit_locked), locked_until=VALUES(locked_until)')->execute([$uid, $val, $until]);
+                admin_log('hm_home_lock', 'user#' . $uid . ' locked=' . $val . ($until ? ' jusqu\'au ' . substr($until, 0, 10) : '') . ($reason ? ' · ' . $reason : ''));
+                $msg = $val ? ('🔒 Édition bloquée' . ($until ? ' jusqu\'au ' . substr($until, 0, 10) : '') . '.') : '🔓 Édition débloquée.'; break;
             }
             case 'hm_gb_hide': {
                 ensure_home_admin();
@@ -1161,6 +1163,7 @@ function ensure_home_admin(): void {
     try { if (!col_exists('home_reports', 'decision')) db()->exec("ALTER TABLE home_reports ADD COLUMN decision VARCHAR(400) NOT NULL DEFAULT ''"); } catch (Throwable $e) {}
     try { if (!col_exists('home_reports', 'handled_at')) db()->exec("ALTER TABLE home_reports ADD COLUMN handled_at DATETIME NULL"); } catch (Throwable $e) {}
     try { if (!col_exists('home_reports', 'snapshot')) db()->exec("ALTER TABLE home_reports ADD COLUMN snapshot VARCHAR(400) NOT NULL DEFAULT ''"); } catch (Throwable $e) {}
+    try { if (!col_exists('home_pages', 'hidden_until')) db()->exec("ALTER TABLE home_pages ADD COLUMN hidden_until DATETIME NULL, ADD COLUMN locked_until DATETIME NULL"); } catch (Throwable $e) {}
 }
 function sitemgr_sections(): array {
     return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'apparence' => ['🎨', 'Apparence'], 'ressources' => ['🏠', 'Ressources Homes'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
@@ -1266,11 +1269,12 @@ function hm_asset_files(string $kind): array {
 function hm_disabled(string $kind): array {
     try { $s = db()->prepare('SELECT resource FROM home_assets_disabled WHERE kind=?'); $s->execute([$kind]); $o = []; foreach ($s->fetchAll() as $r) $o[$r['resource']] = 1; return $o; } catch (Throwable $e) { return []; }
 }
-function hm_reason_action(string $action, array $fields, string $label, string $cls = 'sm-btn'): string {
+function hm_reason_action(string $action, array $fields, string $label, string $cls = 'sm-btn', bool $withDate = false): string {
     $h = '<details style="display:inline-block;margin:0 3px 3px 0"><summary class="' . $cls . '" style="list-style:none;display:inline-block">' . h($label) . '</summary>'
-       . '<form method="post" class="js" data-reload style="margin-top:5px;display:flex;gap:5px">' . csrf_field() . '<input type="hidden" name="action" value="' . h($action) . '">';
+       . '<form method="post" class="js" data-reload style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:flex-end">' . csrf_field() . '<input type="hidden" name="action" value="' . h($action) . '">';
     foreach ($fields as $k => $v) $h .= '<input type="hidden" name="' . h((string)$k) . '" value="' . h((string)$v) . '">';
-    $h .= '<input name="reason" placeholder="motif (journalisé)" style="width:180px"><button class="sm-btn primary">Confirmer</button></form></details>';
+    if ($withDate) $h .= '<label style="font-size:11px;color:var(--mut)">Jusqu\'au (vide = permanent)<input type="date" name="until"></label>';
+    $h .= '<input name="reason" placeholder="motif (journalisé)" style="width:170px"><button class="sm-btn primary">Confirmer</button></form></details>';
     return $h;
 }
 function page_homemod(): void {
@@ -1326,8 +1330,10 @@ function hm_view_reports(): void {
     if (!$r) { echo '<div class="card"><div class="empty">Signalement introuvable.</div></div></div></div>'; return; }
     $ownerId = (int)$r['owner_id']; $owner = hm_uname($ownerId); $homeUrl = '/v2/?p=home/' . rawurlencode($owner);
     $backUrl = '?p=homemod&sec=reports' . ($st ? '&st=' . $st : '') . '&r=' . (int)$r['id'];
-    $hp = db()->prepare('SELECT hidden,edit_locked FROM home_pages WHERE user_id=?'); $hp->execute([$ownerId]); $home = $hp->fetch() ?: ['hidden' => 0, 'edit_locked' => 0];
+    $hp = db()->prepare('SELECT hidden,edit_locked,hidden_until,locked_until FROM home_pages WHERE user_id=?'); $hp->execute([$ownerId]); $home = $hp->fetch() ?: ['hidden' => 0, 'edit_locked' => 0, 'hidden_until' => null, 'locked_until' => null];
     $hidden = (int)$home['hidden']; $locked = (int)$home['edit_locked'];
+    $hUntil = !empty($home['hidden_until']) ? ' <span class="sub">jusqu\'au ' . h(substr((string)$home['hidden_until'], 0, 10)) . '</span>' : '';
+    $lUntil = !empty($home['locked_until']) ? ' <span class="sub">jusqu\'au ' . h(substr((string)$home['locked_until'], 0, 10)) . '</span>' : '';
     $gb = null; if ($r['target_type'] === 'gb') { $gm = db()->prepare('SELECT message,author_name,author_id,hidden FROM home_guestbook WHERE id=?'); $gm->execute([(int)$r['target_id']]); $gb = $gm->fetch() ?: null; }
 
     echo '<div class="card">';
@@ -1345,9 +1351,9 @@ function hm_view_reports(): void {
        . (!empty($r['handled_at']) ? '<tr><td class="muted">Le</td><td>' . h(substr((string)$r['handled_at'], 0, 16)) . '</td></tr>' : '')
        . '</table></div>';
     echo '<div class="panel"><div class="ph"><h3>🏠 État de la Home</h3></div><table class="clean">'
-       . '<tr><td class="muted">Visibilité</td><td>' . ($hidden ? '<span class="rk red">Masquée</span>' : '<span class="rk green">Visible</span>') . '</td></tr>'
-       . '<tr><td class="muted">Édition</td><td>' . ($locked ? '<span class="rk red">Bloquée</span>' : '<span class="rk green">Autorisée</span>') . '</td></tr>'
-       . '</table><p class="sub" style="margin-top:6px">Un dossier clos ne masque pas la Home : états distincts.</p></div></div>';
+       . '<tr><td class="muted">Visibilité</td><td>' . ($hidden ? '<span class="rk red">Masquée</span>' . $hUntil : '<span class="rk green">Visible</span>') . '</td></tr>'
+       . '<tr><td class="muted">Édition</td><td>' . ($locked ? '<span class="rk red">Bloquée</span>' . $lUntil : '<span class="rk green">Autorisée</span>') . '</td></tr>'
+       . '</table><p class="sub" style="margin-top:6px">Un dossier clos ne masque pas la Home : états distincts. Une restriction avec date se lève automatiquement à l\'échéance.</p></div></div>';
 
     echo '<div class="panel"><div class="ph"><h3>📝 Contenu signalé</h3></div>';
     echo '<p><span class="muted">Propriétaire :</span> <a href="?p=user&id=' . $ownerId . '">' . h($owner) . '</a> · <span class="muted">Cible :</span> ' . ($r['target_type'] === 'gb' ? 'Message du livre d\'or #' . (int)$r['target_id'] : 'Home entière') . '</p>';
@@ -1395,8 +1401,8 @@ function hm_view_reports(): void {
        . '<button class="sm-btn primary">💾 Enregistrer la décision</button></form>';
     echo '<p class="sub" style="margin:12px 0 6px">Actions sur la Home (chacune demande un motif, journalisé) :</p><div style="display:flex;flex-wrap:wrap;gap:4px">';
     if ($r['target_type'] === 'gb' && $gb) echo hm_reason_action('hm_gb_hide', ['mid' => (int)$r['target_id'], 'val' => ((int)$gb['hidden'] ? 0 : 1), 'back' => $backUrl], ((int)$gb['hidden'] ? 'Rétablir le message' : 'Masquer le message'));
-    echo hm_reason_action('hm_home_hide', ['user_id' => $ownerId, 'val' => ($hidden ? 0 : 1), 'back' => $backUrl], ($hidden ? 'Rendre la Home visible' : 'Masquer la Home'), ($hidden ? 'sm-btn' : 'sm-btn danger'));
-    echo hm_reason_action('hm_home_lock', ['user_id' => $ownerId, 'val' => ($locked ? 0 : 1), 'back' => $backUrl], ($locked ? 'Débloquer l\'édition' : 'Bloquer l\'édition'));
+    echo hm_reason_action('hm_home_hide', ['user_id' => $ownerId, 'val' => ($hidden ? 0 : 1), 'back' => $backUrl], ($hidden ? 'Rendre la Home visible' : 'Masquer la Home'), ($hidden ? 'sm-btn' : 'sm-btn danger'), !$hidden);
+    echo hm_reason_action('hm_home_lock', ['user_id' => $ownerId, 'val' => ($locked ? 0 : 1), 'back' => $backUrl], ($locked ? 'Débloquer l\'édition' : 'Bloquer l\'édition'), 'sm-btn', !$locked);
     echo '</div>';
     echo '<p class="sub" style="margin-top:12px">Pour sanctionner le compte (bannissement), ouvre la <a href="?p=user&id=' . $ownerId . '">fiche du propriétaire</a> → onglet Modération.</p>';
     echo '</div>';
@@ -1412,15 +1418,15 @@ function hm_view_reports(): void {
 function hm_view_restrictions(): void {
     echo '<div class="card"><div class="ph"><h3>🚧 Restrictions actives</h3></div>';
     echo '<p class="sub" style="margin:-6px 0 10px">Homes actuellement <b>masquées</b> au public ou dont l\'<b>édition est bloquée</b>. Chaque rétablissement demande un motif (journalisé).</p>';
-    try { $rows = db()->query("SELECT user_id,hidden,edit_locked FROM home_pages WHERE hidden=1 OR edit_locked=1 ORDER BY updated_at DESC LIMIT 100")->fetchAll(); }
+    try { $rows = db()->query("SELECT user_id,hidden,edit_locked,hidden_until,locked_until FROM home_pages WHERE hidden=1 OR edit_locked=1 ORDER BY updated_at DESC LIMIT 100")->fetchAll(); }
     catch (Throwable $e) { $rows = []; }
     if (!$rows) { echo '<div class="empty">Aucune restriction active. 🎉</div></div>'; return; }
     echo '<table class="clean"><tr><th>Joueur</th><th>Visibilité</th><th>Édition</th><th style="text-align:right">Rétablir</th></tr>';
     foreach ($rows as $r) {
         $uid = (int)$r['user_id']; $owner = hm_uname($uid); $back = '?p=homemod&sec=restrictions';
         echo '<tr><td><a href="?p=user&id=' . $uid . '"><b>' . h($owner) . '</b></a> <a class="sub" href="/v2/?p=home/' . h(rawurlencode($owner)) . '" target="_blank">(Home ↗)</a></td>'
-           . '<td>' . ((int)$r['hidden'] ? '<span class="rk red">Masquée</span>' : '<span class="rk green">Visible</span>') . '</td>'
-           . '<td>' . ((int)$r['edit_locked'] ? '<span class="rk red">Bloquée</span>' : '<span class="rk green">Autorisée</span>') . '</td><td style="text-align:right">';
+           . '<td>' . ((int)$r['hidden'] ? '<span class="rk red">Masquée</span>' . (!empty($r['hidden_until']) ? ' <span class="sub">→ ' . h(substr((string)$r['hidden_until'], 0, 10)) . '</span>' : '') : '<span class="rk green">Visible</span>') . '</td>'
+           . '<td>' . ((int)$r['edit_locked'] ? '<span class="rk red">Bloquée</span>' . (!empty($r['locked_until']) ? ' <span class="sub">→ ' . h(substr((string)$r['locked_until'], 0, 10)) . '</span>' : '') : '<span class="rk green">Autorisée</span>') . '</td><td style="text-align:right">';
         if ((int)$r['hidden']) echo hm_reason_action('hm_home_hide', ['user_id' => $uid, 'val' => 0, 'back' => $back], 'Rendre visible');
         if ((int)$r['edit_locked']) echo hm_reason_action('hm_home_lock', ['user_id' => $uid, 'val' => 0, 'back' => $back], 'Débloquer l\'édition');
         echo '</td></tr>';
