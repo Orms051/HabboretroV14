@@ -2873,7 +2873,8 @@ function page_user(): void {
 
     // ===== Onglets internes (fail-safe : toutes les sections restent visibles sans JS) =====
     echo '<div class="uptabs" id="uptabs"><div class="utabbar">'
-       . '<button type="button" data-t="ut-compte" class="on">👤 Compte</button>'
+       . '<button type="button" data-t="ut-overview" class="on">📋 Vue d\'ensemble</button>'
+       . '<button type="button" data-t="ut-compte">👤 Compte</button>'
        . '<button type="button" data-t="ut-home">🏠 Habbo Home</button>'
        . '<button type="button" data-t="ut-inv">📦 Inventaire</button>'
        . '<button type="button" data-t="ut-appts">🏠 Appartements</button>'
@@ -2882,7 +2883,34 @@ function page_user(): void {
        . '<button type="button" data-t="ut-mod">⚠️ Modération</button>'
        . '</div>';
 
-    echo '<section class="utab on" id="ut-compte"><div class="cols">';
+    // ===== Onglet Vue d'ensemble (cartes résumé + liens « Voir tout » vers les onglets) =====
+    echo '<section class="utab on" id="ut-overview">';
+    $ovRooms = (int)db()->query('SELECT COUNT(*) FROM rooms WHERE owner_id=\'' . (int)$id . '\'')->fetchColumn();
+    ensure_admin_notes();
+    $ovNotes = db()->prepare('SELECT author,note,created_at FROM admin_notes WHERE user_id=? ORDER BY id DESC LIMIT 4'); $ovNotes->execute([$id]); $ovNoteList = $ovNotes->fetchAll();
+    $ovLnk = 'style="margin-left:auto;background:none;border:0;cursor:pointer;color:var(--blue);font-weight:600;font-size:13px"';
+    echo '<div class="dcols">';
+    echo '<div class="panel"><div class="ph"><h3>📊 Résumé &amp; activité</h3><button type="button" onclick="utShow(\'ut-compte\')" ' . $ovLnk . '>Compte →</button></div>'
+       . '<table class="clean"><tr><td class="muted">Rang</td><td>' . rank_badge((int)$u['rank']) . '</td></tr>'
+       . '<tr><td class="muted">État</td><td>' . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">Compte actif</span>') . '</td></tr>'
+       . '<tr><td class="muted">Crédits</td><td><b>' . number_format((int)$u['credits'], 0, ',', ' ') . '</b> · ' . (int)$u['tickets'] . ' tickets</td></tr>'
+       . '<tr><td class="muted">Mission</td><td>' . h($u['motto'] !== '' ? $u['motto'] : '—') . '</td></tr>'
+       . '<tr><td class="muted">Inscrit le</td><td>' . h($created) . '</td></tr>'
+       . '<tr><td class="muted">Dernière activité</td><td>' . h($seen) . '</td></tr></table></div>';
+    echo '<div class="panel"><div class="ph"><h3>🏠 Habbo Home</h3><button type="button" onclick="utShow(\'ut-home\')" ' . $ovLnk . '>Détails →</button></div>'
+       . '<div class="row" style="gap:8px;margin-bottom:8px"><a class="mini" href="' . h($homeUrl) . '" target="_blank">↗ Ouvrir sa Home</a><button type="button" class="mini ghost" onclick="utCopy(\'' . h($homeUrl) . '\')">📋 Copier le lien</button></div>'
+       . '<p class="muted sm">Statut, signalements et livre d\'or dans <a href="?p=homemod">Modération des Homes</a>.</p></div>';
+    echo '</div>';
+    echo '<div class="cols">';
+    echo '<div class="panel"><div class="ph"><h3>🏠 Appartements</h3><button type="button" onclick="utShow(\'ut-appts\')" ' . $ovLnk . '>Voir tout →</button></div><p><b>' . $ovRooms . '</b> appartement(s).</p></div>';
+    echo '<div class="panel"><div class="ph"><h3>📛 Badges &amp; Club</h3><button type="button" onclick="utShow(\'ut-badges\')" ' . $ovLnk . '>Voir tout →</button></div><p><b>' . count($ob) . '</b> badge(s) possédé(s). Club Habbo : <b>' . ($hcActive ? h($hc) : 'non membre') . '</b>.</p></div>';
+    echo '</div>';
+    echo '<div class="panel"><div class="ph"><h3>🕑 Dernières interventions du staff</h3><button type="button" onclick="utShow(\'ut-msg\')" ' . $ovLnk . '>Notes →</button></div>';
+    if (!$ovNoteList) echo '<div class="empty">Aucune note staff pour ce joueur.</div>';
+    else { echo '<table class="clean"><tr><th>Quand</th><th>Par</th><th>Note</th></tr>'; foreach ($ovNoteList as $n) echo '<tr><td class="sm muted">' . h(date('d/m/Y H:i', strtotime((string)$n['created_at']))) . '</td><td class="sm"><b>' . h($n['author']) . '</b></td><td>' . h($n['note']) . '</td></tr>'; echo '</table>'; }
+    echo '</div></section>';
+
+    echo '<section class="utab" id="ut-compte"><div class="cols">';
     echo '<div class="panel"><div class="ph"><h3>✏️ Réglages du compte</h3></div>
         <form method="post" class="js row" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="user_update"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">
         <label>Rang<select name="rank">' . rank_options((int)$u['rank']) . '</select></label>
