@@ -2845,7 +2845,7 @@ function page_user(): void {
     $rb = []; foreach (db()->query('SELECT badge FROM rank_badges WHERE rank=' . (int)$u['rank']) as $r) $rb[] = $r['badge'];
     $ob = []; $obs = db()->prepare('SELECT badge FROM users_badges WHERE user_id=?'); $obs->execute([$id]); foreach ($obs as $r) $ob[] = $r['badge'];
 
-    echo '<div class="pwrap"><div style="margin-bottom:10px"><a class="mini ghost lnkbtn" href="?p=users">← Retour aux joueurs</a></div>';
+    echo '<div style="margin-bottom:10px"><a class="mini ghost lnkbtn" href="?p=users">← Retour aux joueurs</a></div>';
     page_title('👤 ' . $u['username'], 'Fiche complète du joueur · ID ' . $id);
     echo '<div style="margin:-10px 0 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
        . '<img src="/avatar.php?user=' . h(rawurlencode((string)$u['username'])) . '&size=b&v=2" alt="Avatar de ' . h((string)$u['username']) . '" width="64" height="110" loading="lazy" style="image-rendering:pixelated;image-rendering:crisp-edges;vertical-align:bottom;background:#f3eecf;border:1px solid #d8cfa6;border-radius:4px">'
@@ -2935,7 +2935,6 @@ function page_user(): void {
     echo '<form method="post" class="js" data-reload data-confirm="⚠️ SUPPRIMER TOUT l\'inventaire (tous les objets non posés) de ' . h($u['username']) . ' ? Irréversible." style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="clear_hand"><input type="hidden" name="username" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '"><button class="mini warn">🧹 Vider TOUT l\'inventaire</button></form>';
     echo '<form method="post" class="js" data-reload data-confirm="Supprimer définitivement le compte ' . h($u['username']) . ' ? Irréversible." style="display:inline"><input type="hidden" name="action" value="user_delete"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="?p=users">' . csrf_field() . '<button class="mini" style="background:var(--red)">🗑️ Supprimer ce compte</button></form>';
     echo '</div></div>';
-    echo '</div>'; // fin .pwrap (fiche joueur à largeur confortable)
 }
 
 function page_bots(): void {
@@ -4294,8 +4293,6 @@ body.sb-collapsed .side .brand::after{content:'H';font-size:18px}
 .editcols{display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-gap:18px;gap:18px;align-items:start}
 @media(max-width:1100px){.editcols{grid-template-columns:1fr}}
 .aside-panel{position:sticky;top:76px}
-/* Écrans denses en formulaires (fiche joueur, éditeurs) : largeur confortable, pas d'étirement plein écran */
-.pwrap{max-width:1360px}
 .side nav .grp .i{font-size:16px;width:22px;text-align:center}
 .side nav .grpitems a{padding-left:18px;font-size:13.5px}
 .side nav .grpitems a .i{font-size:15px}
@@ -4399,13 +4396,9 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
   <form class="tb-search" method="get" action="?"><input type="hidden" name="p" value="search"><input name="q" placeholder="Rechercher un joueur, un mobi, une salle…" value="<?= $sq ?>"><button type="submit" title="Rechercher">🔍</button></form>
   <a class="tb-status <?= $emuUp ? 'up' : 'down' ?>" href="?p=server" title="État de l'émulateur — ouvrir la page Serveur"><span class="dot"></span><?= $emuUp ? 'En marche' : 'Arrêté' ?></a>
 </header><div class="content"><?php
-    foreach (nav_groups() as $gl => $keys) {
-        if ($gl === '' || !in_array($p, $keys, true)) continue;
-        echo '<div class="subtabs">';
-        foreach ($keys as $k) { if (!isset($nav[$k]) || !tab_allowed($k)) continue; [$ic, $lbl] = $nav[$k]; $bdg = ($k === 'messages') ? messages_badge() : 0; echo '<a class="' . ($p === $k ? 'on' : '') . '" href="?p=' . $k . '"><span>' . $ic . '</span> ' . h($lbl) . ($bdg > 0 ? ' <span class="nbadge">' . $bdg . '</span>' : '') . '</a>'; }
-        echo '</div>';
-        break;
-    }
+    // Plus de barre d'onglets horizontale pour le groupe courant : ses onglets sont
+    // désormais dans le menu latéral (groupe dépliable). Les sous-sections propres à
+    // une page (Gestion du Site « sec= », Homes…) gardent leur propre sous-navigation.
     if ($flash) echo '<script>window.__flash=' . json_encode($flash) . ';</script>';
     // Liste d'autocomplétion des pseudos, disponible pour tous les champs (list="dl_pseudos")
     echo pseudo_datalist();
