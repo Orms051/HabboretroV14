@@ -1150,7 +1150,7 @@ function sitemgr_style(): void {
     static $done = false; if ($done) return; $done = true;
     echo <<<'CSS'
 <style>
-.smwrap{max-width:1100px}
+.smwrap{max-width:none}
 .smwrap .sm-nav{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 16px}
 .smwrap .sm-nav a{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border-radius:9px;text-decoration:none;color:var(--txt);border:1px solid var(--line2);background:var(--panel);font-size:13px;transition:.12s}
 .smwrap .sm-nav a:hover{border-color:var(--acc)}
@@ -4204,7 +4204,7 @@ a{color:inherit}
 .side .foot a:hover{color:var(--txt)}
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
 .topbar{height:0}
-.content{padding:28px 36px 70px;max-width:1400px;width:100%;margin:0 auto}
+.content{padding:24px 28px 92px;max-width:none;width:100%;margin:0}
 .pagehead h1{font-size:25px;margin:0}.pagehead .sub{color:var(--mut);margin:4px 0 18px}
 .sub{color:var(--mut)}.muted{color:var(--mut)}.sm{font-size:12px}
 h3{font-size:15px;margin:0}h3.sec{margin:22px 0 10px;color:var(--mut);font-size:13px;text-transform:uppercase;letter-spacing:1px}
@@ -4266,6 +4266,26 @@ button.bigok{background:var(--green)}button.bigred{background:var(--red)}button.
 .toast.err{background:#331414;border-color:#6b2c2c;color:#f4c0c0}
 @keyframes sl{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
 @media(max-width:760px){.side{width:64px;flex-basis:64px}.side .brand small,.side nav a span,.side .foot .who,.side .foot a{display:none}.side nav a{justify-content:center}.content{padding:18px}}
+/* --- Cadre commun 2026-10 : pleine largeur + repli barre latérale + barre d'actions collante --- */
+.sbtoggle{background:none;border:0;color:var(--mut);cursor:pointer;font-size:18px;padding:6px 10px;border-radius:9px;line-height:1;margin-right:6px}
+.sbtoggle:hover{background:var(--panel2);color:var(--txt)}
+body.sb-collapsed .side{width:64px;flex:0 0 64px}
+body.sb-collapsed .side .brand small,body.sb-collapsed .side nav a span,body.sb-collapsed .side nav .grp span,body.sb-collapsed .side nav .grp .car,body.sb-collapsed .side .foot .who,body.sb-collapsed .side .foot a{display:none}
+body.sb-collapsed .side nav a{justify-content:center}
+body.sb-collapsed .side nav .grp{justify-content:center;padding-left:0;padding-right:0}
+body.sb-collapsed .side .brand{font-size:0;padding:20px 0;text-align:center}
+body.sb-collapsed .side .brand::after{content:'H';font-size:18px}
+/* Barre d'actions collante : Enregistrer / Annuler toujours accessibles */
+.savebar{position:sticky;bottom:0;z-index:15;display:flex;align-items:center;margin:18px -28px -92px;padding:12px 28px;background:var(--panel);border-top:1px solid var(--line2);box-shadow:0 -4px 14px rgba(0,0,0,.08)}
+.savebar>*+*{margin-left:10px}.savebar .spacer{flex:1}.savebar .hint{margin:0}
+/* Éditeur : zone principale large + colonne latérale repliable (sticky) */
+.editcols{display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-gap:18px;gap:18px;align-items:start}
+@media(max-width:1100px){.editcols{grid-template-columns:1fr}}
+.aside-panel{position:sticky;top:76px}
+.side nav .grp .i{font-size:16px;width:22px;text-align:center}
+.side nav .grpitems a{padding-left:18px;font-size:13.5px}
+.side nav .grpitems a .i{font-size:15px}
+body.sb-collapsed .side nav .grpitems a{padding-left:13px}
 /* --- Raffinements visuels 2026-09 --- */
 .side nav a,button,.stat,.panel,button.season,a.mini,button.mini,a.ghost{transition:background .15s ease,color .15s ease,border-color .15s ease,transform .12s ease,box-shadow .15s ease}
 .side nav a:hover{transform:translateX(2px)}
@@ -4343,10 +4363,13 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
             foreach ($visible as $k) { [$ic, $lbl] = $nav[$k]; echo '<a class="' . ($p === $k ? 'on' : '') . '" href="?p=' . $k . '"><span class="i">' . $ic . '</span><span>' . h($lbl) . '</span></a>'; }
             continue;
         }
-        $first = reset($visible);
         $cur = in_array($p, $visible, true);
         $gb = ($grpLabel === 'Messagerie') ? messages_badge() : 0;
-        echo '<a class="' . ($cur ? 'on' : '') . '" href="?p=' . $first . '"><span class="i">' . ($gicons[$grpLabel] ?? '📁') . '</span><span>' . h($grpLabel) . '</span>' . ($gb > 0 ? '<span class="sidebadge">' . $gb . '</span>' : '') . '</a>';
+        echo '<div class="navgrp' . ($cur ? ' open' : '') . '"' . ($cur ? ' data-cur="1"' : '') . ' data-g="' . h($grpLabel) . '">';
+        echo '<button type="button" class="grp" onclick="toggleGrp(this)"><span class="i">' . ($gicons[$grpLabel] ?? '📁') . '</span><span>' . h($grpLabel) . '</span>' . ($gb > 0 ? '<span class="sidebadge">' . $gb . '</span>' : '') . '<span class="car">▸</span></button>';
+        echo '<div class="grpitems">';
+        foreach ($visible as $k) { [$ic, $lbl] = $nav[$k]; $tb = ($k === 'messages') ? messages_badge() : 0; echo '<a class="' . ($p === $k ? 'on' : '') . '" href="?p=' . $k . '"><span class="i">' . $ic . '</span><span>' . h($lbl) . '</span>' . ($tb > 0 ? '<span class="sidebadge">' . $tb . '</span>' : '') . '</a>'; }
+        echo '</div></div>';
     }
     ?></nav><div class="foot">
     <label class="thsel">🎨 Thème<select onchange="setTheme(this.value)"><?php foreach (THEMES as $k => $tt) echo '<option value="' . $k . '"' . ($k === $tk ? ' selected' : '') . '>' . $tt[1] . ' ' . h($tt[0]) . '</option>'; ?></select></label>
@@ -4357,6 +4380,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
     $emuUp = emu_running();
     $sq = ($p === 'search') ? h(trim($_GET['q'] ?? '')) : '';
 ?><header class="topbar">
+  <button type="button" class="sbtoggle" onclick="toggleSidebar()" title="Replier / déplier le menu" aria-label="Replier le menu">☰</button>
   <div class="tb-crumb"><?php if ($secLabel !== '') echo '<span class="tb-sec">' . h($secLabel) . '</span><span class="tb-sep">›</span>'; ?><b><?= h($pageLabel) ?></b></div>
   <form class="tb-search" method="get" action="?"><input type="hidden" name="p" value="search"><input name="q" placeholder="Rechercher un joueur, un mobi, une salle…" value="<?= $sq ?>"><button type="submit" title="Rechercher">🔍</button></form>
   <a class="tb-status <?= $emuUp ? 'up' : 'down' ?>" href="?p=server" title="État de l'émulateur — ouvrir la page Serveur"><span class="dot"></span><?= $emuUp ? 'En marche' : 'Arrêté' ?></a>
@@ -4387,6 +4411,8 @@ function setTheme(v){document.cookie='r14theme='+v+';path=/;max-age=31536000';lo
 function pickBadge(c){var e=document.getElementById('badgecode');if(e){e.value=c;e.scrollIntoView({block:'center'});e.focus();toast('Badge '+c+' sélectionné',true);}}
 function toggleGrp(btn){var g=btn.parentNode;g.classList.toggle('open');try{var o=JSON.parse(localStorage.getItem('r14nav')||'{}');o[g.getAttribute('data-g')]=g.classList.contains('open');localStorage.setItem('r14nav',JSON.stringify(o));}catch(e){}}
 (function(){try{var o=JSON.parse(localStorage.getItem('r14nav')||'{}');var l=document.querySelectorAll('.navgrp');for(var i=0;i<l.length;i++){var g=l[i];if(g.getAttribute('data-cur'))continue;var k=g.getAttribute('data-g');if(k in o){if(o[k])g.classList.add('open');else g.classList.remove('open');}}}catch(e){}})();
+function toggleSidebar(){var c=document.body.classList.toggle('sb-collapsed');try{localStorage.setItem('r14sb',c?'1':'0');}catch(e){}}
+(function(){try{if(localStorage.getItem('r14sb')==='1')document.body.classList.add('sb-collapsed');}catch(e){}})();
 if(window.__flash)toast(window.__flash,true);
 /* Avertissement si un formulaire a des changements non enregistrés (exclut recherche/filtres) */
 var __dirty=false;
