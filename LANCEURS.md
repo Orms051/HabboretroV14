@@ -141,11 +141,24 @@ d'avant. (Au besoin, refais une copie juste avant la mise à jour.)
 ### 2. Installer **ensemble** la version cohérente
 Lanceurs, `run.bat` (marqueur Kepler) et scripts Minerva viennent de la **même**
 PR #5 : on les met à jour d'un bloc.
+
+**2a — Fusionner d'abord la PR #5 dans `main`.** La PR #5 doit être **fusionnée**
+(sur GitHub, bouton *Merge*, ou `gh pr merge 5`) **avant** la mise à jour du live.
+Tant qu'elle n'est pas fusionnée, `origin/main` **ne contient pas** le nouveau
+lanceur et le `git merge` ci-dessous n'apporterait rien.
+
+**2b — Mettre le live à jour** (fast-forward uniquement, aucun retour arrière).
+La ligne `git merge` ci-dessous apporte d'un bloc : START/STOP, `scripts\pack.ps1`,
+`run.bat` et les scripts Minerva versionnés.
 ```bat
 cd /d C:\laragon\www\HabboretroV14
 git fetch origin
-git merge --ff-only origin/main        REM apporte START/STOP + scripts\pack.ps1 + run.bat + minerva-scripts
+git merge --ff-only origin/main
 ```
+> Remarque .bat : ne mets **jamais** de `REM …` à la suite d'une commande sur la
+> **même ligne** — il serait passé comme **argument** à `git` (erreur). Un `REM`
+> doit toujours être **seul sur sa ligne**.
+
 Les copies ignorées de Minerva (`tools/minerva-bin/*.ps1`) seront **synchronisées
 au premier START** (sauvegarde `*.bak`, sans toucher binaire/runtime/logs).
 > ⚠️ Le marqueur d'identité de `run.bat` ne s'applique qu'à un Kepler **relancé
@@ -154,16 +167,23 @@ au premier START** (sauvegarde `*.bak`, sans toucher binaire/runtime/logs).
 > vérifier la sauvegarde dans `server.log`).
 
 ### 3. Démarrer (double-clic) — sans joueur connecté
-Double-clique **`START-HABBORETROV14.bat`**. Vérifie que chaque étape affiche
-**Déjà actif / Démarrage / Prêt**, et que le **bilan** final est :
-MariaDB *prête*, Apache *prêt*, Kepler *prêt*, Minerva *prêt*.
+Double-clique le fichier **`C:\laragon\www\HabboretroV14\START-HABBORETROV14.bat`**
+(c'est **uniquement** le nouveau lanceur ; il appelle `scripts\pack.ps1 -Action start`).
+Vérifie que chaque étape affiche **Déjà actif / Démarrage / Prêt**, et que le
+**bilan** final est : MariaDB *prête*, Apache *prêt*, Kepler *prêt*, Minerva *prêt*.
 
 ### 4. Vérifier le fonctionnement
 - **Jeu** : ouvre `http://localhost/client.php` dans **Basilisk**, entre dans
   l'hôtel, connecte-toi en jeu.
-- **Avatar non caché** : ouvre la page d'un Habbo dont l'avatar n'a pas encore
-  été généré (ou vide le cache `Server/www/cache/avatars/` juste avant) → l'image
-  doit s'afficher (pas la silhouette).
+- **Avatar non caché** : **ne vide pas** le cache. Force plutôt un rendu neuf en
+  demandant une **figure absente du cache** (le cache est indexé par la chaîne
+  `figure` : une combinaison de couleurs inhabituelle donne une nouvelle clé sans
+  toucher aux fichiers déjà générés). Ouvre dans Basilisk :
+  ```
+  http://localhost/avatar.php?figure=hr-115-42.hd-190-10.ch-215-66.lg-285-82.sh-290-80&sex=M&direction=2&size=b
+  ```
+  L'image de l'avatar doit s'afficher (pas la silhouette de secours). Tu peux
+  changer un chiffre de couleur pour forcer une autre clé si besoin.
 - **Maintien après fermeture du lanceur** : **ferme la fenêtre** du lanceur
   principal (START). Vérifie que **MariaDB, Apache, Kepler et Minerva restent
   actifs** (le site et le jeu continuent de répondre). C'est le point clé que je
