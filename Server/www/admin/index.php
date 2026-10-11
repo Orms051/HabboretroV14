@@ -305,6 +305,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $tmp = 'Habbo' . random_int(1000, 9999);
                 db()->prepare('UPDATE users SET password=? WHERE id=?')->execute([make_hash($tmp), (int)$tu['id']]);
                 db()->prepare('UPDATE password_resets SET status=\'done\', handled_by=?, handled_at=NOW() WHERE id=?')->execute([$_SESSION['admin']['username'] ?? '?', $rid]);
+                admin_log('pwreset_do', 'réinitialisation pour « ' . $req['username'] . ' » (mot de passe provisoire NON journalisé)');
                 $msg = '🔑 Mot de passe provisoire pour « ' . $req['username'] . ' » : ' . $tmp . ' — communique-le au joueur, il devra le changer.'; break;
             case 'pwreset_reject':
                 ensure_pw_resets();
@@ -977,7 +978,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             default: $ok = false; $msg = 'Action inconnue.';
         }
     } catch (Throwable $e) { $ok = false; $msg = '❌ Erreur : ' . $e->getMessage(); }
-    if ($ok && !in_array($a, ['note_add', 'note_del', 'cmd_fav_toggle'], true)) admin_log($a, strip_tags($msg));
+    // pwreset_do est exclu : son $msg contient le mot de passe provisoire EN CLAIR
+    // -> il est journalisé séparément, sans le secret (voir case 'pwreset_do').
+    if ($ok && !in_array($a, ['note_add', 'note_del', 'cmd_fav_toggle', 'pwreset_do'], true)) admin_log($a, strip_tags($msg));
     if (is_ajax()) { header('Content-Type: application/json'); echo json_encode(['ok' => $ok, 'msg' => $msg]); exit; }
     flash($msg); redirect($back);
 }
@@ -2173,7 +2176,7 @@ function sitemgr_apparence(): void {
     // Import
     echo '<div class="panel"><div class="ph"><h3>⬆️ Importer un fond</h3></div>';
     echo '<form method="post" class="js" data-reload enctype="multipart/form-data"><div class="row">' . csrf_field() . '<input type="hidden" name="action" value="site_bg_upload"><input type="file" name="file" accept="image/png,image/jpeg,image/gif" required><button>⬆️ Importer</button></div>';
-    echo '<p class="muted sm" style="margin-top:4px">PNG, JPG ou GIF (animation conservée). Max 3 Mo, 2000×2000 px. Stocké dans <code>web-gallery/v2/images/bg_patterns/</code>. Pixel-art : garde sa taille d\'origine en mode « Motif répété ».</p></div>';
+    echo '<p class="muted sm" style="margin-top:4px">PNG, JPG ou GIF (animation conservée). Max 3 Mo, 2000×2000 px. Stocké dans <code>web-gallery/v2/images/bg_patterns/</code>. Pixel-art : garde sa taille d\'origine en mode « Motif répété ».</p></form></div>';
 
     // Restaurer
     echo '<form method="post" class="js" data-reload style="margin-top:8px"><div class="panel"><div class="ph"><h3>↩️ Fond par défaut</h3></div>' . csrf_field() . '<input type="hidden" name="action" value="site_bg_reset">';
@@ -2238,7 +2241,7 @@ function action_tab(string $a): string {
     static $map = [
         // Gestion du Site (v2)
         'carousel_save' => 'sitemgr', 'site_setting' => 'sitemgr', 'sitepage_save' => 'sitemgr', 'sitepage_block_save' => 'sitemgr', 'sitepage_arrange' => 'sitemgr',
-        'nav_tab_save' => 'sitemgr', 'nav_item_save' => 'sitemgr', 'nav_move' => 'sitemgr', 'nav_flag' => 'sitemgr', 'media_upload' => 'sitemgr', 'site_bg' => 'sitemgr', 'site_bg_upload' => 'sitemgr',
+        'nav_tab_save' => 'sitemgr', 'nav_item_save' => 'sitemgr', 'nav_move' => 'sitemgr', 'nav_flag' => 'sitemgr', 'media_upload' => 'sitemgr', 'site_bg_apply' => 'sitemgr', 'site_bg_reset' => 'sitemgr', 'site_bg_upload' => 'sitemgr',
         'page_pin' => 'sitemgr', 'site_page_create' => 'sitemgr', 'site_news_save' => 'news', 'site_news_delete' => 'news',
         'hm_report_status' => 'homemod', 'hm_home_hide' => 'homemod', 'hm_home_lock' => 'homemod', 'hm_gb_hide' => 'homemod', 'hm_item_del' => 'homemod', 'hm_asset_toggle' => 'homemod',
         // Joueurs
