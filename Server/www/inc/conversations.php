@@ -161,6 +161,53 @@ function conv_messages(int $convId, bool $includeInternal = true): array
 }
 
 /**
+ * Annonce collective : crée une conversation (staff → joueur) pour chaque id donné,
+ * avec le même sujet + corps. Retourne le nombre de conversations créées.
+ * Limite dure de sécurité ($max) pour éviter un envoi massif accidentel.
+ */
+function conv_broadcast(array $playerIds, string $subject, string $body, string $senderName, int $max = 500): int
+{
+    ensure_conversations();
+    $body = trim($body);
+    if ($body === '') return 0;
+    $ids = array_values(array_unique(array_filter(array_map('intval', $playerIds), fn($v) => $v > 0)));
+    if (!$ids || count($ids) > $max) return 0;
+    $subject = mb_substr(trim($subject), 0, 150); if ($subject === '') $subject = 'Message de l\'équipe';
+    $n = 0;
+    foreach ($ids as $pid) {
+        if (conv_create($pid, $subject, 'staff', 'staff', $senderName, $body)) $n++;
+    }
+    return $n;
+}
+
+/**
+ * Fusion de deux conversations du MÊME joueur : déplace les messages de $source
+ * vers $target (en préservant l'ordre chronologique), puis supprime la source.
+ * Refus si joueurs différents, ids identiques, ou player_id=0 (legacy sans joueur).
+ * Retourne true si la fusion a eu lieu.
+ */
+function conv_merge(int $target, int $source): bool
+{
+    ensure_conversations();
+    if ($target <= 0 || $source <= 0 || $target === $source) return false;
+    try {
+        $st = db()->prepare('SELECT id,player_id FROM conversations WHERE id IN (?,?)');
+        $st->execute([$target, $source]);
+        $rows = $st->fetchAll();
+        if (count($rows) !== 2) return false;
+        $byId = []; foreach ($rows as $r) $byId[(int)$r['id']] = (int)$r['player_id'];
+        if (!isset($byId[$target], $byId[$source])) return false;
+        if ($byId[$target] === 0 || $byId[$source] === 0 || $byId[$target] !== $byId[$source]) return false;
+        db()->prepare('UPDATE conversation_messages SET conv_id=? WHERE conv_id=?')->execute([$target, $source]);
+        db()->prepare('UPDATE conversations SET updated_at=NOW() WHERE id=?')->execute([$target]);
+        db()->prepare('DELETE FROM conversations WHERE id=?')->execute([$source]);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+/**
  * Reprise des anciens messages dans le modèle conversation — IDEMPOTENTE (legacy_ref unique),
  * SANS doublons, SANS inventer de liens : chaque ancien message devient sa propre conversation.
  * Ne supprime rien : les tables d'origine restent intactes. Retourne le nombre de reprises.

@@ -389,6 +389,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 admin_log('conv_ack_set', $txt === '' ? '(désactivé)' : 'maj');
                 $msg = $txt === '' ? '✅ Accusé de réception désactivé.' : '✅ Accusé de réception enregistré.'; break;
             }
+            case 'conv_broadcast': {
+                ensure_conversations();
+                $subject = mb_substr(trim((string)($_POST['subject'] ?? '')), 0, 150);
+                $body = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 4000);
+                $mode = ($_POST['mode'] ?? 'list') === 'rank' ? 'rank' : 'list';
+                if ($body === '') { $ok = false; $msg = '❌ Message vide.'; break; }
+                $ids = [];
+                if ($mode === 'rank') {
+                    $minRank = max(1, (int)($_POST['min_rank'] ?? 5));
+                    try { foreach (db()->query('SELECT id FROM users WHERE `rank`>=' . $minRank) as $r) $ids[] = (int)$r['id']; } catch (Throwable $e) {}
+                } else {
+                    $names = preg_split('/[\s,;]+/', (string)($_POST['usernames'] ?? ''), -1, PREG_SPLIT_NO_EMPTY);
+                    $names = array_slice(array_unique($names), 0, 500);
+                    foreach ($names as $nm) { try { $q = db()->prepare('SELECT id FROM users WHERE username=?'); $q->execute([$nm]); $uid = (int)$q->fetchColumn(); if ($uid > 0) $ids[] = $uid; } catch (Throwable $e) {} }
+                }
+                if (!$ids) { $ok = false; $msg = '❌ Aucun destinataire valide.'; break; }
+                if (count($ids) > 500) { $ok = false; $msg = '❌ Trop de destinataires (' . count($ids) . '). Limite : 500.'; break; }
+                $n = conv_broadcast($ids, $subject, $body, (string)($_SESSION['admin']['username'] ?? 'Équipe'));
+                admin_log('conv_broadcast', $n . ' destinataires (' . $mode . ')');
+                $msg = '📣 Annonce envoyée à ' . $n . ' joueur' . ($n > 1 ? 's' : '') . '.'; break;
+            }
+            case 'conv_merge': {
+                ensure_conversations();
+                $target = (int)($_POST['cid'] ?? 0);
+                $source = (int)($_POST['src'] ?? 0);
+                if (conv_merge($target, $source)) { admin_log('conv_merge', '#' . $source . ' → #' . $target); $msg = '🔗 Conversations fusionnées.'; }
+                else { $ok = false; $msg = '❌ Fusion impossible (joueurs différents ou conversation invalide).'; }
+                break;
+            }
             case 'umsg_send':
                 ensure_user_msgs();
                 $toName = trim((string)($_POST['username'] ?? ''));
@@ -2484,6 +2513,7 @@ function action_tab(string $a): string {
         'smsg_post' => 'messages', 'smsg_delete' => 'messages',
         'conv_reply' => 'messages', 'conv_status' => 'messages', 'conv_new' => 'messages', 'conv_reprise' => 'messages',
         'conv_assign' => 'messages', 'conv_note' => 'messages', 'conv_category' => 'messages', 'conv_ack_set' => 'messages',
+        'conv_broadcast' => 'messages', 'conv_merge' => 'messages',
         // Jeux : codes & recycleur
         'voucher_add' => 'vouchers', 'voucher_delete' => 'vouchers',
         'recy_add' => 'recycler', 'recy_update' => 'recycler', 'recy_delete' => 'recycler',
@@ -3593,6 +3623,17 @@ function conv_assistance_view(): void {
        . '<textarea name="body" rows="2" maxlength="1000" placeholder="Laisser vide pour désactiver" style="width:100%">' . h($ackVal) . '</textarea>'
        . '<p class="muted sm" style="margin:4px 0 0">Message automatique envoyé au joueur dès qu\'il crée une demande.</p>'
        . '<button class="mini" style="margin-top:6px">💾 Enregistrer</button></form></details>';
+    // Annonce collective
+    echo '<details style="min-width:260px"><summary class="mini">📣 Annonce collective</summary>'
+       . '<form method="post" class="js" data-reload data-confirm="Envoyer cette annonce (une conversation par destinataire) ?" style="margin-top:8px"><input type="hidden" name="action" value="conv_broadcast">' . csrf_field()
+       . '<div class="sm" style="margin-bottom:4px"><label style="margin-right:12px"><input type="radio" name="mode" value="list" checked> Liste de pseudos</label>'
+       . '<label><input type="radio" name="mode" value="rank"> Par rang minimum</label></div>'
+       . '<textarea name="usernames" rows="2" placeholder="Pseudos séparés par virgule ou espace (max 500)" style="width:100%"></textarea>'
+       . '<label class="sm" style="display:block;margin-top:4px">Rang minimum (si « par rang ») <input type="number" name="min_rank" value="5" min="1" max="7" style="width:70px"></label>'
+       . '<input name="subject" maxlength="150" placeholder="Sujet" style="width:100%;margin-top:6px">'
+       . '<textarea name="body" rows="3" maxlength="4000" required placeholder="Texte de l\'annonce…" style="width:100%;margin-top:6px"></textarea>'
+       . '<p class="muted sm" style="margin:4px 0 0">Crée une conversation par destinataire (max 500). À utiliser avec parcimonie.</p>'
+       . '<button class="mini" style="margin-top:6px">📣 Envoyer l\'annonce</button></form></details>';
     echo '</div>';
 
     // Filtres : attribution + catégorie (conservent catégorie/attribution + contexte joueur)
@@ -3724,6 +3765,21 @@ function conv_assistance_view(): void {
            . '<input type="hidden" name="cid" value="' . $cid . '">'
            . '<textarea name="body" rows="2" maxlength="4000" required placeholder="Note visible uniquement par l\'équipe…" style="width:100%"></textarea>'
            . '<button class="mini" style="margin-top:6px">🔒 Enregistrer la note</button></form></details>';
+
+        // Fusion avec une autre conversation du même joueur (doublons)
+        $pid = (int)$conv['player_id'];
+        if ($pid > 0) {
+            $dups = []; try { $qd = db()->prepare('SELECT id,subject,updated_at FROM conversations WHERE player_id=? AND id<>? ORDER BY updated_at DESC LIMIT 50'); $qd->execute([$pid, $cid]); $dups = $qd->fetchAll(); } catch (Throwable $e) {}
+            if ($dups) {
+                echo '<details style="margin-top:10px"><summary class="mini">🔗 Fusionner un doublon dans cette conversation</summary>'
+                   . '<form method="post" class="js" data-reload data-confirm="Fusionner : tous les messages de la conversation choisie seront déplacés ici, puis elle sera supprimée. Continuer ?" style="margin-top:8px"><input type="hidden" name="action" value="conv_merge">' . csrf_field()
+                   . '<input type="hidden" name="cid" value="' . $cid . '">'
+                   . '<select name="src" class="mini" required><option value="">Choisir la conversation à absorber…</option>';
+                foreach ($dups as $d) echo '<option value="' . (int)$d['id'] . '">#' . (int)$d['id'] . ' · ' . h(mb_strimwidth((string)($d['subject'] ?: 'Sans sujet'), 0, 40, '…')) . ' (' . h(date('d/m/y', strtotime((string)$d['updated_at']))) . ')</option>';
+                echo '</select> <button class="mini">🔗 Fusionner ici</button>'
+                   . '<p class="muted sm" style="margin:4px 0 0">Les messages sont conservés et regroupés ici ; la conversation absorbée disparaît.</p></form></details>';
+            }
+        }
     }
     echo '</div>'; // hmdetail
     echo '</div>';  // hmwrap
