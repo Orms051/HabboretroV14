@@ -1409,7 +1409,7 @@ function hm_view_reports(): void {
     echo '<div class="card">';
     echo '<div class="ph"><h3>Signalement n°' . (int)$r['id'] . ' · Home de ' . h($owner) . '</h3></div>';
     echo '<p class="sub" style="margin:-6px 0 12px">Motif : <b>' . h((string)$r['reason']) . '</b> · signalé par <b>' . h((string)$r['reporter_name']) . '</b> le ' . h(substr((string)$r['created_at'], 0, 16)) . '</p>';
-    echo '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px"><a class="sm-btn primary" href="' . h($homeUrl) . '" target="_blank">🏠 Voir la Home ↗</a><a class="sm-btn" href="?p=user&id=' . $ownerId . '">👤 Fiche du propriétaire</a>';
+    echo '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px"><a class="sm-btn primary" href="' . h($homeUrl) . '" target="_blank">🏠 Voir la Home ↗</a><a class="sm-btn" href="?p=user&id=' . $ownerId . '">👤 Fiche du propriétaire</a><a class="sm-btn" href="?p=messages&pl=' . $ownerId . '">💬 Messages du joueur</a>';
     if ($r['target_type'] === 'gb') echo '<a class="sm-btn" href="' . h($homeUrl) . '#gb" target="_blank">💬 Voir le livre d\'or ↗</a>';
     echo '</div>';
 
@@ -3257,6 +3257,29 @@ function page_user(): void {
 
     // ===== Onglet Messages & notes (échanges visibles du joueur + notes privées staff) =====
     echo '<section class="utab" id="ut-msg">';
+
+    // Conversations du joueur (nouvelle messagerie)
+    if (function_exists('ensure_conversations')) {
+        ensure_conversations();
+        $cvs = []; try { $qc = db()->prepare("SELECT c.id,c.subject,c.category,c.status,c.updated_at,(SELECT COUNT(*) FROM conversation_messages m WHERE m.conv_id=c.id AND m.sender='player' AND m.read_staff=0) AS unread FROM conversations c WHERE c.player_id=? ORDER BY c.updated_at DESC LIMIT 20"); $qc->execute([$id]); $cvs = $qc->fetchAll(); } catch (Throwable $e) {}
+        $stMap = ['waiting_staff' => '🔴 À répondre', 'waiting_player' => '⏳ Attente joueur', 'resolved' => '✅ Résolu'];
+        echo '<div class="panel"><div class="ph"><h3>💬 Conversations</h3><a class="mini ghost" style="margin-left:auto" href="?p=messages&pl=' . $id . '">Gérer dans l\'assistance →</a></div>';
+        if (!$cvs) echo '<div class="empty">Aucune conversation. Tu peux en démarrer une depuis l\'assistance ou via le message ci-dessous.</div>';
+        else {
+            echo '<table class="clean"><tr><th>Sujet</th><th>Catégorie</th><th>Statut</th><th>Maj</th><th></th></tr>';
+            foreach ($cvs as $c) {
+                echo '<tr><td><a class="lnk" href="?p=messages&c=' . (int)$c['id'] . '"><b>' . h((string)($c['subject'] ?: 'Sans sujet')) . '</b></a>'
+                   . ((int)$c['unread'] ? ' <span class="rk red">' . (int)$c['unread'] . '</span>' : '') . '</td>'
+                   . '<td class="sm muted">' . h((string)$c['category']) . '</td>'
+                   . '<td class="sm">' . h($stMap[(string)$c['status']] ?? (string)$c['status']) . '</td>'
+                   . '<td class="sm muted">' . h(date('d/m H:i', strtotime((string)$c['updated_at']))) . '</td>'
+                   . '<td><a class="mini ghost" href="?p=messages&c=' . (int)$c['id'] . '">Ouvrir</a></td></tr>';
+            }
+            echo '</table>';
+        }
+        echo '</div>';
+    }
+
     // Notes staff (item 4)
     ensure_admin_notes();
     $notes = db()->prepare('SELECT * FROM admin_notes WHERE user_id=? ORDER BY id DESC'); $notes->execute([$id]); $noteList = $notes->fetchAll();
@@ -3523,10 +3546,13 @@ function conv_assistance_view(): void {
     // Liste (ouvertes d'abord, résolues ensuite) — filtres facultatifs (attribution + catégorie)
     $filter = in_array(($_GET['f'] ?? ''), ['mine', 'unassigned'], true) ? (string)$_GET['f'] : 'all';
     $catFilter = (isset($_GET['cat']) && isset($CATS[(string)$_GET['cat']])) ? (string)$_GET['cat'] : '';
+    $plFilter = (int)($_GET['pl'] ?? 0);
+    $plName = ''; if ($plFilter > 0) { try { $qp = db()->prepare('SELECT username FROM users WHERE id=?'); $qp->execute([$plFilter]); $plName = (string)$qp->fetchColumn(); } catch (Throwable $e) {} }
     $conds = []; $args = [];
     if ($filter === 'mine') { $conds[] = 'c.assigned_to=?'; $args[] = $me; }
     elseif ($filter === 'unassigned') { $conds[] = "c.assigned_to=''"; }
     if ($catFilter !== '') { $conds[] = 'c.category=?'; $args[] = $catFilter; }
+    if ($plFilter > 0) { $conds[] = 'c.player_id=?'; $args[] = $plFilter; }
     $where = $conds ? ('WHERE ' . implode(' AND ', $conds)) : '';
     $rows = [];
     try {
@@ -3546,12 +3572,15 @@ function conv_assistance_view(): void {
 
     echo '<div class="panel"><div class="ph"><h3>🎧 Assistance — conversations</h3>'
        . ($nbWait ? '<span class="rk red" style="margin-left:auto">' . $nbWait . ' à répondre</span>' : '<span class="muted sm" style="margin-left:auto">joueurs ↔ équipe</span>') . '</div>';
+    if ($plFilter > 0) {
+        echo '<div class="note" style="margin:0 0 8px">👤 Conversations de <b>' . h($plName !== '' ? $plName : ('#' . $plFilter)) . '</b> · <a class="lnk" href="?p=messages">voir toutes les conversations</a></div>';
+    }
 
     // Barre d'outils : nouveau message + reprise des anciens
     echo '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-start">';
-    echo '<details style="flex:1;min-width:280px"><summary class="mini">✉️ Nouveau message à un joueur</summary>'
+    echo '<details style="flex:1;min-width:280px"' . ($plFilter > 0 ? ' open' : '') . '><summary class="mini">✉️ Nouveau message à un joueur</summary>'
        . '<form method="post" class="js" data-reload style="margin-top:8px"><input type="hidden" name="action" value="conv_new">' . csrf_field()
-       . '<div class="row"><label style="flex:1">Destinataire<input name="username" list="dl_pseudos" autocomplete="off" placeholder="Pseudo…" required></label>'
+       . '<div class="row"><label style="flex:1">Destinataire<input name="username" list="dl_pseudos" autocomplete="off" placeholder="Pseudo…" value="' . h($plName) . '" required></label>'
        . '<label style="flex:1">Sujet<input name="subject" maxlength="150" placeholder="Ex : Réponse à ta demande"></label></div>'
        . '<label style="margin-top:6px">Message<textarea name="body" rows="3" maxlength="4000" required placeholder="Ton message pour le joueur."></textarea></label>'
        . '<button style="margin-top:8px">✉️ Créer la conversation</button></form></details>';
@@ -3566,15 +3595,16 @@ function conv_assistance_view(): void {
        . '<button class="mini" style="margin-top:6px">💾 Enregistrer</button></form></details>';
     echo '</div>';
 
-    // Filtres : attribution (conserve la catégorie) + catégorie (conserve l'attribution)
-    $catQS = $catFilter !== '' ? '&cat=' . rawurlencode($catFilter) : '';
+    // Filtres : attribution + catégorie (conservent catégorie/attribution + contexte joueur)
+    $plQS = $plFilter > 0 ? '&pl=' . $plFilter : '';
+    $catQS = ($catFilter !== '' ? '&cat=' . rawurlencode($catFilter) : '') . $plQS;
     $fl = function (string $k, string $lbl) use ($filter, $catQS) { return '<a class="mini ghost' . ($filter === $k ? ' on' : '') . '" href="?p=messages&f=' . $k . $catQS . '">' . $lbl . '</a>'; };
     echo '<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">'
        . $fl('all', 'Toutes') . ' ' . $fl('unassigned', 'Non attribuées') . ' ' . $fl('mine', 'Les miennes')
        . ' <span class="muted sm" style="margin-left:8px">Catégorie :</span>'
        . '<select class="mini" onchange="location.href=this.value">'
-       . '<option value="?p=messages&f=' . $filter . '"' . ($catFilter === '' ? ' selected' : '') . '>Toutes</option>';
-    foreach ($CATS as $ck => $cl) echo '<option value="?p=messages&f=' . $filter . '&cat=' . rawurlencode($ck) . '"' . ($catFilter === $ck ? ' selected' : '') . '>' . h($cl) . '</option>';
+       . '<option value="?p=messages&f=' . $filter . $plQS . '"' . ($catFilter === '' ? ' selected' : '') . '>Toutes</option>';
+    foreach ($CATS as $ck => $cl) echo '<option value="?p=messages&f=' . $filter . '&cat=' . rawurlencode($ck) . $plQS . '"' . ($catFilter === $ck ? ' selected' : '') . '>' . h($cl) . '</option>';
     echo '</select></div>';
 
     if (!$rows) {
@@ -3614,7 +3644,7 @@ function conv_assistance_view(): void {
            . '<span class="rk" style="margin-left:auto">' . h($statLabel[(string)$conv['status']] ?? (string)$conv['status']) . '</span></div>';
         $assignedTo = (string)($conv['assigned_to'] ?? '');
         echo '<p class="sm muted" style="margin:-4px 0 8px">Joueur : <b>' . h($name) . '</b>'
-           . ($conv['uname'] ? ' · <a class="lnk" href="?p=users&u=' . h(rawurlencode((string)$conv['uname'])) . '">fiche</a>' : '')
+           . ((int)$conv['player_id'] > 0 ? ' · <a class="lnk" href="?p=user&id=' . (int)$conv['player_id'] . '">fiche</a> · <a class="lnk" href="?p=messages&pl=' . (int)$conv['player_id'] . '">autres conversations</a>' : '')
            . ($conv['legacy_ref'] ? ' · <span title="Repris de l\'ancienne messagerie">ancien message repris</span>' : '') . '</p>';
 
         // Catégorie (modifiable)
