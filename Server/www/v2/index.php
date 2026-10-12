@@ -560,6 +560,11 @@ if ($p === 'conv_new') {
     if ($subject === '') $subject = 'Demande à l\'équipe';
     if ($body === '') redirect('?p=messages&done=empty');
     $cid = function_exists('conv_create') ? conv_create((int)$u['id'], $subject, $cat, 'player', (string)$u['username'], $body) : 0;
+    // Accusé de réception automatique (réglable en admin ; vide = désactivé).
+    if ($cid && function_exists('conv_system_notice')) {
+        $ack = function_exists('setting_get') ? (string)setting_get('conv.ack', 'Bien reçu ! L\'équipe de l\'hôtel te répondra ici dès que possible. Merci de ta patience 😊') : '';
+        if (trim($ack) !== '') conv_system_notice($cid, $ack);
+    }
     redirect($cid ? '?p=messages&c=' . $cid . '&done=sent' : '?p=messages&done=err');
 }
 /* ---- Joueur : répondre dans une conversation ---- */
@@ -621,7 +626,12 @@ if ($p === 'messages') {
         echo $flashHtml;
         echo '<p style="margin-bottom:8px"><a href="?p=messages">← Toutes mes conversations</a> · <span class="muted">' . h($statut[(string)$conv['status']] ?? '') . '</span></p>';
         foreach (conv_messages($cid, false) as $m) {
-            $staff = ((string)$m['sender'] !== 'player');
+            $snd = (string)$m['sender'];
+            if ($snd === 'system') {
+                echo '<div style="border:1px dashed #cdd3da;border-radius:4px;padding:6px 8px;margin-bottom:6px;background:#f4f6f8;font-size:10px;color:#6b7580;text-align:center">ℹ️ ' . nl2br(h((string)$m['body'])) . '</div>';
+                continue;
+            }
+            $staff = ($snd !== 'player');
             echo '<div style="border:1px solid ' . ($staff ? '#9fc6e8' : '#d9d2b8') . ';border-radius:4px;padding:8px;margin-bottom:6px;background:' . ($staff ? '#eef6fd' : '#fffef7') . '">'
                . '<div style="font-size:10px;color:#8a97a3;margin-bottom:3px"><b style="color:#5b5b5b">' . ($staff ? '👮 ' : '🙂 ') . h((string)($m['sender_name'] ?: ($staff ? 'Équipe' : (string)$u['username']))) . '</b>'
                . ' · ' . h(date('d/m/Y H:i', strtotime((string)$m['created_at']))) . '</div>'

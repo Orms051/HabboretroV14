@@ -87,6 +87,30 @@ function conv_add_message(int $convId, string $sender, string $senderName, strin
     }
 }
 
+/**
+ * Ajoute un message « système » (accusé de réception, info automatique) SANS
+ * changer le statut de la conversation ni les boîtes du joueur. Déjà marqué lu
+ * des deux côtés (purement informatif). Idempotent par conversation via $once.
+ */
+function conv_system_notice(int $convId, string $body, bool $once = true): bool
+{
+    ensure_conversations();
+    $body = trim($body);
+    if ($convId <= 0 || $body === '') return false;
+    try {
+        if ($once) {
+            $chk = db()->prepare("SELECT 1 FROM conversation_messages WHERE conv_id=? AND sender='system' LIMIT 1");
+            $chk->execute([$convId]);
+            if ($chk->fetchColumn()) return false;
+        }
+        db()->prepare("INSERT INTO conversation_messages (conv_id,sender,sender_name,body,is_internal,read_player,read_staff) VALUES (?,?,?,?,0,1,1)")
+            ->execute([$convId, 'system', 'Hôtel', mb_substr($body, 0, 4000)]);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 /** Marque les messages d'une conversation comme lus pour le joueur (à l'ouverture). */
 function conv_mark_read_player(int $convId, int $playerId): void
 {

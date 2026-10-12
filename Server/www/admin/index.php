@@ -374,6 +374,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 admin_log('conv_note', '#' . $cid);
                 $msg = '🔒 Note interne ajoutée (non visible par le joueur).'; break;
             }
+            case 'conv_category': {
+                ensure_conversations();
+                $cid = (int)($_POST['cid'] ?? 0);
+                $cat = mb_substr(trim((string)($_POST['category'] ?? '')), 0, 40);
+                if ($cat === '') $cat = 'question';
+                db()->prepare('UPDATE conversations SET category=? WHERE id=?')->execute([$cat, $cid]);
+                admin_log('conv_category', '#' . $cid . ' → ' . $cat);
+                $msg = '🏷️ Catégorie mise à jour.'; break;
+            }
+            case 'conv_ack_set': {
+                $txt = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 1000);
+                try { db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute(['conv.ack', $txt]); } catch (Throwable $e) {}
+                admin_log('conv_ack_set', $txt === '' ? '(désactivé)' : 'maj');
+                $msg = $txt === '' ? '✅ Accusé de réception désactivé.' : '✅ Accusé de réception enregistré.'; break;
+            }
             case 'umsg_send':
                 ensure_user_msgs();
                 $toName = trim((string)($_POST['username'] ?? ''));
@@ -2468,7 +2483,7 @@ function action_tab(string $a): string {
         'cmsg_handle' => 'messages', 'cmsg_delete' => 'messages', 'umsg_send' => 'users',
         'smsg_post' => 'messages', 'smsg_delete' => 'messages',
         'conv_reply' => 'messages', 'conv_status' => 'messages', 'conv_new' => 'messages', 'conv_reprise' => 'messages',
-        'conv_assign' => 'messages', 'conv_note' => 'messages',
+        'conv_assign' => 'messages', 'conv_note' => 'messages', 'conv_category' => 'messages', 'conv_ack_set' => 'messages',
         // Jeux : codes & recycleur
         'voucher_add' => 'vouchers', 'voucher_delete' => 'vouchers',
         'recy_add' => 'recycler', 'recy_update' => 'recycler', 'recy_delete' => 'recycler',
@@ -3501,11 +3516,18 @@ function conv_assistance_view(): void {
         if ($conv) conv_mark_read_staff($cid);
     }
 
-    // Liste (ouvertes d'abord, résolues ensuite) — filtre facultatif
+    // Catégories connues (libellé + emoji) — 'autre' pour le reste.
+    $CATS = ['question' => '❓ Question', 'bug' => '🐞 Bug', 'signalement' => '🚩 Signalement', 'compte' => '👤 Compte', 'contact' => '✉️ Contact', 'staff' => '📣 Équipe', 'autre' => '•  Autre'];
+    $catLabel = function (string $c) use ($CATS) { return $CATS[$c] ?? ('• ' . $c); };
+
+    // Liste (ouvertes d'abord, résolues ensuite) — filtres facultatifs (attribution + catégorie)
     $filter = in_array(($_GET['f'] ?? ''), ['mine', 'unassigned'], true) ? (string)$_GET['f'] : 'all';
-    $where = ''; $args = [];
-    if ($filter === 'mine') { $where = 'WHERE c.assigned_to=?'; $args[] = $me; }
-    elseif ($filter === 'unassigned') { $where = "WHERE c.assigned_to=''"; }
+    $catFilter = (isset($_GET['cat']) && isset($CATS[(string)$_GET['cat']])) ? (string)$_GET['cat'] : '';
+    $conds = []; $args = [];
+    if ($filter === 'mine') { $conds[] = 'c.assigned_to=?'; $args[] = $me; }
+    elseif ($filter === 'unassigned') { $conds[] = "c.assigned_to=''"; }
+    if ($catFilter !== '') { $conds[] = 'c.category=?'; $args[] = $catFilter; }
+    $where = $conds ? ('WHERE ' . implode(' AND ', $conds)) : '';
     $rows = [];
     try {
         $sql = "SELECT c.id,c.subject,c.category,c.status,c.player_id,c.legacy_ref,c.assigned_to,c.updated_at,
@@ -3535,14 +3557,28 @@ function conv_assistance_view(): void {
        . '<button style="margin-top:8px">✉️ Créer la conversation</button></form></details>';
     echo '<form method="post" class="js" data-reload data-confirm="Reprendre les anciens messages (formulaire contact + messages équipe) en conversations ? Opération sans doublon, relançable sans risque."><input type="hidden" name="action" value="conv_reprise">' . csrf_field()
        . '<button class="mini ghost" title="Importe les anciens messages dans le nouveau système, sans doublon">📥 Reprendre les anciens messages</button></form>';
+    // Réglage de l'accusé de réception automatique
+    $ackVal = ''; try { $qa = db()->prepare('SELECT value FROM settings WHERE setting=?'); $qa->execute(['conv.ack']); $v = $qa->fetchColumn(); if ($v !== false) $ackVal = (string)$v; } catch (Throwable $e) {}
+    echo '<details style="min-width:260px"><summary class="mini">⚙️ Accusé de réception auto</summary>'
+       . '<form method="post" class="js" data-reload style="margin-top:8px"><input type="hidden" name="action" value="conv_ack_set">' . csrf_field()
+       . '<textarea name="body" rows="2" maxlength="1000" placeholder="Laisser vide pour désactiver" style="width:100%">' . h($ackVal) . '</textarea>'
+       . '<p class="muted sm" style="margin:4px 0 0">Message automatique envoyé au joueur dès qu\'il crée une demande.</p>'
+       . '<button class="mini" style="margin-top:6px">💾 Enregistrer</button></form></details>';
     echo '</div>';
 
-    // Filtres
-    $fl = function (string $k, string $lbl) use ($filter) { return '<a class="mini ghost' . ($filter === $k ? ' on' : '') . '" href="?p=messages&f=' . $k . '">' . $lbl . '</a>'; };
-    echo '<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">' . $fl('all', 'Toutes') . ' ' . $fl('unassigned', 'Non attribuées') . ' ' . $fl('mine', 'Les miennes') . '</div>';
+    // Filtres : attribution (conserve la catégorie) + catégorie (conserve l'attribution)
+    $catQS = $catFilter !== '' ? '&cat=' . rawurlencode($catFilter) : '';
+    $fl = function (string $k, string $lbl) use ($filter, $catQS) { return '<a class="mini ghost' . ($filter === $k ? ' on' : '') . '" href="?p=messages&f=' . $k . $catQS . '">' . $lbl . '</a>'; };
+    echo '<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">'
+       . $fl('all', 'Toutes') . ' ' . $fl('unassigned', 'Non attribuées') . ' ' . $fl('mine', 'Les miennes')
+       . ' <span class="muted sm" style="margin-left:8px">Catégorie :</span>'
+       . '<select class="mini" onchange="location.href=this.value">'
+       . '<option value="?p=messages&f=' . $filter . '"' . ($catFilter === '' ? ' selected' : '') . '>Toutes</option>';
+    foreach ($CATS as $ck => $cl) echo '<option value="?p=messages&f=' . $filter . '&cat=' . rawurlencode($ck) . '"' . ($catFilter === $ck ? ' selected' : '') . '>' . h($cl) . '</option>';
+    echo '</select></div>';
 
     if (!$rows) {
-        echo '<div class="empty" style="margin-top:10px">' . ($filter !== 'all'
+        echo '<div class="empty" style="margin-top:10px">' . (($filter !== 'all' || $catFilter !== '')
                 ? 'Aucune conversation pour ce filtre. <a class="lnk" href="?p=messages">Voir toutes</a>.'
                 : 'Aucune conversation pour l\'instant. Les nouvelles demandes des joueurs apparaîtront ici. Les anciens messages peuvent être repris via le bouton ci-dessus.')
            . '</div></div>';
@@ -3560,9 +3596,10 @@ function conv_assistance_view(): void {
         echo '<a class="hmrow' . $sel . '" href="?p=messages&c=' . (int)$r['id'] . '">'
            . '<div class="hmrow-top"><b>' . h((string)($r['subject'] ?: 'Sans sujet')) . '</b>'
            . ($unread ? '<span class="rk red" style="margin-left:auto">' . $unread . '</span>' : '') . '</div>'
-           . '<div class="sm muted">' . h($name) . ' · ' . h($statLabel[(string)$r['status']] ?? (string)$r['status'])
+           . '<div class="sm muted">' . h($catLabel((string)$r['category'])) . ' · ' . h($statLabel[(string)$r['status']] ?? (string)$r['status'])
            . ((string)$r['assigned_to'] !== '' ? ' · 🙋 ' . h((string)$r['assigned_to']) : '')
            . ($r['legacy_ref'] ? ' · <span title="Ancien message repris">↩︎ repris</span>' : '') . '</div>'
+           . '<div class="sm muted" style="opacity:.8">' . h($name) . '</div>'
            . '<div class="sm muted" style="opacity:.8">' . h($snippet) . '</div></a>';
     }
     echo '</div>';
@@ -3578,8 +3615,15 @@ function conv_assistance_view(): void {
         $assignedTo = (string)($conv['assigned_to'] ?? '');
         echo '<p class="sm muted" style="margin:-4px 0 8px">Joueur : <b>' . h($name) . '</b>'
            . ($conv['uname'] ? ' · <a class="lnk" href="?p=users&u=' . h(rawurlencode((string)$conv['uname'])) . '">fiche</a>' : '')
-           . ' · catégorie : ' . h((string)$conv['category'])
            . ($conv['legacy_ref'] ? ' · <span title="Repris de l\'ancienne messagerie">ancien message repris</span>' : '') . '</p>';
+
+        // Catégorie (modifiable)
+        $curCat = (string)$conv['category']; if (!isset($CATS[$curCat])) $curCat = 'autre';
+        echo '<form method="post" class="js row" data-reload style="margin:0 0 10px;align-items:center;gap:6px;flex-wrap:wrap">' . csrf_field()
+           . '<input type="hidden" name="action" value="conv_category"><input type="hidden" name="cid" value="' . $cid . '">'
+           . '<span class="sm muted">🏷️ Catégorie :</span><select name="category" class="mini">';
+        foreach ($CATS as $ck => $cl) echo '<option value="' . h($ck) . '"' . ($curCat === $ck ? ' selected' : '') . '>' . h($cl) . '</option>';
+        echo '</select><button class="mini ghost">Changer</button></form>';
 
         // Attribution (prise en charge)
         echo '<form method="post" class="js row" data-reload style="margin:0 0 10px;align-items:center;gap:8px;flex-wrap:wrap">' . csrf_field()
@@ -3596,7 +3640,13 @@ function conv_assistance_view(): void {
 
         echo '<div class="convthread">';
         foreach (conv_messages($cid, true) as $m) {
-            $staff = ((string)$m['sender'] !== 'player');
+            $snd = (string)$m['sender'];
+            if ($snd === 'system') {
+                echo '<div class="cmsg2 cm-system"><div class="sm muted">ℹ️ Message automatique · ' . h(date('d/m H:i', strtotime((string)$m['created_at']))) . '</div>'
+                   . '<div class="cm-body">' . nl2br(h((string)$m['body'])) . '</div></div>';
+                continue;
+            }
+            $staff = ($snd !== 'player');
             $cls = $staff ? 'cm-staff' : 'cm-player';
             if ((int)$m['is_internal']) $cls .= ' cm-internal';
             echo '<div class="cmsg2 ' . $cls . '"><div class="sm muted">'
@@ -3607,10 +3657,24 @@ function conv_assistance_view(): void {
         }
         echo '</div>';
 
+        // Réponses types (modèles) — insérées dans le champ ci-dessous
+        $CANNED = [
+            'Bonjour, merci pour ton message ! ',
+            'Bonjour, merci de ton message. Peux-tu nous donner plus de détails (pseudo concerné, heure, salle) ?',
+            'C\'est corrigé de notre côté, n\'hésite pas si le souci revient. Bon jeu ! 😊',
+            'Ta demande a bien été transmise à l\'équipe concernée, on revient vers toi dès que possible.',
+            'Pour des raisons de sécurité, nous ne demandons jamais ton mot de passe. Ne le communique à personne.',
+            'Nous ne pouvons pas donner suite à cette demande. Merci de ta compréhension.',
+        ];
+        $rid = 'cvbody' . $cid;
         // Répondre
         echo '<form method="post" class="js" data-reload style="margin-top:10px"><input type="hidden" name="action" value="conv_reply">' . csrf_field()
            . '<input type="hidden" name="cid" value="' . $cid . '">'
-           . '<textarea name="body" rows="3" maxlength="4000" required placeholder="Ta réponse au joueur…" style="width:100%"></textarea>'
+           . '<select class="mini" style="margin-bottom:6px" onchange="if(this.value){var t=document.getElementById(\'' . $rid . '\');t.value=(t.value?t.value+\'\n\':\'\')+this.value;t.focus();this.selectedIndex=0;}">'
+           . '<option value="">💬 Insérer une réponse type…</option>';
+        foreach ($CANNED as $txt) echo '<option value="' . h($txt) . '">' . h(mb_strimwidth($txt, 0, 60, '…')) . '</option>';
+        echo '</select>'
+           . '<textarea id="' . $rid . '" name="body" rows="3" maxlength="4000" required placeholder="Ta réponse au joueur…" style="width:100%"></textarea>'
            . '<div class="row" style="margin-top:8px;gap:8px;align-items:center">'
            . '<button>✉️ Répondre</button>'
            . '<label class="sm" style="display:flex;gap:4px;align-items:center"><input type="checkbox" name="resolve" value="1"> Marquer comme résolu</label>'
@@ -4758,6 +4822,7 @@ code{background:var(--bg);padding:2px 7px;border-radius:6px;color:var(--acc);fon
 .cm-player{align-self:flex-start;background:var(--panel)}
 .cm-staff{align-self:flex-end;background:var(--soft);border-color:var(--acc)}
 .cm-internal{align-self:stretch;max-width:100%;background:#fff6d8;border-color:#e3c65a}
+.cm-system{align-self:center;max-width:100%;background:var(--soft);border-style:dashed;text-align:center}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));grid-gap:14px;gap:14px;margin-bottom:18px}
 .stat{display:flex;align-items:center;background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:16px 18px}
 .stat .ic{font-size:24px;width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:var(--soft)}
