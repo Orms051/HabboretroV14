@@ -210,7 +210,7 @@ function tabmenu_html(?string $err): string {
         <div class="mh-dest">
           <a href="/client.php" target="_blank" rel="noopener">Entrer dans l'hôtel</a>
           <a href="?p=home/<?= h(rawurlencode((string)$u['username'])) ?>">Voir ma Habbo Home</a>
-          <a href="?p=messages">Mes messages<?php $nm = function_exists('unread_msgs') ? unread_msgs((int)$u['id']) : 0; if ($nm > 0): ?> <span style="background:#e5820c;color:#fff;padding:0 4px;border-radius:2px">(<?= (int)$nm ?>)</span><?php endif; ?></a>
+          <a href="?p=messages">Mes messages<?php $nm = function_exists('unread_msgs') ? unread_msgs((int)$u['id']) : 0; if ($nm > 0): ?> <span title="<?= (int)$nm ?> non lu<?= $nm > 1 ? 's' : '' ?>" style="display:inline-block;min-width:16px;height:16px;line-height:16px;padding:0 4px;margin-left:3px;background:#e5820c;color:#fff;font-size:10px;font-weight:bold;text-align:center;border-radius:8px;vertical-align:middle"><?= (int)$nm ?></span><?php endif; ?></a>
           <a href="?p=me">Modifier mes paramètres</a>
           <?php if ($isAdmin): ?><a href="/admin/" class="mh-admin">Administration</a><?php endif; ?>
         </div>
@@ -229,6 +229,7 @@ function tabmenu_html(?string $err): string {
             <input type="password" name="password" placeholder="Mot de passe" required>
             <button class="colorlink last" type="submit"><span>Se connecter</span></button>
           </form>
+          <div style="margin-top:4px"><a href="?p=forgot" style="font-size:10px;color:#2f6f9f;text-decoration:underline">🔑 Mot de passe oublié ?</a></div>
         </div>
       </div>
     <?php endif; ?>

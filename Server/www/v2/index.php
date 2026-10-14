@@ -560,6 +560,12 @@ if ($p === 'conv_new') {
     if ($subject === '') $subject = 'Demande à l\'équipe';
     if ($body === '') redirect('?p=messages&done=empty');
     $cid = function_exists('conv_create') ? conv_create((int)$u['id'], $subject, $cat, 'player', (string)$u['username'], $body) : 0;
+    // Destinataire : un staff précis → pré-attribution (vérifié : doit être rang >= 5)
+    $toStaff = trim((string)($_POST['to_staff'] ?? ''));
+    if ($cid && $toStaff !== '') {
+        try { $qs = db()->prepare('SELECT username FROM users WHERE username=? AND `rank`>=5'); $qs->execute([$toStaff]); $valid = (string)$qs->fetchColumn();
+            if ($valid !== '') db()->prepare('UPDATE conversations SET assigned_to=? WHERE id=?')->execute([$valid, $cid]); } catch (Throwable $e) {}
+    }
     // Accusé de réception automatique (réglable en admin ; vide = désactivé).
     if ($cid && function_exists('conv_system_notice')) {
         $ack = function_exists('setting_get') ? (string)setting_get('conv.ack', 'Bien reçu ! L\'équipe de l\'hôtel te répondra ici dès que possible. Merci de ta patience 😊') : '';
@@ -600,9 +606,9 @@ if ($p === 'conv_move') {
 }
 
 if ($p === 'messages') {
-    render_head('home', null);
     $u = me();
     if (!$u) {
+        render_head('home', null, [['Accueil', '?p=home'], ['Mes messages', null]]);
         box_open('Mes messages', 'b');
         echo '<p class="muted">Connecte-toi pour voir tes messages. <a href="?p=register">Se connecter / s\'inscrire</a></p>';
         box_close(); render_foot(); exit;
@@ -622,7 +628,9 @@ if ($p === 'messages') {
         if (!$conv) redirect('?p=messages');
         conv_mark_read_player($cid, $uid);
         $statut = ['waiting_staff' => '⏳ En attente de l\'équipe', 'waiting_player' => '💬 L\'équipe t\'a répondu', 'resolved' => '✅ Résolu'];
-        box_open('✉ ' . h((string)($conv['subject'] ?: 'Ma demande')), 'b');
+        $subj = (string)($conv['subject'] ?: 'Ma demande');
+        render_head('home', null, [['Accueil', '?p=home'], ['Mes messages', '?p=messages'], [mb_strimwidth($subj, 0, 44, '…'), null]]);
+        box_open('✉ ' . h($subj), 'b');
         echo $flashHtml;
         echo '<p style="margin-bottom:8px"><a href="?p=messages">← Toutes mes conversations</a> · <span class="muted">' . h($statut[(string)$conv['status']] ?? '') . '</span></p>';
         foreach (conv_messages($cid, false) as $m) {
@@ -632,10 +640,14 @@ if ($p === 'messages') {
                 continue;
             }
             $staff = ($snd !== 'player');
-            echo '<div style="border:1px solid ' . ($staff ? '#9fc6e8' : '#d9d2b8') . ';border-radius:4px;padding:8px;margin-bottom:6px;background:' . ($staff ? '#eef6fd' : '#fffef7') . '">'
-               . '<div style="font-size:10px;color:#8a97a3;margin-bottom:3px"><b style="color:#5b5b5b">' . ($staff ? '👮 ' : '🙂 ') . h((string)($m['sender_name'] ?: ($staff ? 'Équipe' : (string)$u['username']))) . '</b>'
+            $who = (string)($m['sender_name'] ?: ($staff ? 'Équipe' : (string)$u['username']));
+            $av = (!$staff) ? avatar_tag((string)$u['username'], ['head' => true]) : ($who !== 'Équipe' ? avatar_tag($who, ['head' => true]) : '<span style="font-size:22px">👮</span>');
+            echo '<div style="display:flex;gap:8px;' . ($staff ? 'flex-direction:row-reverse;' : '') . 'margin-bottom:6px">'
+               . '<span style="flex:0 0 auto;width:44px;height:44px;background:#f3eecf;border:1px solid #d8cfa6;border-radius:4px;overflow:hidden;display:grid;place-items:center">' . $av . '</span>'
+               . '<div style="flex:1;border:1px solid ' . ($staff ? '#9fc6e8' : '#d9d2b8') . ';border-radius:4px;padding:8px;background:' . ($staff ? '#eef6fd' : '#fffef7') . '">'
+               . '<div style="font-size:10px;color:#8a97a3;margin-bottom:3px"><b style="color:#5b5b5b">' . ($staff ? '👮 ' : '🙂 ') . h($who) . '</b>'
                . ' · ' . h(date('d/m/Y H:i', strtotime((string)$m['created_at']))) . '</div>'
-               . '<div style="font-size:11px;color:#5b5b5b">' . nl2br(h((string)$m['body'])) . '</div></div>';
+               . '<div style="font-size:11px;color:#5b5b5b">' . nl2br(h((string)$m['body'])) . '</div></div></div>';
         }
         echo '<form method="post" action="?p=conv_reply" style="margin-top:8px"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="cid" value="' . $cid . '">'
            . '<textarea name="body" rows="3" maxlength="4000" required placeholder="Écris ta réponse…" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></textarea>'
@@ -659,29 +671,38 @@ if ($p === 'messages') {
         try {
             $list = db()->prepare("SELECT c.id,c.subject,c.status,c.updated_at,
                     (SELECT COUNT(*) FROM conversation_messages m WHERE m.conv_id=c.id AND m.is_internal=0 AND m.sender<>'player' AND m.read_player=0) AS unread,
-                    (SELECT body FROM conversation_messages m2 WHERE m2.conv_id=c.id AND m2.is_internal=0 ORDER BY m2.id DESC LIMIT 1) AS last_body
+                    (SELECT body FROM conversation_messages m2 WHERE m2.conv_id=c.id AND m2.is_internal=0 ORDER BY m2.id DESC LIMIT 1) AS last_body,
+                    (SELECT sender FROM conversation_messages m3 WHERE m3.conv_id=c.id AND m3.is_internal=0 ORDER BY m3.id DESC LIMIT 1) AS last_sender,
+                    (SELECT sender_name FROM conversation_messages m4 WHERE m4.conv_id=c.id AND m4.is_internal=0 ORDER BY m4.id DESC LIMIT 1) AS last_name
                 FROM conversations c WHERE c.player_id=? AND $boxCond ORDER BY c.updated_at DESC");
             $list->execute([$uid]); $convs = $list->fetchAll();
         } catch (Throwable $e) { $convs = []; }
     }
     $statut = ['waiting_staff' => '⏳ En attente', 'waiting_player' => '💬 Réponse reçue', 'resolved' => '✅ Résolu'];
 
+    render_head('home', null, [['Accueil', '?p=home'], ['Mes messages', null]]);
     box_open('✉ Mes messages', 'b');
     echo $flashHtml;
+    echo '<p class="muted" style="margin-bottom:8px">Tes échanges avec l\'équipe de l\'hôtel.</p>';
     // Onglets de boîte
     $tab = function (string $k, string $lbl) use ($box) {
         $on = $box === $k; $href = $k === 'active' ? '?p=messages' : '?p=messages&box=' . $k;
         return '<a href="' . $href . '" style="display:inline-block;padding:3px 9px;margin-right:4px;border-radius:3px 3px 0 0;font-size:11px;text-decoration:none;' . ($on ? 'background:#30384a;color:#fff;font-weight:bold' : 'background:#e8e2cc;color:#5b5b5b') . '">' . $lbl . '</a>';
     };
     echo '<div style="margin-bottom:8px;border-bottom:2px solid #30384a;padding-bottom:0">' . $tab('active', '✉ Messages') . $tab('archived', '🗂 Archivés') . $tab('trashed', '🗑 Corbeille') . '</div>';
-    if (!$convs) echo '<p class="muted">' . ($box === 'active' ? '📭 Tu n\'as aucune conversation. Pose ta question ci-dessous 👇' : ($box === 'archived' ? '🗂 Aucune conversation archivée.' : '🗑 Ta corbeille est vide.')) . '</p>';
-    else foreach ($convs as $c) {
+    if (!$convs) {
+        echo '<div style="text-align:center;padding:16px 8px;color:#8a97a3">'
+           . '<div style="font-size:11px;margin-bottom:8px">' . ($box === 'active' ? '📭 Tu n\'as aucune conversation pour le moment.' : ($box === 'archived' ? '🗂 Aucune conversation archivée.' : '🗑 Ta corbeille est vide.')) . '</div>'
+           . ($box === 'active' ? '<a class="new-button" href="#newmsg"><b>✉ Contacter l\'équipe</b><i></i></a>' : '<a class="new-button" href="?p=messages"><b>← Retour à mes messages</b><i></i></a>')
+           . '</div>';
+    } else foreach ($convs as $c) {
         $unread = (int)$c['unread'];
         $snip = mb_strimwidth(trim(preg_replace('/\s+/', ' ', (string)$c['last_body'])), 0, 70, '…');
+        $who = ((string)$c['last_sender'] === 'player') ? 'Toi' : ((string)($c['last_name'] ?: 'Équipe'));
         echo '<a href="?p=messages&c=' . (int)$c['id'] . '" style="display:block;border:1px solid #d9d2b8;border-radius:4px;padding:8px;margin-bottom:6px;background:' . ($unread ? '#fff7e6' : '#fff') . ';text-decoration:none;color:#30384a">'
            . '<div style="font-size:12px;font-weight:bold">' . h((string)($c['subject'] ?: 'Ma demande'))
            . ($unread ? ' <span style="background:#e5820c;color:#fff;padding:0 5px;border-radius:2px">Nouveau</span>' : '') . '</div>'
-           . '<div style="font-size:10px;color:#8a97a3;margin:2px 0">' . h($statut[(string)$c['status']] ?? '') . ' · ' . h(date('d/m/Y H:i', strtotime((string)$c['updated_at']))) . '</div>'
+           . '<div style="font-size:10px;color:#8a97a3;margin:2px 0">👤 ' . h($who) . ' · ' . h($statut[(string)$c['status']] ?? '') . ' · ' . h(date('d/m/Y H:i', strtotime((string)$c['updated_at']))) . '</div>'
            . '<div style="font-size:11px;color:#5b5b5b">' . h($snip) . '</div></a>';
     }
     box_close();
@@ -689,11 +710,25 @@ if ($p === 'messages') {
     if ($box !== 'active') { render_foot(); exit; } // archives/corbeille : pas de formulaire de nouvelle demande
 
     /* === Nouvelle demande === */
-    box_open('✍ Nouvelle demande à l\'équipe', 'g');
+    // Staff que le joueur peut contacter directement (réglage conv.contactables, sinon rang >= 5)
+    $contactables = [];
+    try {
+        $cset = trim(setting_get('conv.contactables', ''));
+        if ($cset !== '') { foreach (preg_split('/[\s,;]+/', $cset, -1, PREG_SPLIT_NO_EMPTY) as $nm) $contactables[] = $nm; }
+        else { foreach (db()->query('SELECT username FROM users WHERE `rank`>=5 ORDER BY `rank` DESC, username LIMIT 50') as $r) $contactables[] = (string)$r['username']; }
+    } catch (Throwable $e) {}
+    echo '<a id="newmsg"></a>';
+    box_open('✍ Nouveau message', 'g');
     echo '<form method="post" action="?p=conv_new"><input type="hidden" name="csrf" value="' . h(csrf()) . '">'
+       . '<div style="margin-bottom:6px"><label style="font-size:10px;color:#5b5b5b;display:block;margin-bottom:2px">Destinataire</label>'
+       . '<select name="to_staff" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"><option value="">👥 Équipe d\'assistance (recommandé)</option>';
+    foreach ($contactables as $nm) echo '<option value="' . h($nm) . '">👮 ' . h($nm) . '</option>';
+    echo '</select></div>'
+       . '<div style="margin-bottom:6px"><label style="font-size:10px;color:#5b5b5b;display:block;margin-bottom:2px">Motif</label>'
+       . '<select name="category" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"><option value="question">Question</option><option value="bug">Bug / problème technique</option><option value="signalement">Signalement</option><option value="compte">Mon compte</option></select></div>'
        . '<div style="margin-bottom:6px"><input type="text" name="subject" maxlength="150" placeholder="Sujet (ex : problème de connexion)" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></div>'
-       . '<div style="margin-bottom:6px"><select name="category" style="border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"><option value="question">Question</option><option value="bug">Bug / problème technique</option><option value="signalement">Signalement</option><option value="compte">Mon compte</option></select></div>'
-       . '<div style="margin-bottom:6px"><textarea name="body" rows="4" maxlength="4000" required placeholder="Explique ta demande à l\'équipe…" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></textarea></div>'
+       . '<div style="margin-bottom:6px"><textarea name="body" rows="4" maxlength="4000" required placeholder="Explique ta demande…" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></textarea></div>'
+       . '<p class="muted" style="font-size:10px;margin:0 0 6px">ℹ️ Même en choisissant un membre précis, d\'autres membres autorisés de l\'équipe peuvent consulter la conversation pour t\'aider. Échanges joueur ↔ équipe uniquement.</p>'
        . '<button class="new-button" type="submit"><b>Envoyer ma demande</b><i></i></button></form>';
     box_close();
 
@@ -712,6 +747,47 @@ if ($p === 'messages') {
         // Comportement d'origine : ouvrir la page marque les anciens messages comme lus.
         try { db()->prepare('UPDATE user_messages SET read_at=NOW() WHERE user_id=? AND read_at IS NULL')->execute([$uid]); } catch (Throwable $e) {}
     }
+    render_foot(); exit;
+}
+
+/* ---- Mot de passe oublié (récupération de compte, sans connexion) ---- */
+if ($p === 'forgot') {
+    $sent = false; $ferr = null;
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        if (!csrf_ok()) $ferr = 'Session expirée, réessaie.';
+        else {
+            $ru = trim((string)($_POST['username'] ?? ''));
+            $rm = mb_substr(trim(strip_tags((string)($_POST['message'] ?? ''))), 0, 200);
+            if ($ru === '') $ferr = 'Indique ton pseudo Habbo.';
+            else {
+                try {
+                    db()->exec("CREATE TABLE IF NOT EXISTS password_resets (id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(64) NOT NULL, message VARCHAR(500) NOT NULL DEFAULT '', ip VARCHAR(45) NOT NULL DEFAULT '', status ENUM('pending','done','rejected') NOT NULL DEFAULT 'pending', handled_by VARCHAR(64) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, handled_at DATETIME NULL, INDEX(status)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+                    $ip = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+                    // Anti-abus : au plus 1 demande / 10 min / IP. On affiche toujours « envoyé »
+                    // (on ne révèle pas si le pseudo existe).
+                    $c = db()->prepare('SELECT COUNT(*) FROM password_resets WHERE ip=? AND created_at > (NOW() - INTERVAL 10 MINUTE)'); $c->execute([$ip]);
+                    if ((int)$c->fetchColumn() === 0) {
+                        db()->prepare('INSERT INTO password_resets (username,message,ip) VALUES (?,?,?)')->execute([$ru, $rm, $ip]);
+                    }
+                    $sent = true;
+                } catch (Throwable $e) { $ferr = 'Oups, une erreur est survenue. Réessaie plus tard.'; }
+            }
+        }
+    }
+    render_head('help', null, [['Accueil', '?p=home'], ['Aide', '?p=help'], ['Mot de passe oublié', null]]);
+    box_open('🔑 Mot de passe oublié', 'o');
+    if ($sent) {
+        echo '<div style="background:#e7f6ea;border:1px solid #9ed3ad;color:#1c5a2e;border-radius:4px;padding:8px;margin-bottom:8px;font-size:11px">✅ <b>Demande envoyée !</b> Un membre de l\'équipe va la vérifier. La récupération se fait <b>à la main</b> sur cet hôtel privé : repasse voir le staff en jeu, ou via la page <a href="?p=messages">Mes messages</a> si tu peux te connecter.</div>';
+    } else {
+        if ($ferr) echo '<div style="background:#fdeaea;border:1px solid #e3a9a9;color:#8a2b2b;border-radius:4px;padding:8px;margin-bottom:8px;font-size:11px">' . h($ferr) . '</div>';
+        echo '<p class="muted" style="margin-bottom:8px">Sur cet hôtel privé, la réinitialisation se fait <b>à la main</b> par l\'équipe (pas d\'e-mail automatique). Indique un maximum de preuves que le compte est bien le tien : le staff vérifie avant de réinitialiser — connaître un pseudo ne suffit pas.</p>';
+        echo '<form method="post" action="?p=forgot"><input type="hidden" name="csrf" value="' . h(csrf()) . '">'
+           . '<div style="margin-bottom:6px"><input type="text" name="username" maxlength="64" placeholder="Ton pseudo Habbo" required style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></div>'
+           . '<div style="margin-bottom:6px"><textarea name="message" rows="3" maxlength="200" placeholder="Preuves : date de création, dernier mobi acheté, un ami, crédits approximatifs…" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></textarea></div>'
+           . '<button class="new-button" type="submit"><b>Envoyer ma demande</b><i></i></button></form>';
+    }
+    echo '<p class="muted" style="margin-top:10px;font-size:10px">🔒 Un membre de l\'équipe ne te demandera <b>jamais</b> ton mot de passe. Ne le communique à personne, même à quelqu\'un se présentant comme staff.</p>';
+    box_close();
     render_foot(); exit;
 }
 
@@ -785,6 +861,12 @@ if ($p === 'help') {
         ['Qu\'est-ce que le Habbo Club ?', 'Un abonnement VIP : mobis et vêtements exclusifs, cadeaux et badge doré.'],
         ['Comment protéger mon compte ?', 'Ne partage jamais ton mot de passe, même avec quelqu\'un se disant du staff.'],
     ];
+    box_open('Besoin d\'aide ?', 'g');
+    echo '<p class="muted" style="margin-bottom:8px">Contacte l\'équipe ou récupère l\'accès à ton compte :</p>';
+    echo '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+       . '<a class="new-button" href="?p=messages"><b>✉ Contacter l\'équipe</b><i></i></a>'
+       . '<a class="new-button" href="?p=forgot"><b>🔑 Mot de passe oublié</b><i></i></a></div>';
+    box_close();
     box_open('Centre d\'aide', 'b');
     foreach ($faq as $qa) echo '<div style="border-bottom:1px dotted #ddd6c2;padding:7px 0"><b style="color:#2f6f9f">' . h($qa[0]) . '</b><div class="muted" style="margin-top:2px">' . h($qa[1]) . '</div></div>';
     box_close();
