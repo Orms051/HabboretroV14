@@ -1062,7 +1062,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // (Re)crée le modèle du skin par clonage de la base saine si besoin
                 $still = db()->prepare('SELECT 1 FROM rooms_models WHERE model_id=?'); $still->execute([$skin]);
                 if (!$still->fetchColumn()) {
-                    $cols = $base; unset($cols['id']); $cols['model_id'] = $skin; $cols['model_name'] = 'Infobus - ' . $skin; $cols['trigger_class'] = $trig;
+                    // IMPORTANT : le client charge le décor d'après model_name (ROOM_READY envoie getName()).
+                    // Il DOIT être exactement le suffixe du cast (hh_room_<skin>.cct), sinon la salle ne charge pas.
+                    $cols = $base; unset($cols['id']); $cols['model_id'] = $skin; $cols['model_name'] = $skin; $cols['trigger_class'] = $trig;
                     $names = array_keys($cols);
                     db()->prepare('INSERT INTO rooms_models (`' . implode('`,`', $names) . '`) VALUES (' . implode(',', array_fill(0, count($names), '?')) . ')')->execute(array_values($cols));
                 }
