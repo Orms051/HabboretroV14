@@ -9,7 +9,13 @@ session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'httponly' => true, '
 session_start();
 mb_internal_encoding('UTF-8');
 
-const DB_HOST = '127.0.0.1', DB_PORT = 3306, DB_NAME = 'v14', DB_USER = 'root', DB_PASS = '';
+// Identifiants DB : surchargés par l'environnement si présent, sinon repli local
+// (défaut Laragon root/''). Évite de committer des identifiants réels en prod.
+define('DB_HOST', getenv('V14_DB_HOST') ?: '127.0.0.1');
+define('DB_PORT', (int)(getenv('V14_DB_PORT') ?: 3306));
+define('DB_NAME', getenv('V14_DB_NAME') ?: 'v14');
+define('DB_USER', getenv('V14_DB_USER') ?: 'root');
+define('DB_PASS', getenv('V14_DB_PASS') !== false ? getenv('V14_DB_PASS') : '');
 const HOTEL = 'Habbo';
 const DEFAULT_FIGURE = '1000118001270012900121001';
 const GAME_URL = '/client.php';   // loader Shockwave (racine, inchangé)
