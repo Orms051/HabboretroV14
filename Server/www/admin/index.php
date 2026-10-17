@@ -1035,30 +1035,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $tc = in_array($_POST['trigger_class'] ?? '', ['infobus_park', 'infobus_poll'], true) ? $_POST['trigger_class'] : 'infobus_park';
                 db()->prepare('UPDATE rooms_models SET trigger_class=? WHERE id=?')->execute([$tc, (int)$_POST['id']]); $msg = '🚌 Type du bus changé (' . ($tc === 'infobus_poll' ? 'Sondage/Vote' : 'Info/FRANK') . '). Redémarre l\'émulateur.'; break;
             case 'bus_skin': {
-                // Change le skin de l'Infobus = pointe la salle du bus vers un modèle dont le
-                // client possède le cast (hh_room_<skin>.cct). Clone la géométrie du modèle
-                // courant si le modèle cible n'existe pas encore côté serveur.
+                // SÉCURISÉ : la salle du bus ne peut pointer que vers un modèle (a) dont le client
+                // possède le cast (hh_room_<skin>.cct) ET (b) doté d'une géométrie VALIDE, toujours
+                // clonée depuis un modèle de base sain (jamais depuis un modèle courant cassé).
                 $skin = preg_replace('/[^a-z0-9_]/', '', strtolower((string)($_POST['skin'] ?? '')));
                 if ($skin === '' || !is_file(DCR_DIR . '/hh_room_' . $skin . '.cct')) { $ok = false; $msg = '❌ Skin inconnu (cast absent du client).'; break; }
                 $br = db()->query("SELECT r.id,r.model FROM rooms r JOIN rooms_models m ON m.model_id=r.model WHERE m.trigger_class IN ('infobus_park','infobus_poll') AND r.owner_id='0' ORDER BY r.id LIMIT 1")->fetch();
                 if (!$br) { $ok = false; $msg = '❌ Salle du bus introuvable.'; break; }
                 $curModel = (string)$br['model'];
                 if ($skin === $curModel) { $msg = 'ℹ️ C\'est déjà le skin actuel.'; break; }
-                $cm = db()->prepare('SELECT * FROM rooms_models WHERE model_id=?'); $cm->execute([$curModel]); $cmRow = $cm->fetch();
-                if (!$cmRow) { $ok = false; $msg = '❌ Modèle courant du bus introuvable.'; break; }
-                $trig = (string)$cmRow['trigger_class'];
-                $ex = db()->prepare('SELECT id FROM rooms_models WHERE model_id=?'); $ex->execute([$skin]); $exists = (bool)$ex->fetchColumn();
-                if ($exists) {
+                // Modèle de base SAIN à cloner (heightmap réel), indépendant du modèle courant
+                $base = db()->query("SELECT * FROM rooms_models WHERE trigger_class IN ('infobus_park','infobus_poll') AND CHAR_LENGTH(heightmap) > 500 ORDER BY CHAR_LENGTH(heightmap) DESC LIMIT 1")->fetch();
+                if (!$base) { $ok = false; $msg = '❌ Aucun modèle Infobus de base valide à cloner (abandon).'; break; }
+                // Conserve le type (Info/Sondage) si le modèle courant est un trigger infobus valide
+                $cm = db()->prepare('SELECT trigger_class FROM rooms_models WHERE model_id=?'); $cm->execute([$curModel]); $curTrig = (string)$cm->fetchColumn();
+                $trig = in_array($curTrig, ['infobus_park', 'infobus_poll'], true) ? $curTrig : (string)$base['trigger_class'];
+                // Modèle cible déjà présent ?
+                $ex = db()->prepare('SELECT CHAR_LENGTH(heightmap) FROM rooms_models WHERE model_id=?'); $ex->execute([$skin]); $exHlen = $ex->fetchColumn();
+                if ($exHlen !== false) {
                     $uc = db()->prepare('SELECT COUNT(*) FROM rooms WHERE model=? AND id<>?'); $uc->execute([$skin, (int)$br['id']]);
-                    if ((int)$uc->fetchColumn() > 0) { $ok = false; $msg = '🔒 Ce modèle est déjà utilisé par d\'autres salles : bascule risquée, choisis un autre skin.'; break; }
-                    db()->prepare('UPDATE rooms_models SET trigger_class=? WHERE model_id=?')->execute([$trig, $skin]);
-                } else {
-                    // Clone toutes les colonnes du modèle courant sous le nouveau model_id
-                    $cols = $cmRow; unset($cols['id']); $cols['model_id'] = $skin; $cols['model_name'] = 'Infobus - ' . $skin; $cols['trigger_class'] = $trig;
+                    if ((int)$uc->fetchColumn() > 0) { $ok = false; $msg = '🔒 Ce modèle est déjà utilisé par d\'autres salles : choisis un autre skin.'; break; }
+                    // S'il existe mais a une géométrie cassée, on le recrée proprement depuis la base
+                    if ((int)$exHlen <= 500) db()->prepare('DELETE FROM rooms_models WHERE model_id=?')->execute([$skin]);
+                    else { db()->prepare('UPDATE rooms_models SET trigger_class=? WHERE model_id=?')->execute([$trig, $skin]); $exHlen = (int)$exHlen; }
+                }
+                // (Re)crée le modèle du skin par clonage de la base saine si besoin
+                $still = db()->prepare('SELECT 1 FROM rooms_models WHERE model_id=?'); $still->execute([$skin]);
+                if (!$still->fetchColumn()) {
+                    $cols = $base; unset($cols['id']); $cols['model_id'] = $skin; $cols['model_name'] = 'Infobus - ' . $skin; $cols['trigger_class'] = $trig;
                     $names = array_keys($cols);
                     db()->prepare('INSERT INTO rooms_models (`' . implode('`,`', $names) . '`) VALUES (' . implode(',', array_fill(0, count($names), '?')) . ')')->execute(array_values($cols));
                 }
-                db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute(['bus.prev_model', $curModel]);
+                // Mémorise le modèle précédent pour revert — seulement s'il est sûr (cast présent)
+                if (is_file(DCR_DIR . '/hh_room_' . $curModel . '.cct')) db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute(['bus.prev_model', $curModel]);
                 db()->prepare('UPDATE rooms SET model=? WHERE id=?')->execute([$skin, (int)$br['id']]);
                 admin_log('bus_skin', $curModel . ' → ' . $skin);
                 $msg = '🚌 Skin du bus changé (' . $skin . '). Redémarre l\'émulateur pour l\'appliquer en jeu.'; break;
@@ -4371,7 +4380,8 @@ function page_bus(): void {
     if ($busModelNow === false) echo '<div class="empty">Salle du bus introuvable (aucune salle publique sur un modèle infobus).</div>';
     elseif (!$skins) echo '<div class="empty">Aucun skin de park trouvé dans le client (<code>dcr/14.1_b8/hh_room_park*.cct</code>).</div>';
     else {
-        echo '<p class="hint" style="font-size:13px">Change l\'apparence du bus : chaque skin correspond à un décor <b>déjà présent dans le client</b> (casts <code>hh_room_park*</code>). La géométrie du bus est conservée (même plan/porte) et le type (Info/Sondage) est préservé. Après changement : <b>redémarre l\'émulateur</b> puis vide le cache du client. ⚠️ Non testé automatiquement — valide en jeu.</p>';
+        echo '<p class="hint" style="font-size:13px">Change l\'apparence du bus : chaque skin correspond à un décor <b>déjà présent dans le client</b> (casts <code>hh_room_park*</code>). La géométrie est <b>toujours clonée depuis un modèle sain</b> et le type (Info/Sondage) est préservé — la salle ne peut donc plus pointer vers un modèle cassé. Après changement : <b>redémarre l\'émulateur</b>, puis entre dans le bus pour voir le rendu.</p>';
+        echo '<p class="hint" style="font-size:12px;color:#b5651d">ℹ️ <b>Pas d\'aperçu image</b> : ces décors sont dans des casts Shockwave compilés, sans vignette fournie — impossible d\'afficher une image fiable ici. Le nom du pays/thème est indiqué ; applique puis regarde en jeu (réversible via « revenir au skin précédent »).</p>';
         echo '<div style="display:flex;flex-wrap:wrap;gap:8px">';
         foreach ($skins as $id => $lbl) {
             $cur = ($id === (string)$busModelNow);
