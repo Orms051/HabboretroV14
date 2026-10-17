@@ -661,7 +661,7 @@ if ($p === 'messages') {
                . '<div style="text-align:right;margin-top:2px"><form method="post" action="?p=conv_msg_hide" style="display:inline" onsubmit="return confirm(\'Retirer ce message de ta vue ? Il reste visible par l equipe.\')"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="cid" value="' . $cid . '"><input type="hidden" name="mid" value="' . (int)$m['id'] . '"><button type="submit" title="Supprimer de ma vue" style="border:0;background:none;color:#b7bdc4;cursor:pointer;font-size:10px;padding:0">✕ retirer</button></form></div>'
                . '</div></div>';
         }
-        echo '<form method="post" action="?p=conv_reply" style="margin-top:8px"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="cid" value="' . $cid . '">'
+        echo '<form method="post" action="?p=conv_reply" style="margin-top:8px" onsubmit="var b=this.querySelector(\'button[type=submit]\');if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return true;"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="cid" value="' . $cid . '">'
            . '<textarea name="body" rows="3" maxlength="4000" required placeholder="Écris ta réponse…" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></textarea>'
            . '<div style="margin-top:6px"><button class="new-button" type="submit"><b>Envoyer</b><i></i></button></div></form>';
         // Déplacement (archive / corbeille / restaurer)
@@ -732,19 +732,31 @@ if ($p === 'messages') {
         if ($cset !== '') { foreach (preg_split('/[\s,;]+/', $cset, -1, PREG_SPLIT_NO_EMPTY) as $nm) $contactables[] = $nm; }
         else { foreach (db()->query('SELECT username FROM users WHERE `rank`>=5 ORDER BY `rank` DESC, username LIMIT 50') as $r) $contactables[] = (string)$r['username']; }
     } catch (Throwable $e) {}
-    echo '<a id="newmsg"></a>';
-    box_open('✍ Nouveau message', 'g');
-    echo '<form method="post" action="?p=conv_new"><input type="hidden" name="csrf" value="' . h(csrf()) . '">'
-       . '<div style="margin-bottom:6px"><label style="font-size:10px;color:#5b5b5b;display:block;margin-bottom:2px">Destinataire</label>'
-       . '<select name="to_staff" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"><option value="">👥 Équipe d\'assistance (recommandé)</option>';
-    foreach ($contactables as $nm) echo '<option value="' . h($nm) . '">👮 ' . h($nm) . '</option>';
-    echo '</select></div>'
-       . '<div style="margin-bottom:6px"><label style="font-size:10px;color:#5b5b5b;display:block;margin-bottom:2px">Motif</label>'
-       . '<select name="category" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"><option value="question">Question</option><option value="bug">Bug / problème technique</option><option value="signalement">Signalement</option><option value="compte">Mon compte</option></select></div>'
-       . '<div style="margin-bottom:6px"><input type="text" name="subject" maxlength="150" placeholder="Sujet (ex : problème de connexion)" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></div>'
-       . '<div style="margin-bottom:6px"><textarea name="body" rows="4" maxlength="4000" required placeholder="Explique ta demande…" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></textarea></div>'
+    $lbl = 'font-size:10px;color:#5b5b5b;display:block;margin-bottom:2px;font-weight:bold';
+    $inp = 'width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px';
+    $formHtml = '<form method="post" action="?p=conv_new" onsubmit="var b=this.querySelector(\'button[type=submit]\');if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return true;"><input type="hidden" name="csrf" value="' . h(csrf()) . '">'
+       . '<div style="margin-bottom:6px"><label style="' . $lbl . '">Destinataire</label>'
+       . '<select name="to_staff" style="' . $inp . '"><option value="">👥 Équipe d\'assistance (recommandé)</option>';
+    foreach ($contactables as $nm) $formHtml .= '<option value="' . h($nm) . '">👮 ' . h($nm) . '</option>';
+    $formHtml .= '</select></div>'
+       . '<div style="margin-bottom:6px"><label style="' . $lbl . '">Motif</label>'
+       . '<select name="category" style="' . $inp . '"><option value="question">Question</option><option value="bug">Bug / problème technique</option><option value="signalement">Signalement</option><option value="compte">Mon compte</option></select></div>'
+       . '<div style="margin-bottom:6px"><label style="' . $lbl . '">Sujet</label><input type="text" name="subject" maxlength="150" placeholder="Ex : problème de connexion" style="' . $inp . '"></div>'
+       . '<div style="margin-bottom:6px"><label style="' . $lbl . '">Message</label><textarea name="body" rows="4" maxlength="4000" required placeholder="Explique ta demande…" style="' . $inp . '"></textarea></div>'
        . '<p class="muted" style="font-size:10px;margin:0 0 6px">ℹ️ Même en choisissant un membre précis, d\'autres membres autorisés de l\'équipe peuvent consulter la conversation pour t\'aider. Échanges joueur ↔ équipe uniquement.</p>'
        . '<button class="new-button" type="submit"><b>Envoyer ma demande</b><i></i></button></form>';
+
+    echo '<a id="newmsg"></a>';
+    $hasConvs = !empty($convs);
+    box_open('✉ Contacter l\'équipe', 'g');
+    if ($hasConvs) {
+        // Des conversations existent : bouton « Nouveau message » qui déplie le formulaire (focus auto).
+        echo '<details id="nmd" ontoggle="if(this.open){var f=this.querySelector(\'select,input,textarea\');if(f)f.focus();}">'
+           . '<summary class="new-button" style="list-style:none;cursor:pointer;display:inline-block"><b>✉ Nouveau message</b><i></i></summary>'
+           . '<div style="margin-top:10px">' . $formHtml . '</div></details>';
+    } else {
+        echo $formHtml;
+    }
     box_close();
     // Les anciens messages de l'équipe (table user_messages) ne sont plus affichés
     // ici : tout passe désormais par les conversations. On marque les éventuels
