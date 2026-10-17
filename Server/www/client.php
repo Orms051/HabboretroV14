@@ -18,7 +18,9 @@ if (is_file($__mf)) {
         @session_start();
         $ssoRaw = isset($_GET['sso']) ? preg_replace('/[^a-f0-9]/i', '', (string) $_GET['sso']) : '';
         try {
-            $pdo = new PDO('mysql:host=127.0.0.1;port=3306;dbname=v14;charset=utf8mb4', 'root', '', [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 2]);
+            $__h = getenv('V14_DB_HOST') ?: '127.0.0.1'; $__pt = (int)(getenv('V14_DB_PORT') ?: 3306); $__n = getenv('V14_DB_NAME') ?: 'v14';
+            $__u = getenv('V14_DB_USER') ?: 'root'; $__pw = getenv('V14_DB_PASS') !== false ? getenv('V14_DB_PASS') : '';
+            $pdo = new PDO('mysql:host=' . $__h . ';port=' . $__pt . ';dbname=' . $__n . ';charset=utf8mb4', $__u, $__pw, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 2]);
             if (!empty($_SESSION['site_user']['id'])) {
                 $st = $pdo->prepare('SELECT `rank` FROM users WHERE id=?'); $st->execute([(int) $_SESSION['site_user']['id']]);
                 if ((int) $st->fetchColumn() >= 5) $allow = true;

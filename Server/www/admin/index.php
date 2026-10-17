@@ -9,11 +9,13 @@ session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'httponly' => true, '
 session_start();
 mb_internal_encoding('UTF-8');
 
-const DB_HOST = '127.0.0.1';
-const DB_PORT = 3306;
-const DB_NAME = 'v14';
-const DB_USER = 'root';
-const DB_PASS = '';
+// Identifiants DB : surchargés par l'environnement si présent, sinon repli local
+// (défaut Laragon root/''). Permet de ne pas committer d'identifiants réels en prod.
+define('DB_HOST', getenv('V14_DB_HOST') ?: '127.0.0.1');
+define('DB_PORT', (int)(getenv('V14_DB_PORT') ?: 3306));
+define('DB_NAME', getenv('V14_DB_NAME') ?: 'v14');
+define('DB_USER', getenv('V14_DB_USER') ?: 'root');
+define('DB_PASS', getenv('V14_DB_PASS') !== false ? getenv('V14_DB_PASS') : '');
 const MIN_RANK = 5;
 const DCR_DIR = __DIR__ . '/../dcr/14.1_b8';
 const BADGE_DIR = __DIR__ . '/../c_images/badges';
