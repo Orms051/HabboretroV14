@@ -36,6 +36,7 @@ function db(): PDO {
     return $p;
 }
 function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+$__cv = dirname(__DIR__, 2) . '/inc/conversations.php'; if (is_file($__cv)) require_once $__cv; // modèle conversation partagé (messagerie)
 function redirect(string $to) { header('Location: ' . $to); exit; }
 function me(): ?array { return $_SESSION['site_user'] ?? null; }
 function csrf(): string { if (empty($_SESSION['scsrf'])) $_SESSION['scsrf'] = bin2hex(random_bytes(16)); return $_SESSION['scsrf']; }
@@ -76,8 +77,13 @@ function ensure_user_msgs(): void {
 }
 function unread_msgs(int $uid): int {
     if ($uid <= 0) return 0;
-    try { ensure_user_msgs(); $st = db()->prepare('SELECT COUNT(*) FROM user_messages WHERE user_id=? AND read_at IS NULL'); $st->execute([$uid]); return (int)$st->fetchColumn(); }
-    catch (Throwable $e) { return 0; }
+    $n = 0;
+    // Nouveau système : conversations non lues côté joueur.
+    if (function_exists('conv_unread_player')) { try { $n += conv_unread_player($uid); } catch (Throwable $e) {} }
+    // Ancien système conservé (messages non repris / staff ayant utilisé l'ancien envoi).
+    try { ensure_user_msgs(); $st = db()->prepare('SELECT COUNT(*) FROM user_messages WHERE user_id=? AND read_at IS NULL'); $st->execute([$uid]); $n += (int)$st->fetchColumn(); }
+    catch (Throwable $e) {}
+    return $n;
 }
 
 /* Pseudo d'avatar en attendant l'imager V14 fidèle (placeholder stylisé — voir chantier avatar). */
