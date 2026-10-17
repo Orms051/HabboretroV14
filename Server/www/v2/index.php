@@ -40,7 +40,7 @@ if ($p === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         login_register_fail();
         $err = 'Nom ou mot de passe incorrect.';
     }
-    $p = 'home';
+    $p = 'login'; // échec → page de connexion dédiée (l'erreur y est visible, pas cachée dans le menu replié)
 }
 /* ---- Inscription (Nouveau ?) ---- */
 $reg_err = null;
@@ -486,6 +486,34 @@ if ($p === 'register') {
     echo '<div style="margin-top:7px">' . nbtn('Entrer dans l\'Hôtel', '/client.php', '_blank') . '</div>';
     box_close();
     box_open('Habbo Club', 'p'); echo '<p class="muted">Adhère au Habbo Club et profite d\'avantages exclusifs !</p><div style="margin-top:6px">' . nbtn('En savoir plus', '?p=club') . '</div>'; box_close();
+    echo '</div></div>';
+    render_foot(); exit;
+}
+
+/* ---- Connexion (page dédiée, accessible en direct : ?p=login — utile à distance,
+   sans dépendre du menu déroulant JS « Mon Habbo ») ---- */
+if ($p === 'login') {
+    render_head('login', null, [['Accueil', '?p=home'], ['Connexion', null]]);
+    echo '<div class="layout"><div class="maincol"><div class="mc2">';
+    echo '<div class="mcol">';
+    box_open('Connecte-toi à ton Habbo', 'b');
+    if ($u) {
+        echo '<p class="muted">Tu es déjà connecté en tant que <b>' . h($u['username']) . '</b>.</p><div style="margin-top:6px">' . nbtn('Entre dans l\'Hôtel', '/client.php', '_blank') . '</div>';
+    } else {
+        if ($err) echo '<div class="flash err">' . h($err) . '</div>';
+        echo '<form method="post" action="?p=login"><input type="hidden" name="csrf" value="' . h(csrf()) . '">';
+        echo '<p style="margin-bottom:3px"><b>Nom Habbo</b></p><input type="text" name="username" maxlength="20" required autofocus style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;margin-bottom:6px">';
+        echo '<p style="margin-bottom:3px"><b>Mot de passe</b></p><input type="password" name="password" required style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;margin-bottom:8px">';
+        echo '<button class="new-button" type="submit"><b>Se connecter</b><i></i></button></form>';
+        echo '<div style="margin-top:8px;font-size:11px"><a href="?p=forgot" style="color:#2f6f9f;text-decoration:underline">🔑 Mot de passe oublié ?</a></div>';
+    }
+    box_close();
+    box_open('Pas encore de Habbo ?', 'o');
+    echo '<p class="muted">L\'inscription est gratuite et prend 10 secondes.</p><div style="margin-top:6px">' . nbtn('Crée ton Habbo', '?p=register') . '</div>';
+    box_close();
+    echo '</div></div></div>';
+    echo '<div class="sidecol">';
+    box_open('En ce moment', 'g'); echo '<div style="text-align:center"><img src="/web-gallery/v2/images/habbo_online_anim.gif" alt="" style="height:18px;vertical-align:middle;margin-right:5px"><b style="color:#3f6b16;font-size:14px">' . online_count() . '</b> <span class="muted">en ligne</span></div>'; box_close();
     echo '</div></div>';
     render_foot(); exit;
 }

@@ -220,7 +220,7 @@ function tabmenu_html(?string $err): string {
       <div class="tabmenu-inner-content">
         <div id="mh-links">
           <a class="colorlink" href="?p=register"><span>L'inscription est gratuite</span></a>
-          <a class="colorlink last" href="#" onclick="return showLogin()"><span>Se connecter</span></a>
+          <a class="colorlink last" href="?p=login" onclick="return showLogin()"><span>Se connecter</span></a>
         </div>
         <div id="mh-login">
           <?php if ($err) echo '<div class="flash err">' . h($err) . '</div>'; ?>

@@ -1162,6 +1162,9 @@ if ($p === 'news') {
 /* ---------- Contrôle d'accès aux onglets par rang ---------- */
 if (!tab_allowed($p)) { flash('🔒 Ton rang n\'a pas accès à « ' . $p . ' ».'); $p = 'dashboard'; }
 
+/* ---------- Journal en direct : endpoint AJAX (polling) ---------- */
+if ($p === 'journal' && isset($_GET['tail'])) { journal_ajax(); exit; }
+
 /* ---------- Rendu ---------- */
 render_header($p);
 switch ($p) {
@@ -1198,16 +1201,17 @@ switch ($p) {
     case 'textes': page_textes(); break;
     case 'mysql': page_mysql(); break;
     case 'server': page_server(); break;
+    case 'journal': page_journal(); break;
     default: page_dashboard(); break;
 }
 render_footer();
 
 /* ============ ACCÈS AUX ONGLETS PAR RANG ============ */
 function admin_nav(): array {
-    return ['dashboard' => ['🏠', 'Accueil'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur']];
+    return ['dashboard' => ['🏠', 'Accueil'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal en direct']];
 }
 function tab_default_rank(string $tab): int {
-    $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6];
+    $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6, 'journal' => 7];
     return $d[$tab] ?? MIN_RANK;
 }
 function nav_groups(): array {
@@ -1220,7 +1224,7 @@ function nav_groups(): array {
         'Hôtel & appartements' => ['rooms', 'models', 'gamemaps', 'bots', 'games'],
         'Catalogue & économie' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax', 'recycler', 'vouchers'],
         'Animations' => ['events', 'bus'],
-        'Technique' => ['settings', 'textes', 'access', 'mysql', 'server'],
+        'Technique' => ['settings', 'textes', 'access', 'mysql', 'server', 'journal'],
     ];
 }
 function ensure_tab_perms(): void {
@@ -4860,6 +4864,110 @@ function alerts_sec_history(): void {
         echo '</table>';
     }
     echo '</div>';
+}
+
+/* ================= Journal en direct (activité du site/serveur) ================= */
+/* Trouve le fichier access_log d'Apache (Laragon). Réglage 'journal.access_log'
+   prioritaire, sinon détection auto du dossier httpd-* le plus récent. */
+function journal_access_log(): string {
+    $cfg = trim(site_setting_get('journal.access_log', ''));
+    if ($cfg !== '' && is_file($cfg)) return $cfg;
+    $cands = [];
+    foreach (glob('C:/laragon/bin/apache/httpd-*/logs/access_log') ?: [] as $g) $cands[] = $g;
+    foreach (glob('C:/laragon/bin/apache/httpd-*/logs/access.log') ?: [] as $g) $cands[] = $g;
+    // le plus récemment modifié = le serveur actif
+    usort($cands, fn($a, $b) => (@filemtime($b) ?: 0) <=> (@filemtime($a) ?: 0));
+    return $cands[0] ?? '';
+}
+/* Lit la fin d'un fichier (sans tout charger). */
+function journal_tail_bytes(string $f, int $bytes = 160000): string {
+    if ($f === '' || !is_file($f)) return '';
+    $sz = filesize($f); $fp = @fopen($f, 'rb'); if (!$fp) return '';
+    fseek($fp, max(0, $sz - $bytes)); $d = fread($fp, $bytes + 8); fclose($fp);
+    return (string)$d;
+}
+/* Endpoint AJAX : renvoie les dernières requêtes HTTP en JSON. */
+function journal_ajax(): void {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    $f    = journal_access_log();
+    $ipf  = preg_replace('/[^0-9A-Fa-f:.]/', '', (string)($_GET['ip'] ?? ''));
+    $mode = (string)($_GET['mode'] ?? 'pages'); // pages | all | errors
+    if (!in_array($mode, ['pages', 'all', 'errors'], true)) $mode = 'pages';
+    $raw = journal_tail_bytes($f);
+    if ($raw === '') { echo json_encode(['ok' => false, 'msg' => 'Journal Apache introuvable ou illisible.', 'path' => $f, 'emu' => emu_running(), 'ts' => date('H:i:s')]); return; }
+    $assetRe = '#\.(cct|dcr|cst|cxt|swf|png|gif|jpe?g|webp|css|js|ico|woff2?|ttf|map|mp3|wav)(\?|$)#i';
+    $rows = [];
+    foreach (preg_split('/\r\n|\n/', $raw) as $ln) {
+        if (!preg_match('/^(\S+)\s+\S+\s+\S+\s+\[([^\]]+)\]\s+"(\S+)\s+([^"]*?)\s+[^"]*"\s+(\d{3})\s+(\S+)/', $ln, $m)) continue;
+        $ip = $m[1]; $dt = $m[2]; $method = $m[3]; $path = $m[4]; $status = (int)$m[5]; $size = $m[6];
+        if ($ipf !== '' && strpos($ip, $ipf) === false) continue;
+        $isAsset = (bool)preg_match($assetRe, $path) || (bool)preg_match('#/avatar\.php#i', $path);
+        if ($mode === 'pages' && $isAsset) continue;
+        if ($mode === 'errors' && $status < 400) continue;
+        $t = (preg_match('#:(\d\d:\d\d:\d\d)#', $dt, $mm)) ? $mm[1] : '';
+        $rows[] = ['ip' => $ip, 't' => $t, 'm' => $method, 'u' => mb_substr($path, 0, 120), 's' => $status, 'sz' => $size];
+    }
+    $rows = array_slice($rows, -200);
+    echo json_encode(['ok' => true, 'rows' => $rows, 'emu' => emu_running(), 'ts' => date('H:i:s'), 'count' => count($rows)]);
+}
+function page_journal(): void {
+    page_title('Journal en direct', 'Vois en temps réel les requêtes reçues par le site (qui se connecte, quelle page, quel code)');
+    $f = journal_access_log();
+    echo '<div class="panel"><div class="ph"><h3>📡 Activité en direct</h3><span id="jstatus" class="muted sm" style="margin-left:auto">—</span></div>';
+    if ($f === '') {
+        echo '<p class="sub">⚠️ Le journal d\'accès Apache est introuvable automatiquement. Indique son chemin dans Réglages (clé <code>journal.access_log</code>), par ex. <code>C:/laragon/bin/apache/httpd-XXXX/logs/access_log</code>.</p>';
+    } else {
+        echo '<p class="sub">Source : <code>' . h($f) . '</code></p>';
+    }
+    echo '<div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">';
+    echo '<label>Filtre IP<input id="jip" placeholder="ex. 25.5.54.90" style="width:150px"></label>';
+    echo '<label>Affichage<select id="jmode"><option value="pages">Pages (sans images/casts)</option><option value="all">Tout (y compris jeu/assets)</option><option value="errors">Erreurs uniquement (4xx/5xx)</option></select></label>';
+    echo '<label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="jauto" checked> Auto (2s)</label>';
+    echo '<button class="mini" type="button" id="jrefresh">🔄 Rafraîchir</button>';
+    echo '</div>';
+    echo '<pre class="logbox" id="jlog" style="max-height:470px;overflow:auto;margin-top:10px;white-space:pre-wrap;word-break:break-all">Chargement…</pre>';
+    echo '<p class="hint">💡 Une ligne = une requête reçue : <b>heure · IP · méthode · page · code</b>. Les <b style="color:#caa300">POST</b> (connexion, formulaires) sont en jaune, les <b style="color:#c0392b">erreurs 4xx/5xx</b> en rouge. Parfait pour voir en direct ce que fait un joueur à distance (mets son IP dans « Filtre IP »).</p>';
+    echo '</div>';
+    ?>
+<script>
+(function(){
+  var logEl=document.getElementById('jlog'), stEl=document.getElementById('jstatus');
+  var ipEl=document.getElementById('jip'), modeEl=document.getElementById('jmode'), autoEl=document.getElementById('jauto');
+  var timer=null, busy=false;
+  function esc(s){return String(s).replace(/[&<>]/g,function(c){return c==='&'?'&amp;':c==='<'?'&lt;':'&gt;';});}
+  function render(d){
+    if(!d.ok){ stEl.innerHTML='⚠️ '+esc(d.msg||'erreur'); logEl.textContent=(d.msg||'Journal indisponible.'); return; }
+    var atBottom = logEl.scrollTop+logEl.clientHeight >= logEl.scrollHeight-30;
+    var rows=d.rows||[], out='';
+    for(var i=0;i<rows.length;i++){
+      var r=rows[i], col='', st=r.s;
+      if(st>=400) col='color:#e06a5b;font-weight:bold';
+      else if(r.m==='POST') col='color:#e8c34a';
+      else col='color:#9fb4c6';
+      out+='<span style="'+col+'">'+esc(r.t)+'  '+esc(r.ip)+'  '+esc(r.m)+'  '+esc(r.u)+'  → '+st+'</span>\n';
+    }
+    logEl.innerHTML = out || '<span class="muted">Aucune requête (selon le filtre).</span>';
+    if(atBottom) logEl.scrollTop=logEl.scrollHeight;
+    stEl.innerHTML = (d.emu?'🟢 Émulateur en marche':'🔴 Émulateur arrêté')+' · '+rows.length+' lignes · maj '+esc(d.ts);
+  }
+  function poll(){
+    if(busy) return; busy=true;
+    var url='?p=journal&tail=1&mode='+encodeURIComponent(modeEl.value)+'&ip='+encodeURIComponent(ipEl.value||'');
+    var x=new XMLHttpRequest();
+    x.open('GET',url,true);
+    x.onreadystatechange=function(){ if(x.readyState===4){ busy=false; try{ render(JSON.parse(x.responseText)); }catch(e){ stEl.innerHTML='⚠️ réponse illisible'; } } };
+    x.onerror=function(){ busy=false; stEl.innerHTML='⚠️ erreur réseau'; };
+    x.send();
+  }
+  function schedule(){ if(timer){clearInterval(timer);timer=null;} if(autoEl.checked){ timer=setInterval(poll,2000); } }
+  document.getElementById('jrefresh').onclick=poll;
+  autoEl.onchange=schedule; modeEl.onchange=poll; ipEl.onchange=poll;
+  ipEl.onkeyup=function(e){ if(e.keyCode===13) poll(); };
+  poll(); schedule();
+})();
+</script>
+    <?php
 }
 
 function page_server(): void {
