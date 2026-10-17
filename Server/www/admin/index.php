@@ -1197,12 +1197,13 @@ function tab_default_rank(string $tab): int {
 function nav_groups(): array {
     return [
         '' => ['dashboard', 'search'],
-        'Gestion du Site' => ['sitemgr', 'news'],
-        'Joueurs & modération' => ['users', 'badges', 'ranks', 'moderation', 'homemod', 'audit', 'commandes'],
-        'Catalogue & mobis' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax'],
-        'Hôtel & animations' => ['rooms', 'models', 'bots', 'games', 'gamemaps', 'events', 'recycler', 'vouchers', 'bus'],
-        'Messagerie' => ['messages'],
-        'Administration' => ['settings', 'textes', 'access', 'mysql', 'server'],
+        'Site & contenus' => ['sitemgr', 'news'],
+        'Joueurs' => ['users', 'badges', 'ranks'],
+        'Modération & assistance' => ['messages', 'moderation', 'homemod', 'commandes', 'audit'],
+        'Hôtel & appartements' => ['rooms', 'models', 'gamemaps', 'bots', 'games'],
+        'Catalogue & économie' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax', 'recycler', 'vouchers'],
+        'Animations' => ['events', 'bus'],
+        'Technique' => ['settings', 'textes', 'access', 'mysql', 'server'],
     ];
 }
 function ensure_tab_perms(): void {
@@ -4824,7 +4825,7 @@ function page_access(): void {
     echo '<p class="hint" style="font-size:13px">Rang minimum requis pour chaque onglet. <b>5</b> = Super Hobba · <b>6</b> = Modérateur · <b>7</b> = Administrateur. « Accueil » et « Recherche » restent toujours accessibles. Page réservée au rang 7.</p>';
     echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="tabperm_update">';
     $nav = admin_nav();
-    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Gestion du Site' => '🌐', 'Messagerie' => '💬', 'Administration' => '⚙️'];
+    $gicons = ['Site & contenus' => '🌐', 'Joueurs' => '👥', 'Modération & assistance' => '🛡️', 'Hôtel & appartements' => '🏨', 'Catalogue & économie' => '🛋️', 'Animations' => '🎉', 'Technique' => '⚙️'];
     foreach (nav_groups() as $gl => $keys) {
         if ($gl === '') continue;
         echo '<div class="panel"><div class="ph"><h3>' . ($gicons[$gl] ?? '📁') . ' ' . h($gl) . '</h3></div><table class="clean"><tr><th>Onglet</th><th style="width:280px">Rang minimum</th></tr>';
@@ -5206,7 +5207,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
 .logbox{max-height:230px;overflow:auto;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;font:12px/1.5 var(--mono);color:var(--mut);white-space:pre-wrap;word-break:break-word;margin:0}
 </style></head><body>
 <aside class="side"><div class="brand"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="width:100%;max-width:180px;height:auto;display:block;margin:0 auto 4px;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated"><small>ADMINISTRATION</small></div><nav><?php
-    $gicons = ['Joueurs & modération' => '👥', 'Catalogue & mobis' => '🛋️', 'Hôtel & animations' => '🏨', 'Gestion du Site' => '🌐', 'Messagerie' => '💬', 'Administration' => '⚙️'];
+    $gicons = ['Site & contenus' => '🌐', 'Joueurs' => '👥', 'Modération & assistance' => '🛡️', 'Hôtel & appartements' => '🏨', 'Catalogue & économie' => '🛋️', 'Animations' => '🎉', 'Technique' => '⚙️'];
     foreach (nav_groups() as $grpLabel => $keys) {
         $visible = array_filter($keys, fn($k) => isset($nav[$k]) && tab_allowed($k));
         if (!$visible) continue;
@@ -5215,7 +5216,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
             continue;
         }
         $cur = in_array($p, $visible, true);
-        $gb = ($grpLabel === 'Messagerie') ? messages_badge() : 0;
+        $gb = in_array('messages', $keys, true) ? messages_badge() : 0;
         echo '<div class="navgrp' . ($cur ? ' open' : '') . '"' . ($cur ? ' data-cur="1"' : '') . ' data-g="' . h($grpLabel) . '">';
         echo '<button type="button" class="grp" onclick="toggleGrp(this)"><span class="i">' . ($gicons[$grpLabel] ?? '📁') . '</span><span>' . h($grpLabel) . '</span>' . ($gb > 0 ? '<span class="sidebadge">' . $gb . '</span>' : '') . '<span class="car">▸</span></button>';
         echo '<div class="grpitems">';
