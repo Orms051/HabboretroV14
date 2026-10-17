@@ -1078,8 +1078,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'hotel_alert':
                 $txt = trim((string)($_POST['message'] ?? ''));
                 if ($txt === '') { $ok = false; $msg = 'Message vide.'; break; }
-                $params = ['message' => $txt];
-                if (trim((string)($_POST['sender'] ?? '')) !== '') $params['sender'] = trim((string)$_POST['sender']);
+                // Le client Habbo (Shockwave) affiche en CP1252 : on convertit + retire les emoji.
+                $params = ['message' => kepler_text($txt)];
+                if (trim((string)($_POST['sender'] ?? '')) !== '') $params['sender'] = kepler_text(trim((string)$_POST['sender']));
                 $ok2 = rcon_send('hotel_alert', $params);
                 alert_log_add('jeu (RCON)', 'Tout l\'hôtel (connectés)', $txt, $ok2 ? 'RCON accepté — transmis au serveur' : 'échec — émulateur injoignable');
                 $ok = $ok2; $msg = $ok2 ? '📢 Alerte transmise au serveur (joueurs connectés).' : '❌ Émulateur injoignable (RCON). Est-il démarré ?'; break;
@@ -4782,14 +4783,15 @@ function current_entry_bg(): string {
     return '';
 }
 function hotel_alert_presets(): array {
+    // Pas d'emoji : le client Habbo (Shockwave) ne les affiche pas (ils seraient retirés à l'envoi).
     return [
-        '🔧 Maintenance dans 10 minutes — pense à ranger tes mobis, déconnexion imminente !',
-        '🔄 Redémarrage du serveur dans 5 minutes.',
-        '🎉 Un événement vient de commencer dans les salles publiques — rejoins-nous !',
-        '❄️ De nouveaux mobis sont disponibles au Catalogue !',
-        '🎁 Distribution de crédits en cours, profites-en !',
-        '👋 Bienvenue sur Habbo — amuse-toi bien !',
-        '⚠️ Merci de respecter les autres joueurs. Les insultes = ban.',
+        'Maintenance dans 10 minutes - pense à ranger tes mobis, déconnexion imminente !',
+        'Redémarrage du serveur dans 5 minutes.',
+        'Un événement vient de commencer dans les salles publiques - rejoins-nous !',
+        'De nouveaux mobis sont disponibles au Catalogue !',
+        'Distribution de crédits en cours, profites-en !',
+        'Bienvenue sur Habbo - amuse-toi bien !',
+        'Merci de respecter les autres joueurs. Les insultes = ban.',
     ];
 }
 /* Service d'avatars Minerva (port local 5123). */
@@ -4821,7 +4823,7 @@ function alerts_sec_send(): void {
     if (!tab_allowed('server')) { echo '<div class="panel"><div class="empty">🔒 Ton rang n\'autorise pas l\'envoi d\'alertes en jeu.</div></div>'; return; }
     $up = emu_running();
     echo '<div class="panel"><div class="ph"><h3>📢 Alerte en jeu</h3><span class="rk' . ($up ? '' : ' red') . '" style="margin-left:auto">' . ($up ? '🟢 Émulateur en ligne' : '🔴 Émulateur hors ligne') . '</span></div>';
-    echo '<p class="sub">Message pop-up envoyé aux <b>joueurs actuellement connectés</b> (éphémère, non conservé). Seule destination prise en charge aujourd\'hui : <b>tout l\'hôtel</b>. Les alertes par appartement ou par joueur se font en jeu (<code>:alert</code>).</p>';
+    echo '<p class="sub">Message pop-up envoyé aux <b>joueurs actuellement connectés</b> (éphémère, non conservé). Seule destination prise en charge aujourd\'hui : <b>tout l\'hôtel</b>. Les alertes par appartement ou par joueur se font en jeu (<code>:alert</code>). ℹ️ Les <b>emoji ne sont pas affichés</b> par le client (retirés automatiquement) ; les accents, eux, passent bien.</p>';
     if (!$up) echo '<div class="note" style="margin:0 0 10px">🔴 Émulateur hors ligne : l\'envoi <b>échouera</b> (aucune mise en file automatique). Démarre-le d\'abord.</div>';
     $presetOpts = '<option value="">— Message prédéfini —</option>';
     foreach (hotel_alert_presets() as $pm) $presetOpts .= '<option value="' . h($pm) . '">' . h(mb_strlen($pm) > 64 ? mb_substr($pm, 0, 64) . '…' : $pm) . '</option>';
@@ -4992,6 +4994,16 @@ function srv_stop(): array { $o = []; $c = -1; @exec(ps_exe() . ' -NoProfile -Ex
 function srv_start(): array { $o = []; $c = -1; @exec(ps_exe() . ' -NoProfile -ExecutionPolicy Bypass -File "' . __DIR__ . '\\_emu_start.ps1" 2>&1', $o, $c); return ['code' => $c, 'out' => $o]; }
 
 /* ---- RCON (alerte hôtel, etc.) ---- */
+/* Prépare un texte pour le client Habbo (Shockwave) : retire les emoji (non rendus)
+   puis convertit UTF-8 -> CP1252 (le client affiche en Windows-1252 ; corrige aussi
+   la longueur des chaînes du protocole RCON, faussée par les accents UTF-8 multi-octets). */
+function kepler_text(string $s): string {
+    // Retire emoji & symboles hors CP1252 (pictogrammes, flèches décoratives, variation selectors)
+    $s = preg_replace('/[\x{1F000}-\x{1FAFF}\x{2600}-\x{27BF}\x{2B00}-\x{2BFF}\x{FE00}-\x{FE0F}\x{20D0}-\x{20FF}\x{2190}-\x{21FF}]/u', '', $s);
+    $s = trim(preg_replace('/[ \t]{2,}/', ' ', $s));
+    $out = @mb_convert_encoding($s, 'Windows-1252', 'UTF-8');
+    return $out === false ? $s : $out;
+}
 function rcon_str(string $s): string { return pack('N', strlen($s)) . $s; }
 function rcon_send(string $header, array $params = []): bool {
     $c = @fsockopen('127.0.0.1', 12309, $e, $s, 1.5);
