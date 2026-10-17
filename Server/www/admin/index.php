@@ -2965,38 +2965,286 @@ function page_trax(): void {
     echo '</div>';
 }
 
+/* ===================== Gestionnaire de meubles — helpers (Lot 1) ===================== */
+/* Dictionnaire des comportements RÉELS exposés par Kepler (vérifiés en base).
+   On n'invente aucun réglage : on se contente de rendre lisibles les flags existants. */
+function furni_behaviour_dict(): array {
+    return [
+        'solid' => 'Solide (occupe la case, bloque le passage)',
+        'can_sit_on_top' => 'Assise possible',
+        'can_lay_on_top' => 'Couchage possible',
+        'can_stand_on_top' => 'On peut se tenir dessus',
+        'can_stack_on_top' => 'Empilable (objets posés par-dessus)',
+        'requires_rights_for_interaction' => 'Interaction réservée (droits du propriétaire)',
+        'requires_touching_for_interaction' => 'Interaction au contact (case adjacente)',
+        'gate' => 'Portail (ouverture/fermeture du passage)',
+        'roller' => 'Rouleau (tapis roulant)',
+        'teleporter' => 'Téléporteur',
+        'prize_trophy' => 'Trophée (texte gravé)',
+        'present' => 'Cadeau emballé',
+        'redeemable' => 'Échangeable contre des crédits',
+        'dice' => 'Dé',
+        'sound_machine_sample_set' => 'Échantillon sonore (Trax)',
+        'wall_item' => 'Objet mural',
+        'custom_data_true_false' => 'État vrai/faux',
+        'custom_data_on_off' => 'État on/off',
+        'custom_data_numeric_on_off' => 'État numérique on/off',
+        'custom_data_numeric_state' => 'États numériques multiples',
+        'sound_machine' => 'Trax (machine à sons)',
+        'song_disk' => 'Disque de chanson',
+        'jukebox' => 'Jukebox',
+        'post_it' => 'Post-it (pense-bête)',
+        'photo' => 'Photo',
+        'decoration' => 'Décoration (non interactif)',
+        'wheel_of_fortune' => 'Roue de la fortune',
+        'roomdimmer' => 'Variateur d\'ambiance (Moodlight)',
+        'place_roller_on_top' => 'Peut recevoir un rouleau par-dessus',
+    ];
+}
+/* Décompose la chaîne behaviour en flags connus / inconnus. */
+function furni_behaviour_parse(string $b): array {
+    $flags = array_values(array_filter(array_map('trim', explode(',', $b)), fn($x) => $x !== ''));
+    $dict = furni_behaviour_dict(); $known = []; $unknown = [];
+    foreach ($flags as $f) {
+        if (isset($dict[$f])) $known[$f] = $dict[$f];
+        elseif (preg_match('/^redirect_rotation_(\d)$/', $f, $m)) $known[$f] = 'Téléporteur : sortie orientée ' . $m[1];
+        else $unknown[] = $f;
+    }
+    return ['flags' => $flags, 'known' => $known, 'unknown' => $unknown];
+}
+/* Rendu en puces lisibles (max = nombre de puces avant « +N »). */
+function furni_behaviour_chips(string $b, int $max = 0): string {
+    $p = furni_behaviour_parse($b);
+    if (!$p['flags']) return '<span class="muted sm">—</span>';
+    $chip = 'display:inline-block;padding:1px 7px;margin:1px 3px 1px 0;border-radius:9px;font-size:11px;background:rgba(90,130,170,.18)';
+    $bad  = 'display:inline-block;padding:1px 7px;margin:1px 3px 1px 0;border-radius:9px;font-size:11px;background:#5a2d2d;color:#ffd7d7';
+    $o = ''; $n = 0;
+    foreach ($p['known'] as $f => $lbl) { if ($max && $n >= $max) break; $o .= '<span style="' . $chip . '" title="' . h($f) . '">' . h($lbl) . '</span>'; $n++; }
+    foreach ($p['unknown'] as $f) { if ($max && $n >= $max) break; $o .= '<span style="' . $bad . '" title="comportement non reconnu">⚠ ' . h($f) . '</span>'; $n++; }
+    $rest = count($p['flags']) - $n;
+    if ($rest > 0) $o .= '<span class="muted sm">+' . $rest . '</span>';
+    return $o;
+}
+/* Nombre d'offres catalogue par définition (une requête, mis en cache). */
+function furni_catalogue_counts(): array {
+    static $m = null;
+    if ($m !== null) return $m;
+    $m = [];
+    try { foreach (db()->query('SELECT definition_id, COUNT(*) n FROM catalogue_items WHERE definition_id IS NOT NULL GROUP BY definition_id') as $r) $m[(int)$r['definition_id']] = (int)$r['n']; }
+    catch (Throwable $e) {}
+    return $m;
+}
+/* Querystring des paramètres de liste actifs (pour conserver recherche/filtres/tri/page au retour). */
+function furni_list_qs(): string {
+    $keep = [];
+    foreach (['q', 'type', 'beh', 'cat', 'img', 'sort', 'dir', 'pg'] as $k) {
+        $v = (string)($_GET[$k] ?? '');
+        if ($v !== '') $keep[$k] = $v;
+    }
+    return http_build_query($keep);
+}
+
 function page_furni(): void {
-    page_title('Meubles (définitions)', 'Toutes les définitions de mobis — réglages avancés');
-    echo '<details class="panel"><summary><b>🎁 Donner un meuble à TOUS les joueurs</b></summary>';
-    echo '<p class="muted sm">Le meuble arrive dans la <b>main</b> de chaque joueur (reconnexion requise). Utilise le <b>#ID</b> de la définition (colonne « # » ci-dessous).</p>';
-    echo '<form method="post" class="js row" data-reload data-confirm="Distribuer ce meuble à TOUS les joueurs ?">' . csrf_field() . '<input type="hidden" name="action" value="furni_all"><label>ID définition<input type="number" name="definition_id" placeholder="ex. 42" required style="width:120px"></label><button>🎁 Distribuer à tous</button></form></details>';
-    if (isset($_GET['edit'])) { $st = db()->prepare('SELECT * FROM items_definitions WHERE id=?'); $st->execute([(int)$_GET['edit']]); $edit = $st->fetch() ?: null;
-        if ($edit) {
-            echo '<div class="panel"><div class="ph"><h3>' . furni_icon_img((string)$edit['sprite'], 48) . ' ' . h($edit['name']) . ' (#' . (int)$edit['id'] . ')</h3><a class="lnk" href="?p=furni">← Retour</a></div><form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="def_update"><input type="hidden" name="id" value="' . (int)$edit['id'] . '">';
-            echo '<div class="row"><label style="flex:1">Nom<input name="name" value="' . h($edit['name']) . '"></label><label>Longueur<input type="number" name="length" value="' . (int)$edit['length'] . '" style="width:90px"></label><label>Largeur<input type="number" name="width" value="' . (int)$edit['width'] . '" style="width:90px"></label></div>';
-            echo '<label style="margin-top:8px">Description<input name="description" value="' . h($edit['description']) . '"></label>';
-            echo '<label style="margin-top:8px">Comportement (behaviour)<input name="behaviour" value="' . h($edit['behaviour']) . '"></label>';
-            echo '<div class="row" style="margin-top:8px"><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_tradable" ' . ($edit['is_tradable'] ? 'checked' : '') . '> Échangeable</label><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_recyclable" ' . ($edit['is_recyclable'] ? 'checked' : '') . '> Recyclable</label></div>';
-            echo '<button style="margin-top:10px">💾 Enregistrer</button></form><p class="hint">sprite: ' . h((string)$edit['sprite']) . ' · sprite_id: ' . (int)$edit['sprite_id'] . '</p></div>';
-            return;
-        }
-    }
-    $q = trim($_GET['q'] ?? '');
-    $pg = max(1, (int)($_GET['pg'] ?? 1)); $off = ($pg - 1) * PER_PAGE;
-    echo '<div class="panel"><div class="ph"><h3>🪑 Meubles</h3><form method="get" class="srch"><input type="hidden" name="p" value="furni"><input name="q" value="' . h($q) . '" placeholder="🔍 Nom ou sprite..."><button class="mini">OK</button></form></div>';
+    page_title('Meubles (définitions)', 'Gestionnaire de mobis — retrouver, consulter et régler un meuble');
+
+    /* ================= FICHE (pleine largeur, à onglets) ================= */
+    $fid = (int)($_GET['fiche'] ?? $_GET['edit'] ?? 0);
+    if ($fid > 0) { furni_fiche($fid); return; }
+
+    /* ================= LISTE ================= */
+    $q    = trim((string)($_GET['q'] ?? ''));
+    $type = in_array($_GET['type'] ?? '', ['floor', 'wall'], true) ? (string)$_GET['type'] : '';
+    $cat  = in_array($_GET['cat'] ?? '', ['yes', 'no'], true) ? (string)$_GET['cat'] : '';
+    $imgf = ($_GET['img'] ?? '') === 'missing' ? 'missing' : '';
+    $beh  = preg_replace('/[^a-z0-9_]/', '', strtolower((string)($_GET['beh'] ?? '')));
+    $sort = in_array($_GET['sort'] ?? '', ['id', 'name', 'sprite', 'size'], true) ? (string)$_GET['sort'] : 'id';
+    $dir  = ($_GET['dir'] ?? '') === 'desc' ? 'desc' : 'asc';
+    $pg   = max(1, (int)($_GET['pg'] ?? 1)); $off = ($pg - 1) * PER_PAGE;
+
+    $where = []; $args = [];
     if ($q !== '') {
-        $like = '%' . $q . '%';
-        $tc = db()->prepare('SELECT COUNT(*) FROM items_definitions WHERE name LIKE ? OR sprite LIKE ?'); $tc->execute([$like, $like]); $tot = (int)$tc->fetchColumn();
-        $st = db()->prepare('SELECT id,sprite,name,length,width,behaviour FROM items_definitions WHERE name LIKE ? OR sprite LIKE ? ORDER BY name LIMIT ' . PER_PAGE . ' OFFSET ' . $off); $st->execute([$like, $like]); $rows = $st->fetchAll();
-    } else {
-        $tot = (int)db()->query('SELECT COUNT(*) FROM items_definitions')->fetchColumn();
-        $rows = db()->query('SELECT id,sprite,name,length,width,behaviour FROM items_definitions ORDER BY id LIMIT ' . PER_PAGE . ' OFFSET ' . $off)->fetchAll();
+        if (ctype_digit($q)) { $where[] = '(name LIKE ? OR sprite LIKE ? OR id=?)'; $args[] = "%$q%"; $args[] = "%$q%"; $args[] = (int)$q; }
+        else { $where[] = '(name LIKE ? OR sprite LIKE ?)'; $args[] = "%$q%"; $args[] = "%$q%"; }
     }
-    echo '<table class="clean"><tr><th>#</th><th></th><th>Nom</th><th>Sprite</th><th>Taille</th><th>Comportement</th><th></th></tr>';
-    foreach ($rows as $r) echo '<tr><td>' . (int)$r['id'] . '</td><td>' . furni_icon_img((string)$r['sprite']) . '</td><td><b>' . h($r['name']) . '</b></td><td class="sm muted">' . h((string)$r['sprite']) . '</td><td class="sm">' . (int)$r['length'] . '×' . (int)$r['width'] . '</td><td class="sm muted">' . h((string)$r['behaviour']) . '</td><td><a class="mini ghost" href="?p=furni&edit=' . (int)$r['id'] . '">Éditer</a></td></tr>';
+    if ($type === 'wall')  $where[] = "FIND_IN_SET('wall_item', behaviour)";
+    if ($type === 'floor') $where[] = "NOT FIND_IN_SET('wall_item', behaviour)";
+    if ($beh !== '')       { $where[] = 'FIND_IN_SET(?, behaviour)'; $args[] = $beh; }
+    if ($cat === 'yes')    $where[] = 'id IN (SELECT definition_id FROM catalogue_items WHERE definition_id IS NOT NULL)';
+    if ($cat === 'no')     $where[] = 'id NOT IN (SELECT definition_id FROM catalogue_items WHERE definition_id IS NOT NULL)';
+    $wsql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+    $orderCol = ['id' => 'id', 'name' => 'name', 'sprite' => 'sprite', 'size' => '(length*width)'][$sort];
+
+    $stmt = db()->prepare("SELECT id,sprite,name,length,width,top_height,behaviour FROM items_definitions $wsql ORDER BY $orderCol $dir, id $dir");
+    $stmt->execute($args);
+    $all = $stmt->fetchAll();
+    if ($imgf === 'missing') $all = array_values(array_filter($all, fn($r) => furni_icon((string)$r['sprite']) === ''));
+    $tot = count($all);
+    $rows = array_slice($all, $off, PER_PAGE);
+    $catCounts = furni_catalogue_counts();
+
+    /* --- Barre de recherche + filtres (GET, conserve tout) --- */
+    echo '<div class="panel"><div class="ph"><h3>🪑 Meubles <span class="muted sm">(' . $tot . ')</span></h3></div>';
+    echo '<form method="get" class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end"><input type="hidden" name="p" value="furni">';
+    echo '<label style="flex:1;min-width:180px">Recherche (nom, sprite, ou #ID)<input name="q" value="' . h($q) . '" placeholder="🔍 ex. tapis, carpet, 42"></label>';
+    echo '<label>Type<select name="type"><option value=""' . ($type === '' ? ' selected' : '') . '>Tous</option><option value="floor"' . ($type === 'floor' ? ' selected' : '') . '>Sol</option><option value="wall"' . ($type === 'wall' ? ' selected' : '') . '>Mur</option></select></label>';
+    echo '<label>Comportement<select name="beh"><option value="">Tous</option>';
+    foreach (furni_behaviour_dict() as $f => $lbl) echo '<option value="' . h($f) . '"' . ($beh === $f ? ' selected' : '') . '>' . h($lbl) . '</option>';
+    echo '</select></label>';
+    echo '<label>Catalogue<select name="cat"><option value=""' . ($cat === '' ? ' selected' : '') . '>Tous</option><option value="yes"' . ($cat === 'yes' ? ' selected' : '') . '>Présent</option><option value="no"' . ($cat === 'no' ? ' selected' : '') . '>Absent</option></select></label>';
+    echo '<label>Image<select name="img"><option value="">Toutes</option><option value="missing"' . ($imgf === 'missing' ? ' selected' : '') . '>Manquante</option></select></label>';
+    echo '<input type="hidden" name="sort" value="' . h($sort) . '"><input type="hidden" name="dir" value="' . h($dir) . '">';
+    echo '<button class="mini">Filtrer</button> <a class="mini ghost" href="?p=furni">Réinitialiser</a>';
+    echo '</form>';
+
+    /* --- En-têtes triables --- */
+    $baseNoSort = array_filter(['q' => $q, 'type' => $type, 'beh' => $beh, 'cat' => $cat, 'img' => $imgf]);
+    $sortLink = function (string $col, string $label) use ($baseNoSort, $sort, $dir) {
+        $nd = ($sort === $col && $dir === 'asc') ? 'desc' : 'asc';
+        $arrow = $sort === $col ? ($dir === 'asc' ? ' ▲' : ' ▼') : '';
+        return '<a class="lnk" href="?' . h(http_build_query($baseNoSort + ['p' => 'furni', 'sort' => $col, 'dir' => $nd])) . '">' . h($label) . $arrow . '</a>';
+    };
+    echo '<table class="clean"><tr><th>' . $sortLink('id', '#') . '</th><th>Image</th><th>' . $sortLink('name', 'Nom') . '</th><th>' . $sortLink('sprite', 'Sprite') . '</th><th>' . $sortLink('size', 'Dim.') . '</th><th>Comportement</th><th>Catalogue</th><th>Anomalies</th></tr>';
+    $qsFiche = furni_list_qs();
+    foreach ($rows as $r) {
+        $id = (int)$r['id']; $sprite = (string)$r['sprite'];
+        $hasImg = furni_icon($sprite) !== '';
+        $parse = furni_behaviour_parse((string)$r['behaviour']);
+        $nOffers = $catCounts[$id] ?? 0;
+        $fiche = '?p=furni&fiche=' . $id . ($qsFiche !== '' ? '&ret=' . rawurlencode($qsFiche) : '');
+        $anoms = [];
+        if (!$hasImg) $anoms[] = '<span title="aucune miniature trouvée dans le pack" style="color:#e0a020">🖼️ image manquante</span>';
+        if ($parse['unknown']) $anoms[] = '<span title="' . h(implode(', ', $parse['unknown'])) . '" style="color:#e06a5b">⚠ comportement inconnu</span>';
+        if ((int)$r['length'] <= 0 || (int)$r['width'] <= 0) $anoms[] = '<span style="color:#e0a020">📐 dimension nulle</span>';
+        echo '<tr>'
+            . '<td class="sm muted">' . $id . '</td>'
+            . '<td><a href="' . h($fiche) . '">' . furni_icon_img($sprite, 32) . '</a></td>'
+            . '<td><a class="lnk" href="' . h($fiche) . '"><b>' . h((string)$r['name']) . '</b></a></td>'
+            . '<td class="sm muted">' . h($sprite) . '</td>'
+            . '<td class="sm">' . (int)$r['length'] . '×' . (int)$r['width'] . ($r['top_height'] !== null ? ' · h' . rtrim(rtrim(number_format((float)$r['top_height'], 2, '.', ''), '0'), '.') : '') . '</td>'
+            . '<td>' . furni_behaviour_chips((string)$r['behaviour'], 2) . '</td>'
+            . '<td class="sm">' . ($nOffers > 0 ? '<span style="color:#2bbf5b">✓ ' . $nOffers . ' offre' . ($nOffers > 1 ? 's' : '') . '</span>' : '<span class="muted">—</span>') . '</td>'
+            . '<td class="sm">' . ($anoms ? implode(' ', $anoms) : '<span class="muted">—</span>') . '</td>'
+            . '</tr>';
+    }
     echo '</table>';
-    pager($tot, $pg, '?p=furni' . ($q !== '' ? '&q=' . urlencode($q) : ''));
+    pager($tot, $pg, '?p=furni' . ($baseNoSort ? '&' . http_build_query($baseNoSort) : '') . '&sort=' . $sort . '&dir=' . $dir);
+    echo '<p class="hint">💡 Clique sur l\'image ou le nom pour ouvrir la fiche. « Catalogue absent » ne veut pas forcément dire « à ajouter » : beaucoup d\'objets système/récompenses ne sont pas en vente.</p>';
     echo '</div>';
+
+    /* --- Distribution globale (sera déplacée dans la fiche au Lot 3) --- */
+    echo '<details class="panel"><summary><b>🎁 Donner un meuble à TOUS les joueurs</b></summary>';
+    echo '<p class="muted sm">Le meuble arrive dans la <b>main</b> de chaque joueur (reconnexion requise). Utilise le <b>#ID</b> de la définition.</p>';
+    echo '<form method="post" class="js row" data-reload data-confirm="Distribuer ce meuble à TOUS les joueurs ?">' . csrf_field() . '<input type="hidden" name="action" value="furni_all"><label>ID définition<input type="number" name="definition_id" placeholder="ex. 42" required style="width:120px"></label><button>🎁 Distribuer à tous</button></form></details>';
+}
+
+/* ================= Fiche meuble (pleine largeur, onglets) ================= */
+function furni_fiche(int $id): void {
+    $st = db()->prepare('SELECT * FROM items_definitions WHERE id=?'); $st->execute([$id]); $d = $st->fetch() ?: null;
+    $ret = (string)($_GET['ret'] ?? '');
+    $retUrl = '?p=furni' . ($ret !== '' ? '&' . $ret : '');
+    if (!$d) {
+        echo '<div class="panel"><div class="empty">Définition #' . $id . ' introuvable. <a class="lnk" href="' . h($retUrl) . '">← Retour</a></div></div>';
+        return;
+    }
+    $sprite = (string)$d['sprite'];
+    $hasImg = furni_icon($sprite) !== '';
+    $offers = db()->prepare('SELECT * FROM catalogue_items WHERE definition_id=? ORDER BY is_hidden, id'); $offers->execute([$id]); $offers = $offers->fetchAll();
+    $parse = furni_behaviour_parse((string)$d['behaviour']);
+
+    /* --- En-tête --- */
+    echo '<div class="panel"><div class="ph"><h3>' . furni_icon_img($sprite, 48) . ' ' . h((string)$d['name']) . ' <span class="muted sm">#' . $id . '</span></h3><a class="lnk" href="' . h($retUrl) . '" style="margin-left:auto">← Retour à la liste</a></div>';
+    echo '<div class="row" style="gap:16px;align-items:flex-start">';
+    echo '<div style="flex:0 0 auto;text-align:center">';
+    if ($hasImg) echo '<img src="' . h(furni_icon($sprite)) . '" alt="" style="width:96px;height:96px;object-fit:contain;image-rendering:pixelated;background:rgba(128,128,128,.1);border-radius:8px;padding:6px">';
+    else echo '<div style="width:96px;height:96px;display:grid;place-items:center;background:rgba(128,128,128,.1);border-radius:8px;color:#999;font-size:11px;text-align:center">Visuel<br>indisponible</div>';
+    echo '<div class="muted sm" style="margin-top:4px">icône catalogue</div></div>';
+    echo '<div style="flex:1;min-width:220px">';
+    echo '<p style="margin:0 0 6px">' . (trim((string)$d['description']) !== '' ? h((string)$d['description']) : '<span class="muted">(pas de description)</span>') . '</p>';
+    echo '<p class="sm muted" style="margin:0">sprite : <code>' . h($sprite) . '</code> · sprite_id : ' . (int)$d['sprite_id'] . '</p>';
+    echo '<p class="hint" style="margin-top:8px">⚠️ <b>Définition commune</b> : modifier ces valeurs peut affecter <b>tous les exemplaires</b> de ce meuble (posés et en inventaire).</p>';
+    echo '</div></div>';
+
+    /* --- Onglets --- */
+    $tabs = ['carac' => '🔧 Caractéristiques', 'cata' => '🛒 Catalogue & variantes', 'exemplaires' => '📦 Exemplaires', 'diag' => '🩺 Diagnostic & tests', 'hist' => '🕑 Historique'];
+    echo '<div class="ftabs" style="display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid rgba(128,128,128,.25);margin:12px 0 0">';
+    foreach ($tabs as $k => $lbl) echo '<button type="button" class="ftab' . ($k === 'carac' ? ' on' : '') . '" data-ft="' . $k . '" style="border:0;background:none;padding:8px 12px;cursor:pointer;font:inherit;border-bottom:2px solid transparent">' . h($lbl) . '</button>';
+    echo '</div>';
+
+    /* Onglet Caractéristiques */
+    echo '<div class="ftp" data-ftp="carac">';
+    echo '<table class="clean" style="margin-top:10px"><tr><th style="width:200px">Caractéristique</th><th>Valeur</th><th>Effet</th></tr>';
+    echo '<tr><td>Dimensions (cases)</td><td>' . (int)$d['length'] . ' × ' . (int)$d['width'] . '</td><td class="sm muted">emprise au sol (longueur × largeur)</td></tr>';
+    echo '<tr><td>Hauteur (top_height)</td><td>' . h(rtrim(rtrim(number_format((float)$d['top_height'], 2, '.', ''), '0'), '.')) . '</td><td class="sm muted">hauteur du dessus (empilement, assise/pose d\'objets)</td></tr>';
+    echo '<tr><td>Comportement</td><td>' . furni_behaviour_chips((string)$d['behaviour']) . '</td><td class="sm muted">interactions exposées par Kepler</td></tr>';
+    echo '<tr><td>Interacteur</td><td><code>' . h((string)$d['interactor']) . '</code></td><td class="sm muted">type d\'interaction côté serveur</td></tr>';
+    echo '<tr><td>Couleur</td><td><code>' . h((string)$d['colour']) . '</code></td><td class="sm muted">RVB (technique)</td></tr>';
+    echo '<tr><td>max_status</td><td><code>' . h((string)$d['max_status']) . '</code></td><td class="sm muted">nombre d\'états (technique)</td></tr>';
+    echo '<tr><td>Échangeable</td><td>' . ($d['is_tradable'] ? '✅ oui' : '❌ non') . '</td><td class="sm muted">peut être échangé entre joueurs</td></tr>';
+    echo '<tr><td>Recyclable</td><td>' . ($d['is_recyclable'] ? '✅ oui' : '❌ non') . '</td><td class="sm muted">accepté par le recycleur</td></tr>';
+    if (trim((string)$d['drink_ids']) !== '' && $d['drink_ids'] !== "''") echo '<tr><td>Boissons (drink_ids)</td><td><code>' . h((string)$d['drink_ids']) . '</code></td><td class="sm muted">IDs des boissons servies</td></tr>';
+    echo '</table>';
+    /* Édition minimale conservée (l\'éditeur complet — hauteur, cases à cocher, validations, historique — arrive au Lot 2) */
+    echo '<form method="post" class="js" data-reload style="margin-top:12px;border-top:1px dashed rgba(128,128,128,.3);padding-top:12px">' . csrf_field() . '<input type="hidden" name="action" value="def_update"><input type="hidden" name="id" value="' . $id . '">';
+    echo '<p class="sm muted" style="margin:0 0 6px">Édition rapide (l\'éditeur complet avec hauteur, comportements guidés, validation et historique arrive au Lot 2) :</p>';
+    echo '<div class="row"><label style="flex:1">Nom<input name="name" value="' . h((string)$d['name']) . '"></label><label>Longueur<input type="number" name="length" value="' . (int)$d['length'] . '" style="width:90px"></label><label>Largeur<input type="number" name="width" value="' . (int)$d['width'] . '" style="width:90px"></label></div>';
+    echo '<label style="margin-top:8px">Description<input name="description" value="' . h((string)$d['description']) . '"></label>';
+    echo '<label style="margin-top:8px">Comportement (texte brut, modifié au Lot 2)<input name="behaviour" value="' . h((string)$d['behaviour']) . '"></label>';
+    echo '<div class="row" style="margin-top:8px"><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_tradable" ' . ($d['is_tradable'] ? 'checked' : '') . '> Échangeable</label><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_recyclable" ' . ($d['is_recyclable'] ? 'checked' : '') . '> Recyclable</label></div>';
+    echo '<button style="margin-top:10px">💾 Enregistrer</button></form>';
+    echo '<p class="hint">ℹ️ Enregistré en base immédiatement. Le <b>nom affiché en jeu</b> (sur le meuble posé) vient des <b>textes client</b> — la synchronisation sera gérée ici au Lot 3.</p>';
+    echo '</div>';
+
+    /* Onglet Catalogue & variantes */
+    echo '<div class="ftp" data-ftp="cata" style="display:none">';
+    if (!$offers) echo '<div class="empty" style="margin-top:10px">Ce meuble n\'a aucune offre au catalogue. (Ce n\'est pas forcément une anomalie : objets système, récompenses…)</div>';
+    else {
+        echo '<table class="clean" style="margin-top:10px"><tr><th>#</th><th>Nom de l\'offre</th><th>Page</th><th>Prix</th><th>Qté</th><th>Visible</th><th>sale_code</th><th></th></tr>';
+        foreach ($offers as $o) {
+            echo '<tr><td class="sm muted">' . (int)$o['id'] . '</td><td><b>' . h((string)$o['name']) . '</b>' . (trim((string)$o['description']) !== '' ? '<div class="sm muted">' . h((string)$o['description']) . '</div>' : '') . '</td>'
+                . '<td class="sm">' . h((string)$o['page_id']) . '</td><td class="sm">' . (int)$o['price'] . '</td><td class="sm">' . (int)$o['amount'] . '</td>'
+                . '<td class="sm">' . ($o['is_hidden'] ? '<span class="muted">caché</span>' : '✅') . '</td>'
+                . '<td class="sm muted"><code>' . h((string)$o['sale_code']) . '</code></td>'
+                . '<td><a class="mini ghost" href="?p=catalogue">Catalogue</a></td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '<p class="hint">Les offres partagent cette définition. Renommer l\'offre (catalogue) ≠ renommer la définition ≠ renommer le texte client. La synchronisation guidée arrive au Lot 3.</p>';
+    echo '</div>';
+
+    /* Onglet Exemplaires (Lot 4) */
+    echo '<div class="ftp" data-ftp="exemplaires" style="display:none"><div class="empty" style="margin-top:10px">📦 Exemplaires en inventaire et posés — <b>à venir (Lot 4)</b> : quantités, propriétaires et appartements (selon permissions).</div></div>';
+
+    /* Onglet Diagnostic (auto, honnête) */
+    echo '<div class="ftp" data-ftp="diag" style="display:none">';
+    $checks = [];
+    $checks[] = $hasImg ? ['ok', 'Miniature présente dans le pack.'] : ['warn', 'Aucune miniature trouvée (icône catalogue). À vérifier dans le pack.'];
+    $checks[] = $parse['unknown'] ? ['warn', 'Comportement(s) non reconnu(s) : ' . h(implode(', ', $parse['unknown'])) . '.'] : ['ok', 'Tous les comportements sont reconnus.'];
+    $checks[] = ((int)$d['length'] > 0 && (int)$d['width'] > 0) ? ['ok', 'Dimensions renseignées.'] : ['warn', 'Dimension nulle (length/width = 0) — à contrôler.'];
+    $checks[] = $offers ? ['ok', count($offers) . ' offre(s) au catalogue.'] : ['info', 'Aucune offre au catalogue (normal pour objets système/récompenses).'];
+    echo '<ul style="list-style:none;padding:0;margin:10px 0">';
+    foreach ($checks as $c) { $ic = $c[0] === 'ok' ? '✅' : ($c[0] === 'warn' ? '⚠️' : 'ℹ️'); echo '<li style="padding:4px 0">' . $ic . ' ' . $c[1] . '</li>'; }
+    echo '</ul>';
+    echo '<p class="hint">🔎 Ce sont des <b>contrôles automatiques</b> (sur les données), <b>pas</b> une validation en jeu. Les tests en salle (aperçu → achat → pose → rotations → interaction) viendront au Lot 4.</p>';
+    echo '</div>';
+
+    /* Onglet Historique (Lot 2) */
+    echo '<div class="ftp" data-ftp="hist" style="display:none"><div class="empty" style="margin-top:10px">🕑 Historique des modifications et restauration — <b>à venir (Lot 2)</b>.</div></div>';
+
+    echo '</div>'; /* .panel */
+    ?>
+<script>
+(function(){
+  var tabs=document.querySelectorAll('.ftab'), panes=document.querySelectorAll('.ftp');
+  for(var i=0;i<tabs.length;i++){ tabs[i].onclick=function(){
+    var k=this.getAttribute('data-ft');
+    for(var j=0;j<tabs.length;j++){ tabs[j].classList.remove('on'); tabs[j].style.borderBottomColor='transparent'; }
+    this.classList.add('on'); this.style.borderBottomColor='#6fb1ff';
+    for(var p=0;p<panes.length;p++){ panes[p].style.display = panes[p].getAttribute('data-ftp')===k ? '' : 'none'; }
+  }; }
+  var first=document.querySelector('.ftab.on'); if(first) first.style.borderBottomColor='#6fb1ff';
+})();
+</script>
+    <?php
 }
 
 function page_gamemaps(): void {
