@@ -3371,7 +3371,7 @@ function furni_fiche(int $id): void {
     /* --- Onglets --- */
     $tabs = ['carac' => '🔧 Caractéristiques', 'cata' => '🛒 Catalogue & variantes', 'exemplaires' => '📦 Exemplaires', 'diag' => '🩺 Diagnostic & tests', 'hist' => '🕑 Historique'];
     echo '<div class="ftabs" style="display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid rgba(128,128,128,.25);margin:12px 0 0">';
-    foreach ($tabs as $k => $lbl) echo '<button type="button" class="ftab' . ($k === 'carac' ? ' on' : '') . '" data-ft="' . $k . '" style="border:0;background:none;padding:8px 12px;cursor:pointer;font:inherit;border-bottom:2px solid transparent">' . h($lbl) . '</button>';
+    foreach ($tabs as $k => $lbl) echo '<button type="button" class="ftab' . ($k === 'carac' ? ' on' : '') . '" data-ft="' . $k . '" style="border:0;background:none;color:inherit;padding:8px 12px;cursor:pointer;font:inherit;font-weight:600;white-space:nowrap;border-bottom:2px solid transparent">' . h($lbl) . '</button>';
     echo '</div>';
 
     /* Onglet Caractéristiques */
@@ -3398,16 +3398,28 @@ function furni_fiche(int $id): void {
     echo '<label>Nom<input name="name" value="' . h((string)$d['name']) . '" required></label>';
     echo '<label style="margin-top:8px">Description<input name="description" value="' . h((string)$d['description']) . '"></label>';
     echo '<div class="row" style="margin-top:8px"><label>Longueur (cases)<input type="number" min="0" name="length" value="' . (int)$d['length'] . '" style="width:120px"></label><label>Largeur (cases)<input type="number" min="0" name="width" value="' . (int)$d['width'] . '" style="width:120px"></label><label>Hauteur (top_height)<input type="number" step="0.1" min="0" name="top_height" value="' . h(rtrim(rtrim(number_format((float)$d['top_height'], 2, '.', ''), '0'), '.')) . '" style="width:130px"></label></div>';
-    echo '<p class="sm muted" style="margin:10px 0 2px">Comportement (interactions exposées par Kepler — coche ce qui s\'applique) :</p>';
-    echo '<div style="display:flex;flex-wrap:wrap;gap:3px 14px;margin-bottom:4px">';
-    foreach ($dict as $f => $lbl) {
-        $ck = in_array($f, $curFlags, true) ? ' checked' : '';
-        echo '<label style="flex-direction:row;align-items:center;gap:5px;min-width:240px;font-weight:normal"><input type="checkbox" name="beh[]" value="' . h($f) . '"' . $ck . '> ' . h($lbl) . ' <span class="muted sm">(' . h($f) . ')</span></label>';
+    echo '<p class="sm muted" style="margin:12px 0 4px">Comportement — <b>coche ce qui s\'applique</b> (interactions réellement gérées par Kepler) :</p>';
+    $groups = [
+        '🚶 Position & praticabilité' => ['solid', 'can_sit_on_top', 'can_lay_on_top', 'can_stand_on_top', 'can_stack_on_top', 'place_roller_on_top'],
+        '🖐️ Interaction' => ['requires_rights_for_interaction', 'requires_touching_for_interaction', 'gate', 'custom_data_true_false', 'custom_data_on_off', 'custom_data_numeric_on_off', 'custom_data_numeric_state'],
+        '✨ Objets spéciaux' => ['roller', 'teleporter', 'prize_trophy', 'present', 'redeemable', 'dice', 'wheel_of_fortune'],
+        '🎵 Son, média & mur' => ['sound_machine', 'sound_machine_sample_set', 'song_disk', 'jukebox', 'photo', 'post_it', 'decoration', 'roomdimmer', 'wall_item'],
+    ];
+    $rendered = [];
+    $cb = function (string $f, string $lbl, bool $checked, bool $special = false) {
+        return '<label style="display:flex;flex-direction:row;align-items:center;gap:6px;padding:2px 0;font-weight:normal"><input type="checkbox" name="beh[]" value="' . h($f) . '"' . ($checked ? ' checked' : '') . '> <span>' . ($special ? '⚙ ' : '') . h($lbl) . ' <span class="muted sm">(' . h($f) . ')</span></span></label>';
+    };
+    echo '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px 18px">';
+    foreach ($groups as $gname => $flags) {
+        echo '<div style="border:1px solid rgba(128,128,128,.18);border-radius:8px;padding:8px 10px"><div class="sm" style="font-weight:700;margin-bottom:4px;opacity:.8">' . h($gname) . '</div>';
+        foreach ($flags as $f) { if (!isset($dict[$f])) continue; $rendered[$f] = 1; echo $cb($f, $dict[$f], in_array($f, $curFlags, true)); }
+        echo '</div>';
     }
-    foreach ($curFlags as $f) {
-        if (isset($dict[$f])) continue;
-        echo '<label style="flex-direction:row;align-items:center;gap:5px;min-width:240px;font-weight:normal"><input type="checkbox" name="beh[]" value="' . h($f) . '" checked> ⚙ ' . h($f) . ' <span class="muted sm">(spécifique — conservé)</span></label>';
-    }
+    // flags du dictionnaire non classés + flags particuliers présents mais hors dictionnaire (conservés)
+    $extra = '';
+    foreach ($dict as $f => $lbl) { if (isset($rendered[$f])) continue; $rendered[$f] = 1; $extra .= $cb($f, $lbl, in_array($f, $curFlags, true)); }
+    foreach ($curFlags as $f) { if (isset($dict[$f])) continue; $extra .= $cb($f, $f, true, true); }
+    if ($extra !== '') echo '<div style="border:1px solid rgba(128,128,128,.18);border-radius:8px;padding:8px 10px"><div class="sm" style="font-weight:700;margin-bottom:4px;opacity:.8">🔩 Autres / spécifiques</div>' . $extra . '</div>';
     echo '</div>';
     echo '<div class="row" style="margin-top:4px"><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_tradable"' . ($d['is_tradable'] ? ' checked' : '') . '> Échangeable</label><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_recyclable"' . ($d['is_recyclable'] ? ' checked' : '') . '> Recyclable</label></div>';
     echo '<details style="margin-top:8px"><summary class="sm muted">⚙️ Paramètres techniques avancés</summary><div class="row" style="margin-top:6px"><label>Interacteur<input name="interactor" value="' . h((string)$d['interactor']) . '" style="width:170px"></label><label>Couleur (RVB)<input name="colour" value="' . h((string)$d['colour']) . '" style="width:130px"></label><label>max_status<input name="max_status" value="' . h((string)$d['max_status']) . '" style="width:90px"></label></div><p class="hint">Champs techniques : ne change que si tu sais ce que tu fais.</p></details>';
@@ -3429,14 +3441,14 @@ function furni_fiche(int $id): void {
     echo '<h4 style="margin:0 0 6px">✏️ Nom &amp; description — synchronisation</h4>';
     echo '<p class="sm muted" style="margin:0 0 8px">Le nom existe à 3 endroits distincts. Choisis la portée : renommer l\'offre ne change pas le meuble posé, etc.</p>';
     echo '<table class="clean"><tr><th>Emplacement</th><th>Nom actuel</th><th>Description actuelle</th></tr>';
-    echo '<tr><td>Définition interne</td><td>' . h((string)$def['name']) . '</td><td class="sm muted">' . h((string)$def['description']) . '</td></tr>';
+    echo '<tr><td>Définition interne</td><td>' . h((string)$d['name']) . '</td><td class="sm muted">' . h((string)$d['description']) . '</td></tr>';
     foreach ($offers as $o) echo '<tr><td>Offre #' . (int)$o['id'] . '</td><td>' . h((string)$o['name']) . '</td><td class="sm muted">' . h((string)$o['description']) . '</td></tr>';
     if ($tkeys) echo '<tr><td>Texte client<br><code class="sm">' . h($tkeys['name']) . '</code></td><td>' . ($curTxtName !== null ? h($curTxtName) : '<span class="muted">(clé absente)</span>') . ($dupN > 1 ? ' <span style="color:#e06a5b">⚠' . $dupN . ' doublons</span>' : '') . '</td><td class="sm muted">' . ($curTxtDesc !== null ? h($curTxtDesc) : '(absente)') . '</td></tr>';
     else echo '<tr><td>Texte client</td><td colspan="2" class="sm muted">⚠️ Poster / sprite spécial : la clé client (<code>poster_&lt;numéro&gt;</code>) ne se déduit pas du sprite — à gérer à la main.</td></tr>';
     echo '</table>';
     echo '<form method="post" class="js" data-reload data-confirm="Appliquer le nom/description aux emplacements cochés ?" style="margin-top:10px">' . csrf_field() . '<input type="hidden" name="action" value="furni_name_sync"><input type="hidden" name="id" value="' . $id . '">';
-    echo '<div class="row"><label style="flex:1">Nouveau nom<input name="new_name" value="' . h((string)$def['name']) . '"></label><label style="flex-direction:row;align-items:center;margin-top:18px;gap:5px"><input type="checkbox" name="apply_name" checked> appliquer le nom</label></div>';
-    echo '<div class="row" style="margin-top:6px"><label style="flex:1">Nouvelle description<input name="new_desc" value="' . h((string)$def['description']) . '"></label><label style="flex-direction:row;align-items:center;margin-top:18px;gap:5px"><input type="checkbox" name="apply_desc"> appliquer la description</label></div>';
+    echo '<div class="row"><label style="flex:1">Nouveau nom<input name="new_name" value="' . h((string)$d['name']) . '"></label><label style="flex-direction:row;align-items:center;margin-top:18px;gap:5px"><input type="checkbox" name="apply_name" checked> appliquer le nom</label></div>';
+    echo '<div class="row" style="margin-top:6px"><label style="flex:1">Nouvelle description<input name="new_desc" value="' . h((string)$d['description']) . '"></label><label style="flex-direction:row;align-items:center;margin-top:18px;gap:5px"><input type="checkbox" name="apply_desc"> appliquer la description</label></div>';
     echo '<p class="sm muted" style="margin:8px 0 4px">Portée (où appliquer) :</p><div style="display:flex;flex-wrap:wrap;gap:6px 16px">';
     echo '<label style="flex-direction:row;align-items:center;gap:5px"><input type="checkbox" name="sc_def" checked> Définition interne</label>';
     foreach ($offers as $o) echo '<label style="flex-direction:row;align-items:center;gap:5px"><input type="checkbox" name="sc_offer[]" value="' . (int)$o['id'] . '" checked> Offre #' . (int)$o['id'] . '</label>';
