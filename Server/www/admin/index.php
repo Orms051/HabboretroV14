@@ -1074,6 +1074,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 furni_log_change($defId, $newchanges, 'Restauration de la version #' . $logId);
                 $msg = '↩️ Valeurs restaurées (' . count($newchanges) . ' champ(s)). ⚙️ Redémarre l\'émulateur pour appliquer en jeu.'; break;
             }
+            case 'furni_name_sync': { /* Lot 3 : applique nom/desc aux emplacements choisis */
+                $fid = (int)($_POST['id'] ?? 0);
+                $stc = db()->prepare('SELECT * FROM items_definitions WHERE id=?'); $stc->execute([$fid]); $def = $stc->fetch();
+                if (!$def) { $ok = false; $msg = '❌ Définition introuvable.'; break; }
+                $newName = trim((string)($_POST['new_name'] ?? ''));
+                $newDesc = trim((string)($_POST['new_desc'] ?? ''));
+                $doName = isset($_POST['apply_name']); $doDesc = isset($_POST['apply_desc']);
+                if (!$doName && !$doDesc) { $ok = false; $msg = '❌ Coche « appliquer le nom » et/ou « appliquer la description ».'; break; }
+                $report = [];
+                /* 1) définition interne */
+                if (isset($_POST['sc_def'])) {
+                    $chg = [];
+                    if ($doName && (string)$def['name'] !== $newName) $chg['name'] = ['old' => (string)$def['name'], 'new' => $newName];
+                    if ($doDesc && (string)$def['description'] !== $newDesc) $chg['description'] = ['old' => (string)$def['description'], 'new' => $newDesc];
+                    if ($chg) {
+                        $sets = []; $vals = [];
+                        if (isset($chg['name'])) { $sets[] = 'name=?'; $vals[] = $newName; }
+                        if (isset($chg['description'])) { $sets[] = 'description=?'; $vals[] = $newDesc; }
+                        $vals[] = $fid; db()->prepare('UPDATE items_definitions SET ' . implode(',', $sets) . ' WHERE id=?')->execute($vals);
+                        furni_log_change($fid, $chg, 'Synchronisation nom/description');
+                        $report[] = 'définition mise à jour';
+                    }
+                }
+                /* 2) offres catalogue sélectionnées (validées comme appartenant à la définition) */
+                $offerIds = array_values(array_unique(array_map('intval', (array)($_POST['sc_offer'] ?? []))));
+                if ($offerIds) {
+                    $in = implode(',', array_fill(0, count($offerIds), '?'));
+                    $chk = db()->prepare("SELECT id FROM catalogue_items WHERE definition_id=? AND id IN ($in)");
+                    $chk->execute(array_merge([$fid], $offerIds));
+                    $valid = array_map('intval', array_column($chk->fetchAll(), 'id'));
+                    $cnt = 0;
+                    foreach ($valid as $oid) {
+                        $sets = []; $vals = [];
+                        if ($doName) { $sets[] = 'name=?'; $vals[] = $newName; }
+                        if ($doDesc) { $sets[] = 'description=?'; $vals[] = $newDesc; }
+                        if ($sets) { $vals[] = $oid; db()->prepare('UPDATE catalogue_items SET ' . implode(',', $sets) . ' WHERE id=?')->execute($vals); $cnt++; }
+                    }
+                    if ($cnt) $report[] = $cnt . ' offre(s) catalogue';
+                }
+                /* 3) texte client (CP1252), sauvegarde + vérif, statut honnête */
+                if (isset($_POST['sc_text'])) {
+                    $keys = furni_text_keys((string)$def['sprite']);
+                    if ($keys === null) { $report[] = '⚠️ texte client NON modifié (poster/sprite spécial — clé à gérer à la main)'; $ok = false; }
+                    else {
+                        $path = client_texts_path(); $parts = []; $bak = '';
+                        if ($doName) { $r = client_text_set($path, $keys['name'], $newName); if (!$r['ok']) { $parts[] = 'nom ÉCHEC (' . $r['status'] . ')'; $ok = false; } else { $parts[] = 'nom ' . $r['status'] . ($r['verified'] ? ' ✓' : ' ⚠non vérifié') . (($r['dupes'] ?? 0) > 1 ? ' ⚠' . $r['dupes'] . ' doublons' : ''); $bak = $r['backup'] ?? ''; if (!$r['verified']) $ok = false; } }
+                        if ($doDesc) { $r = client_text_set($path, $keys['desc'], $newDesc); if (!$r['ok']) { $parts[] = 'desc ÉCHEC (' . $r['status'] . ')'; $ok = false; } else { $parts[] = 'desc ' . $r['status'] . ($r['verified'] ? ' ✓' : ' ⚠non vérifié') . (($r['dupes'] ?? 0) > 1 ? ' ⚠' . $r['dupes'] . ' doublons' : ''); $bak = $r['backup'] ?? ''; if (!$r['verified']) $ok = false; } }
+                        $report[] = 'texte client (' . implode(', ', $parts) . ')' . ($bak !== '' ? ' [sauvegarde ' . $bak . ']' : '');
+                    }
+                }
+                if (!$report) { $msg = 'ℹ️ Rien à appliquer (aucune portée cochée, ou valeurs inchangées).'; }
+                else $msg = ($ok ? '✅ ' : '⚠️ ') . 'Synchro : ' . implode(' · ', $report) . '. ⚠️ Texte client en jeu = vide le cache Basilisk côté joueur (pas de redémarrage émulateur). Synchro « complète » seulement si tout est ✓.';
+                break;
+            }
             /* --- Cartes de jeux --- */
             case 'gmap_update':
                 db()->prepare('UPDATE games_maps SET heightmap=?,tile_map=? WHERE id=?')->execute([(string)$_POST['heightmap'], (string)$_POST['tile_map'], (int)$_POST['id']]); $msg = '🗺️ Carte mise à jour. Redémarre l\'émulateur.'; break;
@@ -2795,7 +2849,7 @@ function action_tab(string $a): string {
         'cat_item' => 'catalogue', 'cat_page' => 'catalogue', 'cat_page_move' => 'catalogue', 'cat_bulk' => 'catalogue',
         'navcat_update' => 'navcats', 'navcat_move' => 'navcats',
         'pkg_add' => 'packages', 'pkg_update' => 'packages', 'pkg_delete' => 'packages',
-        'def_update' => 'furni', 'furni_def_save' => 'furni', 'furni_def_restore' => 'furni', 'furni_all' => 'furni', 'song_update' => 'trax', 'song_delete' => 'trax',
+        'def_update' => 'furni', 'furni_def_save' => 'furni', 'furni_def_restore' => 'furni', 'furni_name_sync' => 'furni', 'furni_all' => 'furni', 'song_update' => 'trax', 'song_delete' => 'trax',
         'furni_convert' => 'convert', 'furni_decompile' => 'convert',
         // Communauté / modération
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
@@ -3145,6 +3199,47 @@ function furni_edit_history(int $defId, int $limit = 50): array {
     $st->execute([$defId]); return $st->fetchAll();
 }
 
+/* --- Lot 3 : synchronisation noms/descriptions (définition / offres catalogue / textes client) --- */
+/* Fichier des textes réellement chargés par le client (CP1252 + CRLF). */
+function client_texts_path(): string { return DCR_DIR . '/external_texts.txt'; }
+/* Clés client pour un sprite. Null si cas spécial (poster, sprite vide) qu'on ne déduit PAS du sprite. */
+function furni_text_keys(string $sprite): ?array {
+    $sprite = trim($sprite);
+    if ($sprite === '' || strncmp($sprite, 'poster', 6) === 0) return null;
+    return ['name' => 'furni_' . $sprite . '_name', 'desc' => 'furni_' . $sprite . '_desc'];
+}
+/* Valeur courante d'une clé (CP1252 -> UTF-8), ou null si absente. Remonte le nombre de doublons. */
+function client_text_get(string $path, string $key, ?int &$dupes = null): ?string {
+    $dupes = 0;
+    $raw = @file_get_contents($path); if ($raw === false) return null;
+    $val = null;
+    foreach (explode("\n", $raw) as $ln) {
+        $ln = rtrim($ln, "\r");
+        if (strncmp($ln, $key . '=', strlen($key) + 1) === 0) { $dupes++; if ($val === null) $val = substr($ln, strlen($key) + 1); }
+    }
+    return $val === null ? null : mb_convert_encoding($val, 'UTF-8', 'Windows-1252');
+}
+/* Écrit une clé (UTF-8 -> CP1252), sauvegarde avant, vérifie après. Rapport honnête. CRLF préservé. */
+function client_text_set(string $path, string $key, string $valueUtf8): array {
+    $raw = @file_get_contents($path);
+    if ($raw === false) return ['ok' => false, 'status' => 'fichier illisible'];
+    $bak = $path . '.' . date('Ymd_His') . '.bak';
+    if (@file_put_contents($bak, $raw) === false) return ['ok' => false, 'status' => 'sauvegarde impossible'];
+    $cp = mb_convert_encoding($valueUtf8, 'Windows-1252', 'UTF-8');
+    $lines = explode("\n", $raw);
+    $found = false; $dupes = 0;
+    foreach ($lines as $i => $ln) {
+        $hasCr = (substr($ln, -1) === "\r"); $bare = $hasCr ? substr($ln, 0, -1) : $ln;
+        if (strncmp($bare, $key . '=', strlen($key) + 1) === 0) { $dupes++; if (!$found) { $lines[$i] = $key . '=' . $cp . ($hasCr ? "\r" : ''); $found = true; } }
+    }
+    if (!$found) $out = rtrim($raw, "\r\n") . "\r\n" . $key . '=' . $cp . "\r\n";
+    else $out = implode("\n", $lines);
+    if (@file_put_contents($path, $out, LOCK_EX) === false) return ['ok' => false, 'status' => 'écriture échouée', 'backup' => basename($bak)];
+    $check = @file_get_contents($path);
+    $verified = $check !== false && strpos($check, "\n" . $key . '=' . $cp) !== false || ($check !== false && strncmp($check, $key . '=' . $cp, strlen($key . '=' . $cp)) === 0);
+    return ['ok' => true, 'status' => $found ? 'mis à jour' : 'ajouté', 'verified' => (bool)$verified, 'dupes' => $dupes, 'backup' => basename($bak)];
+}
+
 function page_furni(): void {
     page_title('Meubles (définitions)', 'Gestionnaire de mobis — retrouver, consulter et régler un meuble');
 
@@ -3316,6 +3411,33 @@ function furni_fiche(int $id): void {
 
     /* Onglet Catalogue & variantes */
     echo '<div class="ftp" data-ftp="cata" style="display:none">';
+    /* --- Noms & textes (Lot 3) : synchro définition / offres / texte client --- */
+    $tkeys = furni_text_keys($sprite);
+    $txtPath = client_texts_path();
+    $dupN = 0; $dupD = 0;
+    $curTxtName = $tkeys ? client_text_get($txtPath, $tkeys['name'], $dupN) : null;
+    $curTxtDesc = $tkeys ? client_text_get($txtPath, $tkeys['desc'], $dupD) : null;
+    echo '<div style="margin-top:10px;border:1px solid rgba(128,128,128,.25);border-radius:8px;padding:10px">';
+    echo '<h4 style="margin:0 0 6px">✏️ Nom &amp; description — synchronisation</h4>';
+    echo '<p class="sm muted" style="margin:0 0 8px">Le nom existe à 3 endroits distincts. Choisis la portée : renommer l\'offre ne change pas le meuble posé, etc.</p>';
+    echo '<table class="clean"><tr><th>Emplacement</th><th>Nom actuel</th><th>Description actuelle</th></tr>';
+    echo '<tr><td>Définition interne</td><td>' . h((string)$def['name']) . '</td><td class="sm muted">' . h((string)$def['description']) . '</td></tr>';
+    foreach ($offers as $o) echo '<tr><td>Offre #' . (int)$o['id'] . '</td><td>' . h((string)$o['name']) . '</td><td class="sm muted">' . h((string)$o['description']) . '</td></tr>';
+    if ($tkeys) echo '<tr><td>Texte client<br><code class="sm">' . h($tkeys['name']) . '</code></td><td>' . ($curTxtName !== null ? h($curTxtName) : '<span class="muted">(clé absente)</span>') . ($dupN > 1 ? ' <span style="color:#e06a5b">⚠' . $dupN . ' doublons</span>' : '') . '</td><td class="sm muted">' . ($curTxtDesc !== null ? h($curTxtDesc) : '(absente)') . '</td></tr>';
+    else echo '<tr><td>Texte client</td><td colspan="2" class="sm muted">⚠️ Poster / sprite spécial : la clé client (<code>poster_&lt;numéro&gt;</code>) ne se déduit pas du sprite — à gérer à la main.</td></tr>';
+    echo '</table>';
+    echo '<form method="post" class="js" data-reload data-confirm="Appliquer le nom/description aux emplacements cochés ?" style="margin-top:10px">' . csrf_field() . '<input type="hidden" name="action" value="furni_name_sync"><input type="hidden" name="id" value="' . $id . '">';
+    echo '<div class="row"><label style="flex:1">Nouveau nom<input name="new_name" value="' . h((string)$def['name']) . '"></label><label style="flex-direction:row;align-items:center;margin-top:18px;gap:5px"><input type="checkbox" name="apply_name" checked> appliquer le nom</label></div>';
+    echo '<div class="row" style="margin-top:6px"><label style="flex:1">Nouvelle description<input name="new_desc" value="' . h((string)$def['description']) . '"></label><label style="flex-direction:row;align-items:center;margin-top:18px;gap:5px"><input type="checkbox" name="apply_desc"> appliquer la description</label></div>';
+    echo '<p class="sm muted" style="margin:8px 0 4px">Portée (où appliquer) :</p><div style="display:flex;flex-wrap:wrap;gap:6px 16px">';
+    echo '<label style="flex-direction:row;align-items:center;gap:5px"><input type="checkbox" name="sc_def" checked> Définition interne</label>';
+    foreach ($offers as $o) echo '<label style="flex-direction:row;align-items:center;gap:5px"><input type="checkbox" name="sc_offer[]" value="' . (int)$o['id'] . '" checked> Offre #' . (int)$o['id'] . '</label>';
+    if ($tkeys) echo '<label style="flex-direction:row;align-items:center;gap:5px"><input type="checkbox" name="sc_text" checked> Texte client (nom affiché en jeu)</label>';
+    echo '</div>';
+    echo '<button style="margin-top:10px">🔗 Appliquer aux emplacements cochés</button></form>';
+    echo '<p class="hint">💾 Le texte client est <b>sauvegardé</b> avant modif et <b>vérifié</b> après écriture (CP1252 préservé). En jeu : <b>vide le cache Basilisk</b> côté joueur (pas de redémarrage émulateur).</p>';
+    echo '</div>';
+    echo '<h4 style="margin:16px 0 4px">🛒 Offres au catalogue</h4>';
     if (!$offers) echo '<div class="empty" style="margin-top:10px">Ce meuble n\'a aucune offre au catalogue. (Ce n\'est pas forcément une anomalie : objets système, récompenses…)</div>';
     else {
         echo '<table class="clean" style="margin-top:10px"><tr><th>#</th><th>Nom de l\'offre</th><th>Page</th><th>Prix</th><th>Qté</th><th>Visible</th><th>sale_code</th><th></th></tr>';
