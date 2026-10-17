@@ -3056,12 +3056,17 @@ function page_dashboard(): void {
     /* --- À TRAITER (en premier : ce qui demande une action du staff) --- */
     $todo = [];
     if (tab_allowed('homemod')) { try { $todo[] = ['🚩', (int)$d->query("SELECT COUNT(*) FROM home_reports WHERE status='new'")->fetchColumn(), 'Signalements Homes', '?p=homemod&sec=reports']; } catch (Throwable $e) {} }
-    if (tab_allowed('messages') && function_exists('conv_unread_staff')) { try { $todo[] = ['💬', conv_unread_staff(), 'Conversations à répondre', '?p=messages']; } catch (Throwable $e) {} }
-    if (tab_allowed('messages')) { try { $todo[] = ['📨', (int)$d->query("SELECT COUNT(*) FROM contact_messages WHERE status='new'")->fetchColumn(), "Anciennes demandes d'aide", '?p=messages']; } catch (Throwable $e) {} }
-    if (tab_allowed('messages')) { try { $todo[] = ['🔑', (int)$d->query("SELECT COUNT(*) FROM password_resets WHERE status='pending'")->fetchColumn(), 'Récupération de compte', '?p=messages']; } catch (Throwable $e) {} }
-    if ($todo) {
-        echo '<h3 class="sec" style="margin:2px 0 10px">À traiter</h3><div class="todo">';
-        foreach ($todo as $t) echo '<a class="todocard' . ($t[1] > 0 ? ' urgent' : '') . '" href="' . $t[3] . '"><span class="tn">' . $t[1] . '</span><span class="tl">' . $t[0] . ' ' . h($t[2]) . '</span></a>';
+    if (tab_allowed('messages') && function_exists('conv_unread_staff')) { try { $todo[] = ['💬', conv_unread_staff(), 'Conversations à répondre', '?p=messages&vue=assistance']; } catch (Throwable $e) {} }
+    if (tab_allowed('messages')) { try { $todo[] = ['🔑', (int)$d->query("SELECT COUNT(*) FROM password_resets WHERE status='pending'")->fetchColumn(), 'Récupération de compte', '?p=messages&vue=recovery']; } catch (Throwable $e) {} }
+    if (tab_allowed('messages')) { try { $todo[] = ['📨', (int)$d->query("SELECT COUNT(*) FROM contact_messages WHERE status='new'")->fetchColumn(), "Anciens messages à reprendre", '?p=messages&vue=recovery']; } catch (Throwable $e) {} }
+    // On ne garde que ce qui demande réellement une action (compteur > 0), le plus urgent d'abord.
+    $todo = array_values(array_filter($todo, fn($t) => (int)$t[1] > 0));
+    usort($todo, fn($a, $b) => (int)$b[1] - (int)$a[1]);
+    echo '<h3 class="sec" style="margin:2px 0 10px">À traiter</h3>';
+    if (!$todo) echo '<div class="panel"><div class="empty" style="padding:14px">✅ Rien à traiter pour le moment — tout est à jour 🎉</div></div>';
+    else {
+        echo '<div class="todo">';
+        foreach ($todo as $t) echo '<a class="todocard urgent" href="' . $t[3] . '"><span class="tn">' . (int)$t[1] . '</span><span class="tl">' . $t[0] . ' ' . h($t[2]) . '</span></a>';
         echo '</div>';
     }
 
@@ -3088,7 +3093,7 @@ function page_dashboard(): void {
     echo '<a class="qabtn" href="?p=users">➕<span>Créer un compte</span></a>';
     echo '<a class="qabtn" href="?p=search">🔍<span>Rechercher un joueur</span></a>';
     echo '<a class="qabtn" href="?p=sitemgr&sec=news&new=1">📰<span>Publier une actualité</span></a>';
-    echo '<a class="qabtn" href="?p=server">📢<span>Alerte à l\'hôtel</span></a>';
+    echo '<a class="qabtn" href="?p=alerts&sec=send">📢<span>Alerte à l\'hôtel</span></a>';
     echo '<a class="qabtn" href="?p=server">💾<span>Sauvegarder la base</span></a>';
     echo '</div>';
     echo '<form method="post" class="js" data-reload data-confirm="Donner des crédits à TOUS les joueurs ?" style="margin-top:12px;display:flex;align-items:flex-end">' . csrf_field() . '<input type="hidden" name="action" value="credits_all"><label style="flex:1">💰 Crédits à tous les joueurs<input type="number" name="delta" value="500"></label><button class="mini" style="margin-left:8px">Distribuer</button></form>';
