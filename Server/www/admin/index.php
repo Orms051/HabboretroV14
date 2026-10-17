@@ -1212,10 +1212,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = '📛 Badge « ' . h($code) . ' » donné à tous les joueurs.'; break;
             case 'furni_all':
                 $def = (int)($_POST['definition_id'] ?? 0);
+                $lastKey = 'furni_all_last_' . $def; // anti double-distribution (double-clic / renvoi de requête)
+                if ((int)($_SESSION[$lastKey] ?? 0) > time() - 8) { $ok = false; $msg = '⏳ Ce meuble vient d\'être distribué il y a quelques secondes — distribution ignorée pour éviter un doublon. Réessaie dans un instant si c\'est bien voulu.'; break; }
                 $chk = db()->prepare('SELECT id FROM items_definitions WHERE id=?'); $chk->execute([$def]);
                 if (!$chk->fetch()) { $ok = false; $msg = 'Définition de meuble introuvable.'; break; }
                 db()->prepare("INSERT INTO items (user_id,room_id,definition_id,x,y,z,wall_position,custom_data) SELECT id,0,?,0,0,0,'','' FROM users")->execute([$def]);
-                $msg = '🎁 Meuble distribué à tous (dans leur main). Ils doivent se reconnecter.'; break;
+                $_SESSION[$lastKey] = time();
+                $nbU = (int)db()->query('SELECT COUNT(*) FROM users')->fetchColumn();
+                $msg = '🎁 Meuble distribué à ' . $nbU . ' joueur(s) (dans leur main). Ils doivent se reconnecter.'; break;
             case 'decor_season':
                 $season = in_array($_POST['season'] ?? '', array_keys(DECOR_LABELS), true) ? (string)$_POST['season'] : '';
                 $casts = available_casts(); $n = 0;
@@ -3324,13 +3328,8 @@ function page_furni(): void {
     }
     echo '</table>';
     pager($tot, $pg, '?p=furni' . ($baseNoSort ? '&' . http_build_query($baseNoSort) : '') . '&sort=' . $sort . '&dir=' . $dir);
-    echo '<p class="hint">💡 Clique sur l\'image ou le nom pour ouvrir la fiche. « Catalogue absent » ne veut pas forcément dire « à ajouter » : beaucoup d\'objets système/récompenses ne sont pas en vente.</p>';
+    echo '<p class="hint">💡 Clique sur l\'image ou le nom pour ouvrir la fiche (l\'action « Donner à tous les joueurs » s\'y trouve désormais, par meuble). « Catalogue absent » ne veut pas forcément dire « à ajouter » : beaucoup d\'objets système/récompenses ne sont pas en vente.</p>';
     echo '</div>';
-
-    /* --- Distribution globale (sera déplacée dans la fiche au Lot 3) --- */
-    echo '<details class="panel"><summary><b>🎁 Donner un meuble à TOUS les joueurs</b></summary>';
-    echo '<p class="muted sm">Le meuble arrive dans la <b>main</b> de chaque joueur (reconnexion requise). Utilise le <b>#ID</b> de la définition.</p>';
-    echo '<form method="post" class="js row" data-reload data-confirm="Distribuer ce meuble à TOUS les joueurs ?">' . csrf_field() . '<input type="hidden" name="action" value="furni_all"><label>ID définition<input type="number" name="definition_id" placeholder="ex. 42" required style="width:120px"></label><button>🎁 Distribuer à tous</button></form></details>';
 }
 
 /* ================= Fiche meuble (pleine largeur, onglets) ================= */
@@ -3359,6 +3358,15 @@ function furni_fiche(int $id): void {
     echo '<p class="sm muted" style="margin:0">sprite : <code>' . h($sprite) . '</code> · sprite_id : ' . (int)$d['sprite_id'] . '</p>';
     echo '<p class="hint" style="margin-top:8px">⚠️ <b>Définition commune</b> : modifier ces valeurs peut affecter <b>tous les exemplaires</b> de ce meuble (posés et en inventaire).</p>';
     echo '</div></div>';
+
+    /* --- Action : donner ce meuble à tous (Lot 4, anti double-distribution côté serveur) --- */
+    $nbUsers = (int)db()->query('SELECT COUNT(*) FROM users')->fetchColumn();
+    echo '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed rgba(128,128,128,.25)">';
+    echo '<form method="post" class="js" data-reload data-confirm="Distribuer « ' . h((string)$d['name']) . ' » à ' . $nbUsers . ' joueur(s) ? Chacun le recevra dans sa main (reconnexion requise)." style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' . csrf_field();
+    echo '<input type="hidden" name="action" value="furni_all"><input type="hidden" name="definition_id" value="' . $id . '">';
+    echo furni_icon_img($sprite, 24);
+    echo '<button>🎁 Donner « ' . h((string)$d['name']) . ' » à tous les joueurs</button>';
+    echo '<span class="muted sm">' . $nbUsers . ' destinataire(s)</span></form></div>';
 
     /* --- Onglets --- */
     $tabs = ['carac' => '🔧 Caractéristiques', 'cata' => '🛒 Catalogue & variantes', 'exemplaires' => '📦 Exemplaires', 'diag' => '🩺 Diagnostic & tests', 'hist' => '🕑 Historique'];
@@ -3453,8 +3461,33 @@ function furni_fiche(int $id): void {
     echo '<p class="hint">Les offres partagent cette définition. Renommer l\'offre (catalogue) ≠ renommer la définition ≠ renommer le texte client. La synchronisation guidée arrive au Lot 3.</p>';
     echo '</div>';
 
-    /* Onglet Exemplaires (Lot 4) */
-    echo '<div class="ftp" data-ftp="exemplaires" style="display:none"><div class="empty" style="margin-top:10px">📦 Exemplaires en inventaire et posés — <b>à venir (Lot 4)</b> : quantités, propriétaires et appartements (selon permissions).</div></div>';
+    /* Onglet Exemplaires (Lot 4) : inventaire (room_id=0) vs posés (room_id<>0) */
+    echo '<div class="ftp" data-ftp="exemplaires" style="display:none">';
+    $exTot = 0; $exInv = 0; $exPlaced = 0; $exRows = [];
+    try {
+        $exTot = (int)(function () use ($id) { $s = db()->prepare('SELECT COUNT(*) FROM items WHERE definition_id=?'); $s->execute([$id]); return $s->fetchColumn(); })();
+        $s = db()->prepare('SELECT COUNT(*) FROM items WHERE definition_id=? AND room_id=0'); $s->execute([$id]); $exInv = (int)$s->fetchColumn();
+        $exPlaced = $exTot - $exInv;
+        $s = db()->prepare('SELECT i.room_id, i.user_id, u.username, r.name AS roomname FROM items i LEFT JOIN users u ON u.id=i.user_id LEFT JOIN rooms r ON r.id=i.room_id WHERE i.definition_id=? ORDER BY i.room_id LIMIT 50');
+        $s->execute([$id]); $exRows = $s->fetchAll();
+    } catch (Throwable $e) {}
+    echo '<div class="grid" style="margin-top:10px">';
+    echo '<div class="stat blue"><div class="ic">📦</div><div><div class="num">' . $exTot . '</div><div class="lbl">Exemplaires au total</div></div></div>';
+    echo '<div class="stat blue"><div class="ic">🎒</div><div><div class="num">' . $exInv . '</div><div class="lbl">En inventaire / main</div></div></div>';
+    echo '<div class="stat blue"><div class="ic">🏠</div><div><div class="num">' . $exPlaced . '</div><div class="lbl">Posés en appartement</div></div></div>';
+    echo '</div>';
+    if (!$exRows) echo '<div class="empty" style="margin-top:8px">Aucun exemplaire de ce meuble en jeu.</div>';
+    else {
+        echo '<table class="clean" style="margin-top:8px"><tr><th>Propriétaire</th><th>Emplacement</th></tr>';
+        foreach ($exRows as $r) {
+            $loc = ((int)$r['room_id'] === 0) ? '<span class="muted">Inventaire / main</span>' : ('🏠 ' . h((string)($r['roomname'] ?? '')) . ' <span class="muted sm">#' . (int)$r['room_id'] . '</span>');
+            echo '<tr><td>' . h((string)($r['username'] ?? ('#' . (int)$r['user_id']))) . '</td><td>' . $loc . '</td></tr>';
+        }
+        echo '</table>';
+        if ($exTot > 50) echo '<p class="hint">Affiche les 50 premiers sur ' . $exTot . '.</p>';
+    }
+    echo '<p class="hint">⚠️ Changer la <b>définition</b> affecte tous ces exemplaires. Déplacer/supprimer un <b>exemplaire précis</b> se fait depuis la salle/le joueur concerné — un changement de définition ne déplace jamais les objets existants.</p>';
+    echo '</div>';
 
     /* Onglet Diagnostic (auto, honnête) */
     echo '<div class="ftp" data-ftp="diag" style="display:none">';
@@ -3463,6 +3496,18 @@ function furni_fiche(int $id): void {
     $checks[] = $parse['unknown'] ? ['warn', 'Comportement(s) non reconnu(s) : ' . h(implode(', ', $parse['unknown'])) . '.'] : ['ok', 'Tous les comportements sont reconnus.'];
     $checks[] = ((int)$d['length'] > 0 && (int)$d['width'] > 0) ? ['ok', 'Dimensions renseignées.'] : ['warn', 'Dimension nulle (length/width = 0) — à contrôler.'];
     $checks[] = $offers ? ['ok', count($offers) . ' offre(s) au catalogue.'] : ['info', 'Aucune offre au catalogue (normal pour objets système/récompenses).'];
+    /* Cohérence de la traduction client (nom affiché en jeu) */
+    $tkDiag = furni_text_keys($sprite);
+    if ($tkDiag === null) $checks[] = ['info', 'Poster/sprite spécial : traduction client à gérer à la main (clé poster_&lt;numéro&gt;).'];
+    else {
+        $ctName = client_text_get(client_texts_path(), $tkDiag['name']);
+        if ($ctName === null) $checks[] = ['warn', 'Traduction client absente (clé <code>' . h($tkDiag['name']) . '</code> introuvable) : le nom affiché en jeu peut différer de la définition.'];
+        elseif (trim($ctName) !== trim((string)$d['name'])) $checks[] = ['warn', 'Nom incohérent : définition « ' . h((string)$d['name']) . ' » ≠ texte client « ' . h($ctName) . ' » (onglet Catalogue → synchroniser).'];
+        else $checks[] = ['ok', 'Nom cohérent entre la définition et le texte client.'];
+    }
+    /* Indice hauteur vs type (HYPOTHÈSE à vérifier en jeu, pas un bug confirmé) */
+    $isFloorWalkable = in_array('can_stand_on_top', $parse['flags'], true) && !in_array('can_sit_on_top', $parse['flags'], true) && !in_array('can_lay_on_top', $parse['flags'], true);
+    if ($isFloorWalkable && (float)$d['top_height'] > 0) $checks[] = ['warn', 'Objet de sol praticable avec une hauteur de ' . h(rtrim(rtrim(number_format((float)$d['top_height'], 2, '.', ''), '0'), '.')) . ' > 0 : <b>peut</b> créer une « marche » en jeu (à vérifier — un tapis au sol est généralement à 0). Compare avec un tapis de référence avant de changer.'];
     echo '<ul style="list-style:none;padding:0;margin:10px 0">';
     foreach ($checks as $c) { $ic = $c[0] === 'ok' ? '✅' : ($c[0] === 'warn' ? '⚠️' : 'ℹ️'); echo '<li style="padding:4px 0">' . $ic . ' ' . $c[1] . '</li>'; }
     echo '</ul>';
@@ -3805,7 +3850,8 @@ function page_convert(): void {
     $kit = 'C:\\laragon\\www\\HabboretroV14\\tools\\elias';
     $ready = file_exists($kit . '\\EliasApp.exe') && file_exists($kit . '\\ffdec\\ffdec-cli.exe');
 
-    echo '<div class="panel"><p class="muted sm">Cet outil récupère le fichier Flash officiel d\'un meuble depuis <code>images.habbo.com</code>, le convertit en <code>.cct</code> (format de ton client) et l\'installe dans <code>hof_furni</code>. Idéal pour réparer un meuble qui apparaît en <b>cube</b>.</p>';
+    echo '<div class="panel"><p class="muted sm">Cet outil récupère le fichier Flash officiel d\'un meuble depuis <code>images.habbo.com</code>, le convertit en <code>.cct</code> (format de ton client) et l\'installe dans <code>hof_furni</code>. Souvent utile pour un meuble qui apparaît en <b>cube</b>.</p>';
+    echo '<p class="muted sm">⚠️ À savoir : un fichier <code>.cct</code> <b>absent</b> ne signifie pas toujours « cube » (certaines ressources sont intégrées à un cast commun ou regroupées) ; un <code>.cct</code> <b>présent</b> ne prouve pas que le meuble s\'affiche/fonctionne ; et une <b>conversion réussie</b> = fichier généré, <b>pas</b> une compatibilité V14 validée. Seul un <b>test en jeu</b> confirme.</p>';
     echo $ready ? '<p class="rk green">✅ Convertisseur prêt (' . h($kit) . ')</p>' : '<p class="rk red">❌ Convertisseur introuvable dans ' . h($kit) . '</p>';
     echo '</div>';
 
@@ -3818,9 +3864,9 @@ function page_convert(): void {
         if (in_array($base, $special, true)) continue;
         if (!file_exists($hof . '/hh_furni_xx_' . $base . '.cct')) $cubes[$base] = true;
     }
-    echo '<details class="panel"' . (count($cubes) ? '' : ' ') . '><summary><b>🧊 Meubles en cube actuellement (' . count($cubes) . ')</b> — graphisme .cct manquant</summary>';
-    if ($cubes) { echo '<p class="muted sm">Ces meubles sont définis mais n\'ont pas de graphisme. Cherche leur sprite sur <a href="https://images.habbo.com" target="_blank">images.habbo.com</a> et convertis-les ci-dessous.</p><div style="font-family:var(--mono);font-size:12px;line-height:1.8">' . h(implode('  ·  ', array_keys($cubes))) . '</div>'; }
-    else { echo '<div class="empty">Aucun cube — tous les meubles définis ont leur graphisme ! 🎉</div>'; }
+    echo '<details class="panel"' . (count($cubes) ? '' : ' ') . '><summary><b>🧊 Meubles sans fichier .cct individuel (' . count($cubes) . ')</b> — contrôle automatique</summary>';
+    if ($cubes) { echo '<p class="muted sm"><b>Contrôlé automatiquement</b> : ces sprites n\'ont pas de <code>.cct</code> dédié dans <code>hof_furni</code>. Ça ne veut <b>pas</b> dire à coup sûr « cube » (la ressource peut être intégrée/regroupée ailleurs) — <b>à vérifier en jeu</b>. Si c\'est bien un cube, cherche le sprite sur <a href="https://images.habbo.com" target="_blank">images.habbo.com</a> et convertis-le ci-dessous.</p><div style="font-family:var(--mono);font-size:12px;line-height:1.8">' . h(implode('  ·  ', array_keys($cubes))) . '</div>'; }
+    else { echo '<div class="empty">Tous les meubles ont un <code>.cct</code> individuel. ⚠️ Présence du fichier ≠ meuble fonctionnel en jeu (à tester).</div>'; }
     echo '</details>';
 
     // Formulaire de conversion
@@ -3829,7 +3875,7 @@ function page_convert(): void {
     echo '<div class="row"><label style="flex:1">Sprite (nom exact du meuble)<input name="sprite" placeholder="ex : exe_wfall" required></label><label>Révision<input name="revision" placeholder="ex : 56746" required style="width:120px"></label></div>';
     echo '<div class="row" style="margin-top:8px"><label>Type<select name="ftype"><option value="s">Sol (au sol)</option><option value="i">Mural (au mur)</option></select></label><label>Longueur<input type="number" name="len" value="1" style="width:80px"></label><label>Largeur<input type="number" name="wid" value="1" style="width:80px"></label><label style="flex-direction:row;align-items:center;margin-top:20px"><input type="checkbox" name="mkdef"> Créer la définition si absente</label></div>';
     echo '<button style="margin-top:12px">🔧 Convertir & installer</button></form>';
-    echo '<p class="hint">💡 La <b>révision</b> se trouve dans la furnidata de Habbo. URL testée : <code>https://images.habbo.com/dcr/hof_furni/&lt;révision&gt;/&lt;sprite&gt;.swf</code><br>⚠️ Après conversion : <b>vide le cache de Basilisk</b> pour voir le meuble. Certains meubles animés spéciaux (téléporteurs) s\'affichent mais gardent leurs limites de comportement côté client.</p></div>';
+    echo '<p class="hint">💡 La <b>révision</b> se trouve dans la furnidata de Habbo. URL testée : <code>https://images.habbo.com/dcr/hof_furni/&lt;révision&gt;/&lt;sprite&gt;.swf</code><br>⚠️ Une <b>conversion réussie</b> = le <code>.cct</code> a été généré et installé — ce n\'est <b>pas</b> une garantie que le meuble s\'affiche ou fonctionne en V14. <b>Teste en jeu</b> (vide d\'abord le cache de Basilisk). Certains meubles animés spéciaux (téléporteurs) s\'affichent mais gardent leurs limites de comportement côté client.</p></div>';
 
     // --- Décompilateur ProjectorRays (CCT -> CST editable pour Adobe Director) ---
     $pr = 'C:\\laragon\\www\\HabboretroV14\\tools\\projectorrays';
