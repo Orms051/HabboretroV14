@@ -968,6 +968,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 admin_log('media_upload', $name);
                 $msg = '🖼️ Image importée : /web-gallery/v2/pages_img/' . $name; break;
             }
+            case 'media_delete': {
+                $name = basename((string)($_POST['file'] ?? ''));
+                $dir = dirname(__DIR__) . '/web-gallery/v2/pages_img';
+                $path = $dir . '/' . $name;
+                if ($name === '' || !is_file($path)) { $ok = false; $msg = '❌ Fichier introuvable.'; break; }
+                // Garde-fou serveur : refuse si l'image est utilisée quelque part (ne jamais casser un contenu).
+                $uses = media_usage($name);
+                if ($uses) { $ok = false; $msg = '🔒 Suppression bloquée : image utilisée (' . count($uses) . '). Retire-la d\'abord des contenus.'; break; }
+                if (@unlink($path)) { admin_log('media_delete', $name); $msg = '🗑️ Image supprimée : ' . $name; }
+                else { $ok = false; $msg = '❌ Échec de la suppression.'; }
+                break;
+            }
             /* --- Codes promo (vouchers) --- */
             case 'voucher_add':
                 $code = strtoupper(trim($_POST['code'] ?? '')); if ($code === '') { $ok = false; $msg = '❌ Code vide.'; break; }
@@ -2541,6 +2553,14 @@ function sitemgr_events(): void {
     echo '<div class="warn" style="margin-top:6px">⚠️ Le contrôle du bus <b>en jeu</b> (ouverture, votes) reste dans l\'onglet <a href="?p=bus">Bus (Infobus)</a> et n\'est pas présenté comme pleinement intégré à Kepler tant que ce n\'est pas testé.</div></div>';
 }
 /* ---- Médias (point 10) : bibliothèque locale ---- */
+/* Liste précise des contenus qui utilisent une image (par nom de fichier). */
+function media_usage(string $name): array {
+    $u = [];
+    try { foreach (db()->query('SELECT slug,title,body_html FROM site_pages') as $r) if ($r['body_html'] !== null && strpos((string)$r['body_html'], $name) !== false) $u[] = 'Page « ' . (trim((string)$r['title']) !== '' ? $r['title'] : $r['slug']) . ' »'; } catch (Throwable $e) {}
+    try { foreach (db()->query('SELECT id,title,body FROM site_news') as $r) if (strpos((string)$r['body'], $name) !== false) $u[] = 'Actu #' . $r['id'] . ' « ' . mb_strimwidth((string)$r['title'], 0, 24, '…') . ' »'; } catch (Throwable $e) {}
+    try { foreach (db()->query('SELECT page,slot,image FROM site_carousel') as $r) if (strpos((string)$r['image'], $name) !== false) $u[] = 'Carrousel ' . $r['page'] . ' #' . $r['slot']; } catch (Throwable $e) {}
+    return $u;
+}
 function sitemgr_media(): void {
     $dir = dirname(__DIR__) . '/web-gallery/v2/pages_img';
     $url = '/web-gallery/v2/pages_img';
@@ -2549,26 +2569,38 @@ function sitemgr_media(): void {
        . '<input type="file" name="file" accept="image/*" required><button>⬆️ Importer</button></div>'
        . '<p class="muted sm" style="margin-top:4px">Hébergé dans le projet (<code>web-gallery/v2/pages_img/</code>). GIF animés et dimensions natives conservés (aucune conversion).</p></div>';
 
+    $q = trim((string)($_GET['q'] ?? ''));
     $files = is_dir($dir) ? array_values(array_filter(scandir($dir), fn($f) => !in_array($f, ['.', '..'], true) && is_file($dir . '/' . $f))) : [];
-    // "utilisée par" : scan site_pages + carrousel
-    $useHay = '';
-    foreach (db()->query('SELECT body_html FROM site_pages') as $r) $useHay .= (string)$r['body_html'];
-    foreach (db()->query('SELECT image FROM site_carousel') as $r) $useHay .= ' ' . (string)$r['image'];
-    echo '<div class="panel"><div class="ph"><h3>Bibliothèque</h3><span class="muted sm" style="margin-left:auto">' . count($files) . ' fichiers</span></div>';
-    if (!$files) echo '<p class="muted" style="padding:4px 0">Aucun fichier importé pour l\'instant.</p>';
+    if ($q !== '') $files = array_values(array_filter($files, fn($f) => stripos($f, $q) !== false));
+    $nbUsed = 0; $nbFree = 0;
+    echo '<div class="panel"><div class="ph"><h3>Médiathèque</h3><span class="muted sm" style="margin-left:auto">' . count($files) . ' fichier' . (count($files) > 1 ? 's' : '') . '</span></div>';
+    echo '<form method="get" class="row" style="margin-bottom:8px;gap:6px"><input type="hidden" name="p" value="sitemgr"><input type="hidden" name="sec" value="media"><input name="q" value="' . h($q) . '" placeholder="Filtrer par nom de fichier…" style="flex:1;min-width:160px"><button class="mini">Filtrer</button>' . ($q !== '' ? ' <a class="mini ghost" href="?p=sitemgr&sec=media">Tout</a>' : '') . '</form>';
+    if (!$files) echo '<p class="muted" style="padding:4px 0">' . ($q !== '' ? 'Aucun fichier ne correspond.' : 'Aucun fichier importé pour l\'instant.') . '</p>';
     else {
-        echo '<div style="display:flex;flex-wrap:wrap;gap:8px;padding:4px 0">';
+        echo '<div style="display:flex;flex-wrap:wrap;gap:10px;padding:4px 0">';
         foreach ($files as $f) {
-            $used = strpos($useHay, $f) !== false;
+            $uses = media_usage($f);
+            $used = (bool)$uses; $used ? $nbUsed++ : $nbFree++;
             $sz = @getimagesize($dir . '/' . $f);
             $dim = $sz ? $sz[0] . '×' . $sz[1] : '?';
-            echo '<div style="width:120px;border:1px solid var(--line2);border-radius:6px;padding:5px;text-align:center">'
-               . '<img src="' . $url . '/' . h($f) . '" alt="" style="max-width:100%;max-height:60px;object-fit:contain"><div class="muted sm" style="word-break:break-all;margin-top:3px">' . h($f) . '</div>'
-               . '<div class="muted sm">' . $dim . ' · ' . ($used ? '<span style="color:var(--green)">utilisée</span>' : 'non utilisée') . '</div></div>';
+            $ko = @filesize($dir . '/' . $f); $ko = $ko ? round($ko / 1024) . ' Ko' : '?';
+            echo '<div style="width:150px;border:1px solid var(--line2);border-radius:8px;padding:6px;text-align:center">'
+               . '<div style="height:66px;display:flex;align-items:center;justify-content:center;background:var(--bg);border-radius:5px;overflow:hidden"><img src="' . $url . '/' . h($f) . '" alt="" style="max-width:100%;max-height:64px;object-fit:contain;image-rendering:pixelated"></div>'
+               . '<div class="sm" style="word-break:break-all;margin-top:4px;font-weight:600">' . h($f) . '</div>'
+               . '<div class="muted sm">' . $dim . ' · ' . $ko . '</div>';
+            if ($used) {
+                echo '<details style="margin-top:3px;text-align:left"><summary class="sm" style="color:var(--green);cursor:pointer">✅ utilisée (' . count($uses) . ')</summary><div class="muted sm" style="margin-top:3px">' . implode('<br>', array_map('h', $uses)) . '</div></details>';
+                echo '<div class="muted sm" title="Suppression bloquée tant qu\'elle est utilisée" style="margin-top:4px">🔒 utilisée</div>';
+            } else {
+                echo '<div class="muted sm" style="margin-top:3px">non utilisée</div>';
+                echo '<form method="post" class="js" data-reload data-confirm="Supprimer définitivement ' . h($f) . ' ? (non utilisée)" style="margin-top:4px"><input type="hidden" name="action" value="media_delete">' . csrf_field() . '<input type="hidden" name="file" value="' . h($f) . '"><button class="mini ghost">🗑️ Supprimer</button></form>';
+            }
+            echo '</div>';
         }
         echo '</div>';
+        echo '<p class="muted sm" style="margin-top:8px">' . $nbUsed . ' utilisée(s) · ' . $nbFree . ' libre(s). 🔒 Une image utilisée ne peut pas être supprimée (garde-fou serveur : on ne casse jamais un contenu).</p>';
     }
-    echo '<p class="muted sm">⬜ À compléter (point 10) : catégories, recherche, alt, liste précise des pages qui utilisent chaque image, garde-fou de suppression.</p></div>';
+    echo '</div>';
 }
 function sitemgr_apparence(): void {
     $bgdir = dirname(__DIR__) . '/web-gallery/v2/images/bg_patterns';
@@ -2665,7 +2697,7 @@ function sitemgr_settings(): void {
 function sitemgr_history(): void {
     echo '<div class="panel"><div class="ph"><h3>🕑 Historique des modifications du site</h3></div>';
     ensure_admin_log();
-    $rows = db()->query("SELECT author,action,detail,created_at FROM admin_log WHERE action IN ('sitepage_save','carousel_save','site_setting','nav_tab_save','nav_item_save','nav_move','nav_flag','media_upload','site_bg','site_bg_upload','news_add','news_update','news_delete') ORDER BY id DESC LIMIT 40")->fetchAll();
+    $rows = db()->query("SELECT author,action,detail,created_at FROM admin_log WHERE action IN ('sitepage_save','carousel_save','site_setting','nav_tab_save','nav_item_save','nav_move','nav_flag','media_upload','media_delete','site_bg','site_bg_upload','news_add','news_update','news_delete') ORDER BY id DESC LIMIT 40")->fetchAll();
     if (!$rows) echo '<p class="muted" style="padding:4px 0">Aucune action enregistrée.</p>';
     else { echo '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr class="muted sm"><th style="text-align:left">Date</th><th style="text-align:left">Staff</th><th style="text-align:left">Action</th><th style="text-align:left">Détail</th></tr>';
         foreach ($rows as $r) echo '<tr><td style="padding:3px 0">' . h((string)$r['created_at']) . '</td><td>' . h((string)$r['author']) . '</td><td>' . h((string)$r['action']) . '</td><td class="muted sm">' . h((string)$r['detail']) . '</td></tr>';
@@ -2678,7 +2710,7 @@ function action_tab(string $a): string {
     static $map = [
         // Gestion du Site (v2)
         'carousel_save' => 'sitemgr', 'site_setting' => 'sitemgr', 'sitepage_save' => 'sitemgr', 'sitepage_block_save' => 'sitemgr', 'sitepage_arrange' => 'sitemgr',
-        'nav_tab_save' => 'sitemgr', 'nav_item_save' => 'sitemgr', 'nav_move' => 'sitemgr', 'nav_flag' => 'sitemgr', 'media_upload' => 'sitemgr', 'site_bg_apply' => 'sitemgr', 'site_bg_reset' => 'sitemgr', 'site_bg_upload' => 'sitemgr',
+        'nav_tab_save' => 'sitemgr', 'nav_item_save' => 'sitemgr', 'nav_move' => 'sitemgr', 'nav_flag' => 'sitemgr', 'media_upload' => 'sitemgr', 'media_delete' => 'sitemgr', 'site_bg_apply' => 'sitemgr', 'site_bg_reset' => 'sitemgr', 'site_bg_upload' => 'sitemgr',
         'page_pin' => 'sitemgr', 'site_page_create' => 'sitemgr', 'site_news_save' => 'news', 'site_news_delete' => 'news',
         'hm_report_status' => 'homemod', 'hm_home_hide' => 'homemod', 'hm_home_lock' => 'homemod', 'hm_gb_hide' => 'homemod', 'hm_item_del' => 'homemod', 'hm_asset_toggle' => 'homemod',
         // Joueurs
