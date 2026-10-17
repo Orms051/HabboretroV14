@@ -1025,6 +1025,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'def_update':
                 db()->prepare('UPDATE items_definitions SET name=?,description=?,behaviour=?,is_tradable=?,is_recyclable=?,length=?,width=? WHERE id=?')
                     ->execute([substr(trim($_POST['name'] ?? ''), 0, 255), substr(trim($_POST['description'] ?? ''), 0, 255), substr(trim($_POST['behaviour'] ?? ''), 0, 150), isset($_POST['is_tradable']) ? 1 : 0, isset($_POST['is_recyclable']) ? 1 : 0, (int)$_POST['length'], (int)$_POST['width'], (int)$_POST['id']]); $msg = '🪑 Meuble mis à jour.'; break;
+            case 'furni_def_save': { /* Lot 2 : éditeur complet, validé, versionné, anti-écrasement concurrent */
+                $fid = (int)($_POST['id'] ?? 0);
+                $stc = db()->prepare('SELECT * FROM items_definitions WHERE id=?'); $stc->execute([$fid]); $cur = $stc->fetch();
+                if (!$cur) { $ok = false; $msg = '❌ Définition introuvable.'; break; }
+                if ((string)($_POST['orig_hash'] ?? '') !== furni_def_hash($cur)) { $ok = false; $msg = '⚠️ Cette fiche a été modifiée entre-temps (autre onglet ou autre staff). Rien n\'a été enregistré : rouvre la fiche pour repartir des valeurs à jour.'; break; }
+                $name = substr(trim((string)($_POST['name'] ?? '')), 0, 255);
+                if ($name === '') { $ok = false; $msg = '❌ Le nom ne peut pas être vide.'; break; }
+                $new = [
+                    'name' => $name,
+                    'description' => substr(trim((string)($_POST['description'] ?? '')), 0, 255),
+                    'length' => max(0, (int)($_POST['length'] ?? 0)),
+                    'width' => max(0, (int)($_POST['width'] ?? 0)),
+                    'top_height' => max(0.0, (float)str_replace(',', '.', (string)($_POST['top_height'] ?? '0'))),
+                    'behaviour' => furni_behaviour_rebuild((string)$cur['behaviour'], (array)($_POST['beh'] ?? [])),
+                    'interactor' => (trim((string)($_POST['interactor'] ?? '')) === '' ? 'default' : substr(trim((string)$_POST['interactor']), 0, 150)),
+                    'colour' => substr(trim((string)($_POST['colour'] ?? '')), 0, 100),
+                    'max_status' => substr(trim((string)($_POST['max_status'] ?? '')), 0, 11),
+                    'is_tradable' => isset($_POST['is_tradable']) ? 1 : 0,
+                    'is_recyclable' => isset($_POST['is_recyclable']) ? 1 : 0,
+                ];
+                $changes = furni_diff($cur, $new);
+                if (!$changes) { $msg = 'ℹ️ Aucun changement détecté.'; break; }
+                db()->prepare('UPDATE items_definitions SET name=?,description=?,length=?,width=?,top_height=?,behaviour=?,interactor=?,colour=?,max_status=?,is_tradable=?,is_recyclable=? WHERE id=?')
+                    ->execute([$new['name'], $new['description'], $new['length'], $new['width'], $new['top_height'], $new['behaviour'], $new['interactor'], $new['colour'], $new['max_status'], $new['is_tradable'], $new['is_recyclable'], $fid]);
+                furni_log_change($fid, $changes, (string)($_POST['reason'] ?? ''));
+                $msg = '💾 Meuble enregistré (' . count($changes) . ' champ' . (count($changes) > 1 ? 's' : '') . ' modifié' . (count($changes) > 1 ? 's' : '') . '). ⚙️ Redémarre l\'émulateur pour voir le changement en jeu.'; break;
+            }
+            case 'furni_def_restore': { /* Restaure les valeurs d'une entrée d'historique */
+                $logId = (int)($_POST['log_id'] ?? 0);
+                ensure_furni_log();
+                $lg = db()->prepare('SELECT * FROM furni_edit_log WHERE id=?'); $lg->execute([$logId]); $lg = $lg->fetch();
+                if (!$lg) { $ok = false; $msg = '❌ Entrée d\'historique introuvable.'; break; }
+                $defId = (int)$lg['definition_id'];
+                $chg = json_decode((string)$lg['changes'], true) ?: [];
+                $stc = db()->prepare('SELECT * FROM items_definitions WHERE id=?'); $stc->execute([$defId]); $cur = $stc->fetch();
+                if (!$cur) { $ok = false; $msg = '❌ Définition introuvable.'; break; }
+                $allowed = ['name', 'description', 'length', 'width', 'top_height', 'behaviour', 'interactor', 'colour', 'max_status', 'is_tradable', 'is_recyclable'];
+                $sets = []; $vals = []; $newchanges = [];
+                foreach ($chg as $f => $ab) {
+                    if (!in_array($f, $allowed, true) || !is_array($ab) || !array_key_exists('old', $ab)) continue;
+                    if ((string)$cur[$f] === (string)$ab['old']) continue; // déjà à cette valeur
+                    $sets[] = "$f=?"; $vals[] = $ab['old']; $newchanges[$f] = ['old' => (string)$cur[$f], 'new' => (string)$ab['old']];
+                }
+                if (!$sets) { $msg = 'ℹ️ Les valeurs sont déjà celles de cette version.'; break; }
+                $vals[] = $defId;
+                db()->prepare('UPDATE items_definitions SET ' . implode(',', $sets) . ' WHERE id=?')->execute($vals);
+                furni_log_change($defId, $newchanges, 'Restauration de la version #' . $logId);
+                $msg = '↩️ Valeurs restaurées (' . count($newchanges) . ' champ(s)). ⚙️ Redémarre l\'émulateur pour appliquer en jeu.'; break;
+            }
             /* --- Cartes de jeux --- */
             case 'gmap_update':
                 db()->prepare('UPDATE games_maps SET heightmap=?,tile_map=? WHERE id=?')->execute([(string)$_POST['heightmap'], (string)$_POST['tile_map'], (int)$_POST['id']]); $msg = '🗺️ Carte mise à jour. Redémarre l\'émulateur.'; break;
@@ -2746,7 +2795,7 @@ function action_tab(string $a): string {
         'cat_item' => 'catalogue', 'cat_page' => 'catalogue', 'cat_page_move' => 'catalogue', 'cat_bulk' => 'catalogue',
         'navcat_update' => 'navcats', 'navcat_move' => 'navcats',
         'pkg_add' => 'packages', 'pkg_update' => 'packages', 'pkg_delete' => 'packages',
-        'def_update' => 'furni', 'furni_all' => 'furni', 'song_update' => 'trax', 'song_delete' => 'trax',
+        'def_update' => 'furni', 'furni_def_save' => 'furni', 'furni_def_restore' => 'furni', 'furni_all' => 'furni', 'song_update' => 'trax', 'song_delete' => 'trax',
         'furni_convert' => 'convert', 'furni_decompile' => 'convert',
         // Communauté / modération
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
@@ -3044,6 +3093,58 @@ function furni_list_qs(): string {
     return http_build_query($keep);
 }
 
+/* --- Lot 2 : édition validée, versionnée, anti-concurrence --- */
+/* Empreinte des champs éditables (détecte une modif concurrente entre ouverture et save). */
+function furni_def_hash(array $r): string {
+    return sha1(implode('|', [
+        (string)$r['name'], (string)$r['description'], (string)$r['length'], (string)$r['width'],
+        (string)$r['top_height'], (string)$r['behaviour'], (string)$r['interactor'],
+        (string)$r['colour'], (string)$r['max_status'], (string)$r['is_tradable'], (string)$r['is_recyclable'],
+    ]));
+}
+/* Flags autorisés = dictionnaire connu + rotations téléporteur + flags DÉJÀ présents sur ce meuble (on préserve les valeurs particulières). */
+function furni_behaviour_allowed(string $orig): array {
+    $a = array_keys(furni_behaviour_dict());
+    foreach (['redirect_rotation_0', 'redirect_rotation_2', 'redirect_rotation_4', 'redirect_rotation_6'] as $r) $a[] = $r;
+    foreach (array_filter(array_map('trim', explode(',', $orig))) as $f) $a[] = $f;
+    return array_values(array_unique($a));
+}
+/* Reconstruit la chaîne behaviour à partir des cases cochées, en préservant l'ordre d'origine
+   et les flags particuliers déjà présents (validation serveur = liste blanche). */
+function furni_behaviour_rebuild(string $orig, array $checked): string {
+    $allowed = furni_behaviour_allowed($orig);
+    $checked = array_values(array_intersect(array_map('strval', $checked), $allowed));
+    $origFlags = array_values(array_filter(array_map('trim', explode(',', $orig)), fn($x) => $x !== ''));
+    $out = [];
+    foreach ($origFlags as $f) if (in_array($f, $checked, true)) $out[] = $f;     // garde l'ordre d'origine
+    foreach ($checked as $f) if (!in_array($f, $out, true)) $out[] = $f;          // ajoute les nouveaux à la fin
+    return implode(',', $out);
+}
+/* Différences champ par champ (comparaison en chaîne). */
+function furni_diff(array $cur, array $new): array {
+    $ch = [];
+    foreach ($new as $k => $v) if ((string)($cur[$k] ?? '') !== (string)$v) $ch[$k] = ['old' => (string)($cur[$k] ?? ''), 'new' => (string)$v];
+    return $ch;
+}
+function furni_field_label(string $f): string {
+    return ['name' => 'Nom', 'description' => 'Description', 'length' => 'Longueur', 'width' => 'Largeur', 'top_height' => 'Hauteur', 'behaviour' => 'Comportement', 'interactor' => 'Interacteur', 'colour' => 'Couleur', 'max_status' => 'max_status', 'is_tradable' => 'Échangeable', 'is_recyclable' => 'Recyclable'][$f] ?? $f;
+}
+/* Journal des modifications de meubles (migration reproductible, SQL standard). */
+function ensure_furni_log(): void {
+    static $done = false; if ($done) return; $done = true;
+    db()->exec("CREATE TABLE IF NOT EXISTS furni_edit_log (id INT AUTO_INCREMENT PRIMARY KEY, definition_id INT NOT NULL, author VARCHAR(64) NOT NULL DEFAULT '', changes MEDIUMTEXT NOT NULL, reason VARCHAR(255) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(definition_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+function furni_log_change(int $defId, array $changes, string $reason): void {
+    ensure_furni_log();
+    db()->prepare('INSERT INTO furni_edit_log (definition_id,author,changes,reason) VALUES (?,?,?,?)')
+        ->execute([$defId, (string)($_SESSION['admin']['username'] ?? '?'), json_encode($changes, JSON_UNESCAPED_UNICODE), substr($reason, 0, 255)]);
+}
+function furni_edit_history(int $defId, int $limit = 50): array {
+    ensure_furni_log();
+    $st = db()->prepare('SELECT * FROM furni_edit_log WHERE definition_id=? ORDER BY id DESC LIMIT ' . (int)$limit);
+    $st->execute([$defId]); return $st->fetchAll();
+}
+
 function page_furni(): void {
     page_title('Meubles (définitions)', 'Gestionnaire de mobis — retrouver, consulter et régler un meuble');
 
@@ -3183,15 +3284,34 @@ function furni_fiche(int $id): void {
     echo '<tr><td>Recyclable</td><td>' . ($d['is_recyclable'] ? '✅ oui' : '❌ non') . '</td><td class="sm muted">accepté par le recycleur</td></tr>';
     if (trim((string)$d['drink_ids']) !== '' && $d['drink_ids'] !== "''") echo '<tr><td>Boissons (drink_ids)</td><td><code>' . h((string)$d['drink_ids']) . '</code></td><td class="sm muted">IDs des boissons servies</td></tr>';
     echo '</table>';
-    /* Édition minimale conservée (l\'éditeur complet — hauteur, cases à cocher, validations, historique — arrive au Lot 2) */
-    echo '<form method="post" class="js" data-reload style="margin-top:12px;border-top:1px dashed rgba(128,128,128,.3);padding-top:12px">' . csrf_field() . '<input type="hidden" name="action" value="def_update"><input type="hidden" name="id" value="' . $id . '">';
-    echo '<p class="sm muted" style="margin:0 0 6px">Édition rapide (l\'éditeur complet avec hauteur, comportements guidés, validation et historique arrive au Lot 2) :</p>';
-    echo '<div class="row"><label style="flex:1">Nom<input name="name" value="' . h((string)$d['name']) . '"></label><label>Longueur<input type="number" name="length" value="' . (int)$d['length'] . '" style="width:90px"></label><label>Largeur<input type="number" name="width" value="' . (int)$d['width'] . '" style="width:90px"></label></div>';
+    /* --- Éditeur complet (Lot 2) : validé, versionné, anti-concurrence --- */
+    $origHash = furni_def_hash($d);
+    $dict = furni_behaviour_dict();
+    $curFlags = array_values(array_filter(array_map('trim', explode(',', (string)$d['behaviour'])), fn($x) => $x !== ''));
+    $nbEx = 0; try { $ex = db()->prepare('SELECT COUNT(*) FROM items WHERE definition_id=?'); $ex->execute([$id]); $nbEx = (int)$ex->fetchColumn(); } catch (Throwable $e) {}
+    echo '<form method="post" class="js" data-reload style="margin-top:14px;border-top:1px dashed rgba(128,128,128,.3);padding-top:12px">' . csrf_field();
+    echo '<input type="hidden" name="action" value="furni_def_save"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="orig_hash" value="' . h($origHash) . '">';
+    echo '<h4 style="margin:0 0 8px">✏️ Modifier ce meuble</h4>';
+    echo '<label>Nom<input name="name" value="' . h((string)$d['name']) . '" required></label>';
     echo '<label style="margin-top:8px">Description<input name="description" value="' . h((string)$d['description']) . '"></label>';
-    echo '<label style="margin-top:8px">Comportement (texte brut, modifié au Lot 2)<input name="behaviour" value="' . h((string)$d['behaviour']) . '"></label>';
-    echo '<div class="row" style="margin-top:8px"><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_tradable" ' . ($d['is_tradable'] ? 'checked' : '') . '> Échangeable</label><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_recyclable" ' . ($d['is_recyclable'] ? 'checked' : '') . '> Recyclable</label></div>';
-    echo '<button style="margin-top:10px">💾 Enregistrer</button></form>';
-    echo '<p class="hint">ℹ️ Enregistré en base immédiatement. Le <b>nom affiché en jeu</b> (sur le meuble posé) vient des <b>textes client</b> — la synchronisation sera gérée ici au Lot 3.</p>';
+    echo '<div class="row" style="margin-top:8px"><label>Longueur (cases)<input type="number" min="0" name="length" value="' . (int)$d['length'] . '" style="width:120px"></label><label>Largeur (cases)<input type="number" min="0" name="width" value="' . (int)$d['width'] . '" style="width:120px"></label><label>Hauteur (top_height)<input type="number" step="0.1" min="0" name="top_height" value="' . h(rtrim(rtrim(number_format((float)$d['top_height'], 2, '.', ''), '0'), '.')) . '" style="width:130px"></label></div>';
+    echo '<p class="sm muted" style="margin:10px 0 2px">Comportement (interactions exposées par Kepler — coche ce qui s\'applique) :</p>';
+    echo '<div style="display:flex;flex-wrap:wrap;gap:3px 14px;margin-bottom:4px">';
+    foreach ($dict as $f => $lbl) {
+        $ck = in_array($f, $curFlags, true) ? ' checked' : '';
+        echo '<label style="flex-direction:row;align-items:center;gap:5px;min-width:240px;font-weight:normal"><input type="checkbox" name="beh[]" value="' . h($f) . '"' . $ck . '> ' . h($lbl) . ' <span class="muted sm">(' . h($f) . ')</span></label>';
+    }
+    foreach ($curFlags as $f) {
+        if (isset($dict[$f])) continue;
+        echo '<label style="flex-direction:row;align-items:center;gap:5px;min-width:240px;font-weight:normal"><input type="checkbox" name="beh[]" value="' . h($f) . '" checked> ⚙ ' . h($f) . ' <span class="muted sm">(spécifique — conservé)</span></label>';
+    }
+    echo '</div>';
+    echo '<div class="row" style="margin-top:4px"><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_tradable"' . ($d['is_tradable'] ? ' checked' : '') . '> Échangeable</label><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_recyclable"' . ($d['is_recyclable'] ? ' checked' : '') . '> Recyclable</label></div>';
+    echo '<details style="margin-top:8px"><summary class="sm muted">⚙️ Paramètres techniques avancés</summary><div class="row" style="margin-top:6px"><label>Interacteur<input name="interactor" value="' . h((string)$d['interactor']) . '" style="width:170px"></label><label>Couleur (RVB)<input name="colour" value="' . h((string)$d['colour']) . '" style="width:130px"></label><label>max_status<input name="max_status" value="' . h((string)$d['max_status']) . '" style="width:90px"></label></div><p class="hint">Champs techniques : ne change que si tu sais ce que tu fais.</p></details>';
+    echo '<label style="margin-top:8px">Motif de la modification (facultatif)<input name="reason" maxlength="255" placeholder="ex. correction de la hauteur d\'assise"></label>';
+    echo '<div style="margin-top:10px;padding:8px 10px;background:rgba(224,160,32,.12);border-radius:6px;font-size:12px">⚠️ <b>Impact</b> : définition partagée par <b>' . $nbEx . '</b> exemplaire(s) (posés + inventaire) et <b>' . count($offers) . '</b> offre(s) catalogue. Les changements s\'appliquent à <b>tous</b>.</div>';
+    echo '<button style="margin-top:10px">💾 Enregistrer</button> <span class="muted sm">⚙️ Redémarrage de l\'émulateur nécessaire pour l\'affichage en jeu.</span></form>';
+    echo '<p class="hint">ℹ️ Enregistré en base + tracé dans l\'historique. Le <b>nom affiché en jeu</b> (meuble posé) vient des <b>textes client</b> — synchronisation au Lot 3.</p>';
     echo '</div>';
 
     /* Onglet Catalogue & variantes */
@@ -3228,7 +3348,22 @@ function furni_fiche(int $id): void {
     echo '</div>';
 
     /* Onglet Historique (Lot 2) */
-    echo '<div class="ftp" data-ftp="hist" style="display:none"><div class="empty" style="margin-top:10px">🕑 Historique des modifications et restauration — <b>à venir (Lot 2)</b>.</div></div>';
+    echo '<div class="ftp" data-ftp="hist" style="display:none">';
+    $hist = furni_edit_history($id);
+    if (!$hist) echo '<div class="empty" style="margin-top:10px">Aucune modification enregistrée pour ce meuble.</div>';
+    else {
+        echo '<table class="clean" style="margin-top:10px"><tr><th>Date</th><th>Par</th><th>Modifications</th><th>Motif</th><th></th></tr>';
+        foreach ($hist as $lg) {
+            $chg = json_decode((string)$lg['changes'], true) ?: [];
+            $lines = [];
+            foreach ($chg as $f => $ab) $lines[] = '<b>' . h(furni_field_label($f)) . '</b> : <span class="muted" style="text-decoration:line-through">' . h(mb_strimwidth((string)($ab['old'] ?? ''), 0, 40, '…')) . '</span> → ' . h(mb_strimwidth((string)($ab['new'] ?? ''), 0, 40, '…'));
+            echo '<tr><td class="sm muted">' . h(date('d/m/Y H:i', strtotime((string)$lg['created_at']))) . '</td><td class="sm">' . h((string)$lg['author']) . '</td><td class="sm">' . implode('<br>', $lines) . '</td><td class="sm muted">' . h((string)$lg['reason']) . '</td>';
+            echo '<td><form method="post" class="js" data-reload data-confirm="Restaurer les valeurs AVANT cette modification ?" style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="furni_def_restore"><input type="hidden" name="log_id" value="' . (int)$lg['id'] . '"><button class="mini ghost">↩️ Restaurer</button></form></td></tr>';
+        }
+        echo '</table>';
+        echo '<p class="hint">« Restaurer » remet les valeurs <b>d\'avant</b> la modification choisie et crée une nouvelle entrée d\'historique. ⚙️ Redémarre l\'émulateur pour appliquer en jeu.</p>';
+    }
+    echo '</div>';
 
     echo '</div>'; /* .panel */
     ?>
