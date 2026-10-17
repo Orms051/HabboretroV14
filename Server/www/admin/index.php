@@ -418,6 +418,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$ids) { $ok = false; $msg = '❌ Aucun destinataire valide.'; break; }
                 if (count($ids) > 500) { $ok = false; $msg = '❌ Trop de destinataires (' . count($ids) . '). Limite : 500.'; break; }
                 $n = conv_broadcast($ids, $subject, $body, (string)($_SESSION['admin']['username'] ?? 'Équipe'));
+                alert_log_add('messagerie (persistant)', ($mode === 'rank' ? 'rang ≥ ' . (int)($_POST['min_rank'] ?? 5) : 'liste de pseudos') . ' — ' . $n . ' destinataire(s)', ($subject !== '' ? '[' . $subject . '] ' : '') . $body, 'créée pour ' . $n . ' joueur(s) · réponses autorisées (privées)');
                 admin_log('conv_broadcast', $n . ' destinataires (' . $mode . ')');
                 $msg = '📣 Annonce envoyée à ' . $n . ' joueur' . ($n > 1 ? 's' : '') . '.'; break;
             }
@@ -1068,7 +1069,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $params = ['message' => $txt];
                 if (trim((string)($_POST['sender'] ?? '')) !== '') $params['sender'] = trim((string)$_POST['sender']);
                 $ok2 = rcon_send('hotel_alert', $params);
-                $ok = $ok2; $msg = $ok2 ? '📢 Alerte envoyée à tous les joueurs connectés.' : '❌ Émulateur injoignable (RCON). Est-il démarré ?'; break;
+                alert_log_add('jeu (RCON)', 'Tout l\'hôtel (connectés)', $txt, $ok2 ? 'RCON accepté — transmis au serveur' : 'échec — émulateur injoignable');
+                $ok = $ok2; $msg = $ok2 ? '📢 Alerte transmise au serveur (joueurs connectés).' : '❌ Émulateur injoignable (RCON). Est-il démarré ?'; break;
             case 'db_backup':
                 $ok = db_backup(); $msg = $ok ? '💾 Sauvegarde créée et vérifiée.' : ('❌ Échec de la sauvegarde : ' . ($GLOBALS['backup_err'] ?? 'raison inconnue')); break;
             case 'cat_bulk':
@@ -1166,6 +1168,7 @@ switch ($p) {
     case 'bots': page_bots(); break;
     case 'users': page_users(); break;
     case 'messages': page_messages(); break;
+    case 'alerts': page_alerts(); break;
     case 'sitemgr': page_sitemgr(); break;
     case 'homemod': page_homemod(); break;
     case 'user': page_user(); break;
@@ -1188,7 +1191,7 @@ render_footer();
 
 /* ============ ACCÈS AUX ONGLETS PAR RANG ============ */
 function admin_nav(): array {
-    return ['dashboard' => ['🏠', 'Accueil'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur']];
+    return ['dashboard' => ['🏠', 'Accueil'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur']];
 }
 function tab_default_rank(string $tab): int {
     $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6];
@@ -1199,6 +1202,7 @@ function nav_groups(): array {
         '' => ['dashboard', 'search'],
         'Site & contenus' => ['sitemgr', 'news'],
         'Joueurs' => ['users', 'badges', 'ranks'],
+        'Alertes & annonces' => ['alerts'],
         'Modération & assistance' => ['messages', 'moderation', 'homemod', 'commandes', 'audit'],
         'Hôtel & appartements' => ['rooms', 'models', 'gamemaps', 'bots', 'games'],
         'Catalogue & économie' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax', 'recycler', 'vouchers'],
@@ -3625,16 +3629,10 @@ function conv_tools_bar(string $me): void {
        . '<div class="sm muted" style="margin-bottom:3px">Accusé de réception automatique (vide = désactivé)</div>'
        . '<textarea name="body" rows="2" maxlength="1000" placeholder="Laisser vide pour désactiver" style="width:100%">' . h($ackVal) . '</textarea>'
        . '<button class="mini" style="margin-top:4px">💾 Enregistrer l\'accusé</button></form>';
-    // Annonce
-    echo '<form method="post" class="js" data-reload data-confirm="Envoyer cette annonce (une conversation par destinataire) ?"><input type="hidden" name="action" value="conv_broadcast">' . csrf_field()
-       . '<div class="sm muted" style="margin-bottom:3px">Annonce collective</div>'
-       . '<div class="sm" style="margin-bottom:4px"><label style="margin-right:12px"><input type="radio" name="mode" value="list" checked> Liste de pseudos</label>'
-       . '<label><input type="radio" name="mode" value="rank"> Par rang minimum</label></div>'
-       . '<textarea name="usernames" rows="2" placeholder="Pseudos séparés par virgule ou espace (max 500)" style="width:100%"></textarea>'
-       . '<label class="sm" style="display:block;margin-top:4px">Rang minimum <input type="number" name="min_rank" value="5" min="1" max="7" style="width:70px"></label>'
-       . '<input name="subject" maxlength="150" placeholder="Sujet" style="width:100%;margin-top:6px">'
-       . '<textarea name="body" rows="3" maxlength="4000" required placeholder="Texte de l\'annonce…" style="width:100%;margin-top:6px"></textarea>'
-       . '<button class="mini" style="margin-top:4px">📣 Envoyer l\'annonce</button></form>';
+    // Annonce collective → raccourci vers le hub « Alertes & annonces » (logique unique)
+    echo '<div><div class="sm muted" style="margin-bottom:3px">Annonce collective</div>'
+       . '<a class="mini ghost" href="?p=alerts&sec=announce">📨 Ouvrir dans « Alertes &amp; annonces »</a>'
+       . '<p class="muted sm" style="margin:4px 0 0">Diffusion persistante (une conversation par destinataire), avec historique.</p></div>';
     // Reprise — seulement s'il reste des anciens messages
     if ($legacyLeft > 0) {
         echo '<form method="post" class="js" data-reload data-confirm="Importer ' . $legacyLeft . ' ancien(s) message(s) en conversations ? Sans doublon, relançable sans risque."><input type="hidden" name="action" value="conv_reprise">' . csrf_field()
@@ -4601,6 +4599,70 @@ function hotel_alert_presets(): array {
 /* Service d'avatars Minerva (port local 5123). */
 function minerva_running(): bool { $c = @fsockopen('127.0.0.1', 5123, $e, $s, 0.6); if ($c) { fclose($c); return true; } return false; }
 
+/* ===== Hub « Alertes & annonces » ===== */
+function page_alerts(): void {
+    page_title('Alertes & annonces', 'Appels à l\'aide, alertes en jeu et annonces — regroupés');
+    $sec = (string)($_GET['sec'] ?? 'send');
+    if (!in_array($sec, ['cfh', 'send', 'announce', 'history'], true)) $sec = 'send';
+    $tabs = ['cfh' => '🆘 Appels à l\'aide', 'send' => '📢 Alerte en jeu', 'announce' => '📨 Annonce messagerie', 'history' => '🕑 Historique'];
+    echo '<div class="row" style="gap:4px;flex-wrap:wrap;margin-bottom:12px;border-bottom:2px solid var(--line2);padding-bottom:6px">';
+    foreach ($tabs as $k => $lbl) echo '<a class="mini' . ($sec === $k ? '' : ' ghost') . '" href="?p=alerts&sec=' . $k . '">' . $lbl . '</a>';
+    echo '</div>';
+    if ($sec === 'cfh') alerts_sec_cfh();
+    elseif ($sec === 'announce') alerts_sec_announce();
+    elseif ($sec === 'history') alerts_sec_history();
+    else alerts_sec_send();
+}
+function alerts_sec_cfh(): void {
+    echo '<div class="panel"><div class="ph"><h3>🆘 Appels à l\'aide (jeu)</h3><span class="rk red" style="margin-left:auto">⚠️ Non raccordé</span></div>';
+    echo '<div class="note" style="margin:0 0 10px">⚠️ <b>Réception des appels du jeu non raccordée.</b> (Ce n\'est pas « aucun appel » : la liaison avec l\'émulateur reste à développer.)</div>';
+    echo '<p class="muted sm">Dans Kepler, les appels à l\'aide (Call For Help) sont gérés <b>en mémoire</b> et diffusés aux modérateurs connectés en jeu — ils ne sont pas enregistrés en base. Pour les traiter ici, il faut :</p>';
+    echo '<ol class="muted sm" style="margin:6px 0 0 18px"><li>Patch Kepler : persister chaque appel dans une table <code>calls_for_help</code> (à la soumission, la prise en charge, le changement de catégorie, la clôture).</li><li>Recompiler le <code>kepler.jar</code> et jouer la migration.</li><li>Brancher ici la file (prise en charge, note interne, réponse si possible, clôture motivée, réouverture) + le bouton d\'en-tête avec compteur des appels <b>non pris en charge</b>.</li></ol>';
+    echo '<p class="muted sm" style="margin-top:8px">Tant que ce n\'est pas fait, le bouton d\'alerte de l\'en-tête ouvre cet onglet sans afficher de compteur (état honnête, pas un faux zéro). <b>Chantier prévu.</b></p>';
+    echo '</div>';
+}
+function alerts_sec_send(): void {
+    if (!tab_allowed('server')) { echo '<div class="panel"><div class="empty">🔒 Ton rang n\'autorise pas l\'envoi d\'alertes en jeu.</div></div>'; return; }
+    $up = emu_running();
+    echo '<div class="panel"><div class="ph"><h3>📢 Alerte en jeu</h3><span class="rk' . ($up ? '' : ' red') . '" style="margin-left:auto">' . ($up ? '🟢 Émulateur en ligne' : '🔴 Émulateur hors ligne') . '</span></div>';
+    echo '<p class="sub">Message pop-up envoyé aux <b>joueurs actuellement connectés</b> (éphémère, non conservé). Seule destination prise en charge aujourd\'hui : <b>tout l\'hôtel</b>. Les alertes par appartement ou par joueur se font en jeu (<code>:alert</code>).</p>';
+    if (!$up) echo '<div class="note" style="margin:0 0 10px">🔴 Émulateur hors ligne : l\'envoi <b>échouera</b> (aucune mise en file automatique). Démarre-le d\'abord.</div>';
+    $presetOpts = '<option value="">— Message prédéfini —</option>';
+    foreach (hotel_alert_presets() as $pm) $presetOpts .= '<option value="' . h($pm) . '">' . h(mb_strlen($pm) > 64 ? mb_substr($pm, 0, 64) . '…' : $pm) . '</option>';
+    echo '<form method="post" class="js" data-reload onsubmit="var b=this.querySelector(\'button[type=submit]\');if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return confirm(\'Envoyer cette alerte à TOUS les joueurs connectés ?\');">' . csrf_field()
+       . '<input type="hidden" name="action" value="hotel_alert">'
+       . '<div class="row" style="margin-bottom:8px"><label style="flex:1">📋 Modèles<select onchange="if(this.value){document.getElementById(\'ha_msg\').value=this.value;}">' . $presetOpts . '</select></label></div>'
+       . '<div class="row"><label style="flex:2">Message<input id="ha_msg" name="message" maxlength="200" placeholder="Ex. Maintenance dans 10 minutes !" required></label><label style="flex:1">Signature (option)<input name="sender" placeholder="L\'équipe"></label></div>'
+       . '<div style="margin-top:8px"><button>📢 Envoyer à tout l\'hôtel</button> <span class="muted sm">Portée : joueurs connectés · résultat tracé dans l\'historique</span></div></form>';
+    echo '</div>';
+}
+function alerts_sec_announce(): void {
+    if (!tab_allowed('messages')) { echo '<div class="panel"><div class="empty">🔒 Ton rang n\'autorise pas les annonces de messagerie.</div></div>'; return; }
+    echo '<div class="panel"><div class="ph"><h3>📨 Annonce dans la messagerie</h3><span class="muted sm" style="margin-left:auto">persistant</span></div>';
+    echo '<p class="sub">Crée une conversation par destinataire : <b>conservée et consultable</b> ensuite par le joueur (contrairement à l\'alerte en jeu). Le joueur peut répondre ; sa réponse est <b>privée</b> (jamais transmise aux autres destinataires).</p>';
+    echo '<form method="post" class="js" data-reload data-confirm="Envoyer cette annonce (une conversation par destinataire) ?" onsubmit="var b=this.querySelector(\'button[type=submit]\');if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return true;"><input type="hidden" name="action" value="conv_broadcast">' . csrf_field()
+       . '<div class="sm" style="margin-bottom:4px"><label style="margin-right:12px"><input type="radio" name="mode" value="list" checked> Liste de pseudos</label><label><input type="radio" name="mode" value="rank"> Par rang minimum</label></div>'
+       . '<textarea name="usernames" rows="2" placeholder="Pseudos séparés par virgule ou espace (max 500)" style="width:100%"></textarea>'
+       . '<label class="sm" style="display:block;margin-top:4px">Rang minimum (si « par rang ») <input type="number" name="min_rank" value="5" min="1" max="7" style="width:70px"></label>'
+       . '<input name="subject" maxlength="150" placeholder="Sujet" style="width:100%;margin-top:6px">'
+       . '<textarea name="body" rows="3" maxlength="4000" required placeholder="Texte de l\'annonce…" style="width:100%;margin-top:6px"></textarea>'
+       . '<button style="margin-top:8px">📨 Envoyer l\'annonce</button> <span class="muted sm">Cible + nombre de destinataires affichés dans le résultat</span></form>';
+    echo '</div>';
+}
+function alerts_sec_history(): void {
+    ensure_alert_log();
+    $rows = []; try { $rows = db()->query('SELECT * FROM alert_log ORDER BY id DESC LIMIT 100')->fetchAll(); } catch (Throwable $e) {}
+    echo '<div class="panel"><div class="ph"><h3>🕑 Historique des diffusions</h3></div>';
+    echo '<p class="muted sm" style="margin:-2px 0 8px">⚠️ Un envoi RCON « accepté » signifie « transmis au serveur », pas que tous les joueurs l\'ont lu.</p>';
+    if (!$rows) echo '<div class="empty">Aucune diffusion enregistrée pour l\'instant.</div>';
+    else {
+        echo '<table class="clean"><tr><th>Quand</th><th>Par</th><th>Canal</th><th>Cible</th><th>Message</th><th>Résultat</th></tr>';
+        foreach ($rows as $r) echo '<tr><td class="sm muted">' . h(date('d/m H:i', strtotime((string)$r['created_at']))) . '</td><td class="sm">' . h((string)$r['author']) . '</td><td class="sm">' . h((string)$r['channel']) . '</td><td class="sm">' . h((string)$r['target']) . '</td><td class="sm">' . h(mb_strimwidth((string)$r['content'], 0, 80, '…')) . '</td><td class="sm">' . h((string)$r['result']) . '</td></tr>';
+        echo '</table>';
+    }
+    echo '</div>';
+}
+
 function page_server(): void {
     page_title('Serveur', 'État des services, contrôle de l\'émulateur et diagnostics');
     $up = emu_running();
@@ -4651,15 +4713,11 @@ function page_server(): void {
     else echo '<pre class="logbox">' . h(implode("\n", $errs)) . '</pre><p class="hint">Extrait des dernières lignes ERROR/WARN/exception du log de l\'émulateur (sans secrets).</p>';
     echo '</div>';
 
-    // Alerte hôtel (RCON) — action LIVE tournée vers les joueurs connectés, sa place naturelle est ici (contrôle serveur).
+    // Alerte hôtel : l'interface a été déplacée vers « Alertes & annonces ». On garde ici un simple raccourci.
     echo '<div class="panel"><div class="ph"><h3>📢 Alerte à tout l\'hôtel</h3></div>';
-    echo '<p class="sub">Envoie un message pop-up à tous les joueurs connectés (via l\'émulateur).</p>';
-    $presetOpts = '<option value="">— Choisir un message prédéfini —</option>';
-    foreach (hotel_alert_presets() as $pm) $presetOpts .= '<option value="' . h($pm) . '">' . h(mb_strlen($pm) > 64 ? mb_substr($pm, 0, 64) . '…' : $pm) . '</option>';
-    echo '<form method="post" class="js"' . ($up ? '' : ' onsubmit="return false"') . '>' . csrf_field() . '<input type="hidden" name="action" value="hotel_alert">
-        <div class="row" style="margin-bottom:8px"><label style="flex:1">📋 Messages prédéfinis<select ' . ($up ? '' : 'disabled') . ' onchange="if(this.value){document.getElementById(\'ha_msg\').value=this.value;}">' . $presetOpts . '</select></label></div>
-        <div class="row"><label style="flex:2">Message<input id="ha_msg" name="message" placeholder="Ex. Maintenance dans 10 minutes !" ' . ($up ? '' : 'disabled') . '></label><label style="flex:1">Signature (optionnel)<input name="sender" placeholder="L\'équipe" ' . ($up ? '' : 'disabled') . '></label><div style="align-self:flex-end"><button ' . ($up ? '' : 'disabled') . '>Envoyer</button></div></div></form>';
-    echo ($up ? '' : '<p class="hint">Démarre l\'émulateur pour pouvoir envoyer une alerte.</p>') . '</div>';
+    echo '<p class="sub">L\'envoi d\'alertes en jeu a été déplacé vers la rubrique dédiée <b>Alertes &amp; annonces</b> (avec historique, modèles et annonces persistantes).</p>';
+    echo '<a class="qabtn" style="display:inline-flex;max-width:280px" href="?p=alerts&sec=send">📢 <span>Ouvrir Alertes &amp; annonces</span></a>';
+    echo '</div>';
 
     // Fond de connexion / décor du client
     $curBg = current_entry_bg();
@@ -4748,6 +4806,17 @@ function rcon_send(string $header, array $params = []): bool {
     fclose($c);
     return true;
 }
+/* ---- Historique des diffusions (alertes & annonces) ---- */
+function ensure_alert_log(): void {
+    static $d = false; if ($d) return; $d = true;
+    try { db()->exec("CREATE TABLE IF NOT EXISTS alert_log (id INT AUTO_INCREMENT PRIMARY KEY, author VARCHAR(64) NOT NULL DEFAULT '', channel VARCHAR(40) NOT NULL DEFAULT '', target VARCHAR(160) NOT NULL DEFAULT '', content TEXT NOT NULL, result VARCHAR(160) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); } catch (Throwable $e) {}
+}
+function alert_log_add(string $channel, string $target, string $content, string $result): void {
+    ensure_alert_log();
+    try { db()->prepare('INSERT INTO alert_log (author,channel,target,content,result) VALUES (?,?,?,?,?)')
+        ->execute([(string)($_SESSION['admin']['username'] ?? '?'), mb_substr($channel, 0, 40), mb_substr($target, 0, 160), mb_substr($content, 0, 4000), mb_substr($result, 0, 160)]); } catch (Throwable $e) {}
+}
+
 /* ---- Sauvegarde base ---- */
 function backup_dir(): string { $d = __DIR__ . '/../../../_backups'; if (!is_dir($d)) @mkdir($d, 0777, true); return $d; }
 function backup_list(): array {
@@ -4825,7 +4894,7 @@ function page_access(): void {
     echo '<p class="hint" style="font-size:13px">Rang minimum requis pour chaque onglet. <b>5</b> = Super Hobba · <b>6</b> = Modérateur · <b>7</b> = Administrateur. « Accueil » et « Recherche » restent toujours accessibles. Page réservée au rang 7.</p>';
     echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="tabperm_update">';
     $nav = admin_nav();
-    $gicons = ['Site & contenus' => '🌐', 'Joueurs' => '👥', 'Modération & assistance' => '🛡️', 'Hôtel & appartements' => '🏨', 'Catalogue & économie' => '🛋️', 'Animations' => '🎉', 'Technique' => '⚙️'];
+    $gicons = ['Site & contenus' => '🌐', 'Joueurs' => '👥', 'Alertes & annonces' => '📢', 'Modération & assistance' => '🛡️', 'Hôtel & appartements' => '🏨', 'Catalogue & économie' => '🛋️', 'Animations' => '🎉', 'Technique' => '⚙️'];
     foreach (nav_groups() as $gl => $keys) {
         if ($gl === '') continue;
         echo '<div class="panel"><div class="ph"><h3>' . ($gicons[$gl] ?? '📁') . ' ' . h($gl) . '</h3></div><table class="clean"><tr><th>Onglet</th><th style="width:280px">Rang minimum</th></tr>';
@@ -5207,7 +5276,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
 .logbox{max-height:230px;overflow:auto;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;font:12px/1.5 var(--mono);color:var(--mut);white-space:pre-wrap;word-break:break-word;margin:0}
 </style></head><body>
 <aside class="side"><div class="brand"><img src="/c_images/WebLogos/habbo_logo_nourl.gif" alt="Habbo" style="width:100%;max-width:180px;height:auto;display:block;margin:0 auto 4px;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;image-rendering:pixelated"><small>ADMINISTRATION</small></div><nav><?php
-    $gicons = ['Site & contenus' => '🌐', 'Joueurs' => '👥', 'Modération & assistance' => '🛡️', 'Hôtel & appartements' => '🏨', 'Catalogue & économie' => '🛋️', 'Animations' => '🎉', 'Technique' => '⚙️'];
+    $gicons = ['Site & contenus' => '🌐', 'Joueurs' => '👥', 'Alertes & annonces' => '📢', 'Modération & assistance' => '🛡️', 'Hôtel & appartements' => '🏨', 'Catalogue & économie' => '🛋️', 'Animations' => '🎉', 'Technique' => '⚙️'];
     foreach (nav_groups() as $grpLabel => $keys) {
         $visible = array_filter($keys, fn($k) => isset($nav[$k]) && tab_allowed($k));
         if (!$visible) continue;
@@ -5235,6 +5304,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
   <button type="button" class="sbtoggle" onclick="toggleSidebar()" title="Replier / déplier le menu" aria-label="Replier le menu">☰</button>
   <div class="tb-crumb"><?php if ($secLabel !== '') echo '<span class="tb-sec">' . h($secLabel) . '</span><span class="tb-sep">›</span>'; ?><b><?= h($pageLabel) ?></b></div>
   <form class="tb-search" method="get" action="?"><input type="hidden" name="p" value="search"><input name="q" placeholder="Rechercher un joueur, un mobi, une salle…" value="<?= $sq ?>"><button type="submit" title="Rechercher">🔍</button></form>
+  <?php if (tab_allowed('alerts')) { ?><a class="tb-status" href="?p=alerts&sec=cfh" title="Alertes &amp; annonces — appels à l'aide du jeu (réception non raccordée pour l'instant)" style="margin-right:10px">📢 Alertes</a><?php } ?>
   <a class="tb-status <?= $emuUp ? 'up' : 'down' ?>" href="?p=server" title="État de l'émulateur — ouvrir la page Serveur"><span class="dot"></span><?= $emuUp ? 'En marche' : 'Arrêté' ?></a>
 </header><div class="content"><?php
     // Plus de barre d'onglets horizontale pour le groupe courant : ses onglets sont
