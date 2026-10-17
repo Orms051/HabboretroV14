@@ -77,13 +77,10 @@ function ensure_user_msgs(): void {
 }
 function unread_msgs(int $uid): int {
     if ($uid <= 0) return 0;
-    $n = 0;
-    // Nouveau système : conversations non lues côté joueur.
-    if (function_exists('conv_unread_player')) { try { $n += conv_unread_player($uid); } catch (Throwable $e) {} }
-    // Ancien système conservé (messages non repris / staff ayant utilisé l'ancien envoi).
-    try { ensure_user_msgs(); $st = db()->prepare('SELECT COUNT(*) FROM user_messages WHERE user_id=? AND read_at IS NULL'); $st->execute([$uid]); $n += (int)$st->fetchColumn(); }
-    catch (Throwable $e) {}
-    return $n;
+    // Seules les conversations comptent désormais ; les anciens user_messages ne sont
+    // plus affichés ni comptés (on ne veut plus voir les anciens messages de l'équipe).
+    if (function_exists('conv_unread_player')) { try { return conv_unread_player($uid); } catch (Throwable $e) {} }
+    return 0;
 }
 
 /* Pseudo d'avatar en attendant l'imager V14 fidèle (placeholder stylisé — voir chantier avatar). */

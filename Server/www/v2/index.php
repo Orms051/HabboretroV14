@@ -746,22 +746,10 @@ if ($p === 'messages') {
        . '<p class="muted" style="font-size:10px;margin:0 0 6px">ℹ️ Même en choisissant un membre précis, d\'autres membres autorisés de l\'équipe peuvent consulter la conversation pour t\'aider. Échanges joueur ↔ équipe uniquement.</p>'
        . '<button class="new-button" type="submit"><b>Envoyer ma demande</b><i></i></button></form>';
     box_close();
-
-    /* === Archive : anciens messages de l'équipe (lecture seule, accès préservé) === */
-    $old = []; try { $ol = db()->prepare('SELECT from_staff,subject,body,read_at,created_at FROM user_messages WHERE user_id=? ORDER BY id DESC'); $ol->execute([$uid]); $old = $ol->fetchAll(); } catch (Throwable $e) {}
-    if ($old) {
-        box_open('🗂 Anciens messages de l\'équipe', 'p');
-        echo '<p class="muted" style="margin-bottom:6px">Tes anciens messages, conservés ici pour consultation.</p>';
-        foreach ($old as $m) {
-            echo '<div style="border:1px solid #d9d2b8;border-radius:4px;padding:8px;margin-bottom:6px;background:#fff">'
-               . '<div style="font-size:10px;color:#8a97a3;margin-bottom:3px"><b style="color:#5b5b5b">👤 ' . h((string)($m['from_staff'] ?: 'Équipe')) . '</b> · ' . h(date('d/m/Y H:i', strtotime((string)$m['created_at']))) . '</div>'
-               . (trim((string)$m['subject']) !== '' ? '<div style="font-weight:bold;font-size:12px;margin-bottom:2px;color:#30384a">' . h((string)$m['subject']) . '</div>' : '')
-               . '<div style="font-size:11px;color:#5b5b5b">' . nl2br(h((string)$m['body'])) . '</div></div>';
-        }
-        box_close();
-        // Comportement d'origine : ouvrir la page marque les anciens messages comme lus.
-        try { db()->prepare('UPDATE user_messages SET read_at=NOW() WHERE user_id=? AND read_at IS NULL')->execute([$uid]); } catch (Throwable $e) {}
-    }
+    // Les anciens messages de l'équipe (table user_messages) ne sont plus affichés
+    // ici : tout passe désormais par les conversations. On marque les éventuels
+    // anciens messages comme lus pour qu'aucune pastille fantôme ne subsiste.
+    try { db()->prepare('UPDATE user_messages SET read_at=NOW() WHERE user_id=? AND read_at IS NULL')->execute([$uid]); } catch (Throwable $e) {}
     render_foot(); exit;
 }
 
