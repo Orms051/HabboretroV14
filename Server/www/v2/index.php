@@ -734,10 +734,11 @@ if ($p === 'messages') {
     } catch (Throwable $e) {}
     $lbl = 'font-size:10px;color:#5b5b5b;display:block;margin-bottom:2px;font-weight:bold';
     $inp = 'width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px';
+    $preTo = trim((string)($_GET['to'] ?? '')); // staff pré-sélectionné (depuis la page Équipe)
     $formHtml = '<form method="post" action="?p=conv_new" onsubmit="var b=this.querySelector(\'button[type=submit]\');if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return true;"><input type="hidden" name="csrf" value="' . h(csrf()) . '">'
        . '<div style="margin-bottom:6px"><label style="' . $lbl . '">Destinataire</label>'
-       . '<select name="to_staff" style="' . $inp . '"><option value="">👥 Équipe d\'assistance (recommandé)</option>';
-    foreach ($contactables as $nm) $formHtml .= '<option value="' . h($nm) . '">👮 ' . h($nm) . '</option>';
+       . '<select name="to_staff" style="' . $inp . '"><option value=""' . ($preTo === '' ? ' selected' : '') . '>👥 Équipe d\'assistance (recommandé)</option>';
+    foreach ($contactables as $nm) $formHtml .= '<option value="' . h($nm) . '"' . (strcasecmp($nm, $preTo) === 0 ? ' selected' : '') . '>👮 ' . h($nm) . '</option>';
     $formHtml .= '</select></div>'
        . '<div style="margin-bottom:6px"><label style="' . $lbl . '">Motif</label>'
        . '<select name="category" style="' . $inp . '"><option value="question">Question</option><option value="bug">Bug / problème technique</option><option value="signalement">Signalement</option><option value="compte">Mon compte</option></select></div>'
@@ -751,7 +752,8 @@ if ($p === 'messages') {
     box_open('✉ Contacter l\'équipe', 'g');
     if ($hasConvs) {
         // Des conversations existent : bouton « Nouveau message » qui déplie le formulaire (focus auto).
-        echo '<details id="nmd" ontoggle="if(this.open){var f=this.querySelector(\'select,input,textarea\');if(f)f.focus();}">'
+        // Ouvert d'office si on arrive avec un destinataire pré-sélectionné (?to=).
+        echo '<details id="nmd"' . ($preTo !== '' ? ' open' : '') . ' ontoggle="if(this.open){var f=this.querySelector(\'select,input,textarea\');if(f)f.focus();}">'
            . '<summary class="new-button" style="list-style:none;cursor:pointer;display:inline-block"><b>✉ Nouveau message</b><i></i></summary>'
            . '<div style="margin-top:10px">' . $formHtml . '</div></details>';
     } else {
@@ -839,7 +841,7 @@ if ($p === 'community') {
     echo '</div><div class="sidecol">';
     box_open('L\'équipe', 'p');
     if (!$staff) echo '<p class="muted">Aucun membre du staff.</p>';
-    else { echo '<div style="display:flex;flex-wrap:wrap">'; foreach ($staff as $s) echo '<a href="?p=home/' . h(rawurlencode((string)$s['username'])) . '" title="' . h((string)$s['username']) . '" style="width:56px;text-align:center;margin:0 4px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:44px;height:44px;background:#f3eecf;border:1px solid #d8cfa6;margin:0 auto 2px;overflow:hidden">' . avatar_tag((string)$s['username'], ['head' => true]) . '</span>' . h(mb_strimwidth((string)$s['username'], 0, 8, '…')) . '</a>'; echo '</div>'; }
+    else { echo '<div style="display:flex;flex-wrap:wrap">'; foreach ($staff as $s) echo '<a href="?p=home/' . h(rawurlencode((string)$s['username'])) . '" title="' . h((string)$s['username']) . '" style="width:56px;text-align:center;margin:0 4px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:44px;height:44px;background:#f3eecf;border:1px solid #d8cfa6;margin:0 auto 2px;overflow:hidden">' . avatar_tag((string)$s['username'], ['head' => true]) . '</span>' . h(mb_strimwidth((string)$s['username'], 0, 8, '…')) . '</a>'; echo '</div>'; echo '<div style="margin-top:4px"><a href="?p=team" style="font-size:10px;color:#2f6f9f">👥 Voir toute l\'équipe & contacter »</a></div>'; }
     box_close();
     box_open('Habbo Homes', 'p');
     echo '<p class="muted" style="margin-bottom:7px">Découvre les pages perso des Habbos !</p><div style="display:flex;flex-wrap:wrap">';
@@ -880,10 +882,51 @@ if ($p === 'help') {
     echo '<p class="muted" style="margin-bottom:8px">Contacte l\'équipe ou récupère l\'accès à ton compte :</p>';
     echo '<div style="display:flex;gap:8px;flex-wrap:wrap">'
        . '<a class="new-button" href="?p=messages"><b>✉ Contacter l\'équipe</b><i></i></a>'
-       . '<a class="new-button" href="?p=forgot"><b>🔑 Mot de passe oublié</b><i></i></a></div>';
+       . '<a class="new-button" href="?p=forgot"><b>🔑 Mot de passe oublié</b><i></i></a>'
+       . '<a class="new-button" href="?p=team"><b>👥 L\'équipe</b><i></i></a></div>';
     box_close();
     box_open('Centre d\'aide', 'b');
     foreach ($faq as $qa) echo '<div style="border-bottom:1px dotted #ddd6c2;padding:7px 0"><b style="color:#2f6f9f">' . h($qa[0]) . '</b><div class="muted" style="margin-top:2px">' . h($qa[1]) . '</div></div>';
+    box_close();
+    render_foot(); exit;
+}
+
+/* ---- Page Équipe : staff par rôle, avatars, accès au contact ---- */
+if ($p === 'team') {
+    render_head('community', null, [['Accueil', '?p=home'], ['Communauté', '?p=community'], ['L\'équipe', null]]);
+    $roles = [7 => '👑 Administrateurs', 6 => '🛡️ Modérateurs', 5 => '⭐ Super Hobbas'];
+    $staff = []; try { $staff = db()->query('SELECT username,sex,motto,`rank`,last_online FROM users WHERE `rank`>=5 ORDER BY `rank` DESC, username')->fetchAll(); } catch (Throwable $e) {}
+    // Staff joignable directement (réglage conv.contactables, sinon tout le staff)
+    $contactables = null;
+    $cset = trim(setting_get('conv.contactables', ''));
+    if ($cset !== '') { $contactables = []; foreach (preg_split('/[\s,;]+/', $cset, -1, PREG_SPLIT_NO_EMPTY) as $nm) $contactables[mb_strtolower($nm)] = true; }
+
+    box_open('👥 L\'équipe de l\'hôtel', 'b');
+    echo '<p class="muted" style="margin-bottom:10px">Voici les membres de l\'équipe. Besoin d\'aide ? Tu peux <a href="?p=messages">contacter l\'équipe d\'assistance</a> ou un membre précis ci-dessous.</p>';
+    if (!$staff) echo '<p class="muted">Aucun membre du staff pour le moment.</p>';
+    else {
+        $now = time();
+        foreach ($roles as $rk => $label) {
+            $members = array_values(array_filter($staff, fn($s) => (int)$s['rank'] === $rk));
+            if (!$members) continue;
+            echo '<div style="font-weight:bold;color:#30384a;font-size:13px;margin:12px 0 6px;border-bottom:2px solid #d9d2b8;padding-bottom:2px">' . h($label) . ' <span class="muted" style="font-weight:normal">(' . count($members) . ')</span></div>';
+            echo '<div style="display:flex;flex-wrap:wrap;gap:8px">';
+            foreach ($members as $s) {
+                $un = (string)$s['username'];
+                $online = (int)$s['last_online'] > ($now - 300);
+                $joignable = ($contactables === null) || isset($contactables[mb_strtolower($un)]);
+                echo '<div style="width:150px;border:1px solid #d9d2b8;border-radius:5px;padding:8px;text-align:center;background:#fff">'
+                   . '<span style="display:block;width:50px;height:60px;margin:0 auto 4px;overflow:hidden">' . avatar_tag($un, ['size' => 'b', 'head' => false]) . '</span>'
+                   . '<div style="font-size:12px;font-weight:bold;color:#30384a">' . h($un) . ($online ? ' <span style="color:#2bbf5b;font-size:9px">●&nbsp;en&nbsp;ligne</span>' : '') . '</div>'
+                   . (trim((string)$s['motto']) !== '' ? '<div class="muted" style="font-size:10px;margin:2px 0">' . h((string)$s['motto']) . '</div>' : '')
+                   . '<div style="margin-top:5px;display:flex;flex-direction:column;gap:3px">'
+                   . '<a href="?p=home/' . h(rawurlencode($un)) . '" style="font-size:10px;color:#2f6f9f">🏠 Sa Home</a>'
+                   . ($joignable ? '<a class="new-button" href="?p=messages&to=' . h(rawurlencode($un)) . '"><b>✉ Contacter</b><i></i></a>' : '<span class="muted" style="font-size:9px">Via l\'assistance</span>')
+                   . '</div></div>';
+            }
+            echo '</div>';
+        }
+    }
     box_close();
     render_foot(); exit;
 }
