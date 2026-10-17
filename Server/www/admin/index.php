@@ -1034,6 +1034,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'bus_type':
                 $tc = in_array($_POST['trigger_class'] ?? '', ['infobus_park', 'infobus_poll'], true) ? $_POST['trigger_class'] : 'infobus_park';
                 db()->prepare('UPDATE rooms_models SET trigger_class=? WHERE id=?')->execute([$tc, (int)$_POST['id']]); $msg = '🚌 Type du bus changé (' . ($tc === 'infobus_poll' ? 'Sondage/Vote' : 'Info/FRANK') . '). Redémarre l\'émulateur.'; break;
+            case 'bus_skin': {
+                // Change le skin de l'Infobus = pointe la salle du bus vers un modèle dont le
+                // client possède le cast (hh_room_<skin>.cct). Clone la géométrie du modèle
+                // courant si le modèle cible n'existe pas encore côté serveur.
+                $skin = preg_replace('/[^a-z0-9_]/', '', strtolower((string)($_POST['skin'] ?? '')));
+                if ($skin === '' || !is_file(DCR_DIR . '/hh_room_' . $skin . '.cct')) { $ok = false; $msg = '❌ Skin inconnu (cast absent du client).'; break; }
+                $br = db()->query("SELECT r.id,r.model FROM rooms r JOIN rooms_models m ON m.model_id=r.model WHERE m.trigger_class IN ('infobus_park','infobus_poll') AND r.owner_id='0' ORDER BY r.id LIMIT 1")->fetch();
+                if (!$br) { $ok = false; $msg = '❌ Salle du bus introuvable.'; break; }
+                $curModel = (string)$br['model'];
+                if ($skin === $curModel) { $msg = 'ℹ️ C\'est déjà le skin actuel.'; break; }
+                $cm = db()->prepare('SELECT * FROM rooms_models WHERE model_id=?'); $cm->execute([$curModel]); $cmRow = $cm->fetch();
+                if (!$cmRow) { $ok = false; $msg = '❌ Modèle courant du bus introuvable.'; break; }
+                $trig = (string)$cmRow['trigger_class'];
+                $ex = db()->prepare('SELECT id FROM rooms_models WHERE model_id=?'); $ex->execute([$skin]); $exists = (bool)$ex->fetchColumn();
+                if ($exists) {
+                    $uc = db()->prepare('SELECT COUNT(*) FROM rooms WHERE model=? AND id<>?'); $uc->execute([$skin, (int)$br['id']]);
+                    if ((int)$uc->fetchColumn() > 0) { $ok = false; $msg = '🔒 Ce modèle est déjà utilisé par d\'autres salles : bascule risquée, choisis un autre skin.'; break; }
+                    db()->prepare('UPDATE rooms_models SET trigger_class=? WHERE model_id=?')->execute([$trig, $skin]);
+                } else {
+                    // Clone toutes les colonnes du modèle courant sous le nouveau model_id
+                    $cols = $cmRow; unset($cols['id']); $cols['model_id'] = $skin; $cols['model_name'] = 'Infobus - ' . $skin; $cols['trigger_class'] = $trig;
+                    $names = array_keys($cols);
+                    db()->prepare('INSERT INTO rooms_models (`' . implode('`,`', $names) . '`) VALUES (' . implode(',', array_fill(0, count($names), '?')) . ')')->execute(array_values($cols));
+                }
+                db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute(['bus.prev_model', $curModel]);
+                db()->prepare('UPDATE rooms SET model=? WHERE id=?')->execute([$skin, (int)$br['id']]);
+                admin_log('bus_skin', $curModel . ' → ' . $skin);
+                $msg = '🚌 Skin du bus changé (' . $skin . '). Redémarre l\'émulateur pour l\'appliquer en jeu.'; break;
+            }
             case 'srv_start':
                 if (emu_running()) { $msg = 'ℹ️ L\'émulateur tourne déjà.'; break; }
                 srv_start(); $msg = '▶️ Démarrage de l\'émulateur… patiente ~10 s puis actualise.'; break;
@@ -2746,7 +2775,7 @@ function action_tab(string $a): string {
         'furni_convert' => 'convert', 'furni_decompile' => 'convert',
         // Communauté / modération
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
-        'ban_add' => 'moderation', 'ban_remove' => 'moderation', 'bus_type' => 'bus',
+        'ban_add' => 'moderation', 'ban_remove' => 'moderation', 'bus_type' => 'bus', 'bus_skin' => 'bus',
         'cmd_fav_toggle' => 'commandes',
         'pwreset_do' => 'messages', 'pwreset_reject' => 'messages',
         'cmsg_handle' => 'messages', 'cmsg_delete' => 'messages', 'umsg_send' => 'users',
@@ -4329,6 +4358,35 @@ function page_bus(): void {
         }
         echo '</table></div>';
     }
+
+    // ===== Skin de l'Infobus =====
+    // Modèle courant de la salle du bus + skins disponibles (casts présents dans le client)
+    $busModelNow = db()->query("SELECT r.model FROM rooms r JOIN rooms_models m ON m.model_id=r.model WHERE m.trigger_class IN ('infobus_park','infobus_poll') AND r.owner_id='0' ORDER BY r.id LIMIT 1")->fetchColumn();
+    $labels = ['park' => 'Classique (park)', 'park_general' => 'Général', 'gate_park' => 'Entrée (gate park)', 'park_fr' => 'France', 'park_uk' => 'Royaume-Uni', 'park_us' => 'États-Unis', 'park_de' => 'Allemagne', 'park_es' => 'Espagne', 'park_it' => 'Italie', 'park_se' => 'Suède', 'park_no' => 'Norvège', 'park_fi' => 'Finlande', 'park_ch' => 'Suisse', 'park_ca' => 'Canada', 'park_ca_old' => 'Canada (ancien)', 'park_ca_crap' => 'Canada (alt)'];
+    $skins = [];
+    foreach (glob(DCR_DIR . '/hh_room_park*.cct') ?: [] as $f) { $id = preg_replace('/^hh_room_|\.cct$/', '', basename($f)); if ($id !== '') $skins[$id] = $labels[$id] ?? $id; }
+    if (is_file(DCR_DIR . '/hh_room_gate_park.cct')) $skins['gate_park'] = $labels['gate_park'];
+    ksort($skins);
+    echo '<div class="panel"><div class="ph"><h3>🎨 Skin de l\'Infobus</h3>' . ($busModelNow !== false ? '<span class="rk" style="margin-left:auto">actuel : ' . h((string)$busModelNow) . '</span>' : '') . '</div>';
+    if ($busModelNow === false) echo '<div class="empty">Salle du bus introuvable (aucune salle publique sur un modèle infobus).</div>';
+    elseif (!$skins) echo '<div class="empty">Aucun skin de park trouvé dans le client (<code>dcr/14.1_b8/hh_room_park*.cct</code>).</div>';
+    else {
+        echo '<p class="hint" style="font-size:13px">Change l\'apparence du bus : chaque skin correspond à un décor <b>déjà présent dans le client</b> (casts <code>hh_room_park*</code>). La géométrie du bus est conservée (même plan/porte) et le type (Info/Sondage) est préservé. Après changement : <b>redémarre l\'émulateur</b> puis vide le cache du client. ⚠️ Non testé automatiquement — valide en jeu.</p>';
+        echo '<div style="display:flex;flex-wrap:wrap;gap:8px">';
+        foreach ($skins as $id => $lbl) {
+            $cur = ($id === (string)$busModelNow);
+            echo '<form method="post" class="js" data-reload data-confirm="Changer le skin du bus pour « ' . h($lbl) . ' » ? (redémarrage de l\'émulateur nécessaire)" style="margin:0">' . csrf_field()
+               . '<input type="hidden" name="action" value="bus_skin"><input type="hidden" name="skin" value="' . h($id) . '">'
+               . '<button class="mini' . ($cur ? '' : ' ghost') . '"' . ($cur ? ' disabled title="Skin actuel"' : '') . '>' . ($cur ? '✅ ' : '🎨 ') . h($lbl) . '<br><span class="sm muted">' . h($id) . '</span></button></form>';
+        }
+        echo '</div>';
+        $prev = (string)site_setting_get('bus.prev_model', '');
+        if ($prev !== '' && $prev !== (string)$busModelNow) {
+            echo '<form method="post" class="js" data-reload style="margin-top:10px">' . csrf_field() . '<input type="hidden" name="action" value="bus_skin"><input type="hidden" name="skin" value="' . h($prev) . '"><button class="mini ghost">↩︎ Revenir au skin précédent (' . h($prev) . ')</button></form>';
+        }
+        echo '<p class="muted sm" style="margin-top:8px">ℹ️ Si un skin n\'existe pas encore comme modèle serveur, il est créé automatiquement en clonant la géométrie du bus actuel. Un skin déjà utilisé par d\'autres salles est refusé (bascule risquée).</p>';
+    }
+    echo '</div>';
 }
 
 /* ===== Manuel des commandes en jeu =========================================
