@@ -1313,7 +1313,7 @@ function ensure_home_admin(): void {
     try { if (!col_exists('home_pages', 'hidden_until')) db()->exec("ALTER TABLE home_pages ADD COLUMN hidden_until DATETIME NULL, ADD COLUMN locked_until DATETIME NULL"); } catch (Throwable $e) {}
 }
 function sitemgr_sections(): array {
-    return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'apparence' => ['🎨', 'Apparence'], 'ressources' => ['🏠', 'Ressources Homes'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
+    return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'linkcheck' => ['🔗', 'Liens & contrôle'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'apparence' => ['🎨', 'Apparence'], 'ressources' => ['🏠', 'Ressources Homes'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
 }
 function sitemgr_style(): void {
     static $done = false; if ($done) return; $done = true;
@@ -1674,6 +1674,7 @@ function page_sitemgr(): void {
     switch ($sec) {
         case 'allcontent': sitemgr_allcontent(); break;
         case 'pagesnav': sitemgr_pagesnav(); break;
+        case 'linkcheck': sitemgr_linkcheck(); break;
         case 'news': sitemgr_news(); break;
         case 'carousel': sitemgr_carousel(); break;
         case 'accueil': case 'blocs': sitemgr_accueil(); break;
@@ -1685,6 +1686,100 @@ function page_sitemgr(): void {
         case 'history': sitemgr_history(); break;
         default: sitemgr_overview(); break;
     }
+    echo '</div>';
+}
+
+/* Routes internes connues du site v2 (pour détecter les liens ?p= cassés). */
+function site_known_routes(): array {
+    $base = ['home', 'news', 'events', 'community', 'help', 'forgot', 'messages', 'me', 'club', 'credits', 'shop', 'mobile', 'register', 'actu', 'logout', 'contact',
+        'home_report', 'home_sign', 'home_addfriend', 'home_save', 'conv_new', 'conv_reply', 'conv_move', 'conv_msg_hide'];
+    $subref = ['staff', 'mods', 'furniture', 'ecotron', 'pets', 'home_info', 'clans', 'new', 'fansite', 'apparts', 'anepasmanquer', 'homefriends', 'invite', 'filsante',
+        'tchatvip', 'bobbaweek', 'habboscope', 'rodeau', 'plongeoir', 'gamesweek', 'minicartes', 'tshirt', 'sonneries', 'fondecran', 'imager',
+        'coinsfr', 'coinsbe', 'coinsch', 'coinsca', 'coinsother', 'creditshelp', 'hcjoin', 'hcshop', 'faqs', 'parents_guide', 'habbo_way', 'email', 'habbo_x'];
+    $slugs = [];
+    try { foreach (db()->query('SELECT slug FROM site_pages') as $r) $slugs[] = (string)$r['slug']; } catch (Throwable $e) {}
+    return array_values(array_unique(array_merge($base, $subref, $slugs)));
+}
+
+/* Analyse un href et renvoie [statut, détail] : 'ok' | 'empty' | 'broken' | 'external' | 'check'. */
+function link_classify(string $href, array $known): array {
+    $u = trim($href);
+    if ($u === '' || $u === '#' || stripos($u, 'javascript:') === 0) return ['empty', 'bouton sans destination'];
+    if (stripos($u, 'mailto:') === 0 || stripos($u, 'tel:') === 0) return ['external', $u];
+    if (preg_match('#^(https?:)?//#i', $u)) return ['external', $u];
+    // Lien interne : extraire le paramètre p
+    if (preg_match('/[?&]p=([^&"#\']+)/', $u, $m)) {
+        $p = urldecode($m[1]);
+        if (strpos($p, 'home/') === 0) return ['ok', $p];
+        if (in_array($p, $known, true)) return ['ok', $p];
+        return ['broken', 'route inconnue : p=' . $p];
+    }
+    // Fichiers/chemins connus (client, ancres, racine)
+    if ($u === '/' || $u === '?' || strpos($u, '#') === 0) return ['ok', $u];
+    if (preg_match('#\.(php|html?|gif|png|jpe?g|swf|dcr|cct|ico)(\?|$)#i', $u)) return ['ok', $u];
+    return ['check', $u];
+}
+
+function sitemgr_linkcheck(): void {
+    echo '<p class="sm-crumb">Gestion du Site › <b>Liens &amp; contrôle</b></p>';
+    $known = site_known_routes();
+    $broken = []; $empty = []; $incomplete = []; $ext = []; $check = [];
+
+    // Extrait tous les href d'un contenu HTML et les classe, en les rattachant à une source.
+    $scan = function (string $html, string $src) use ($known, &$broken, &$empty, &$ext, &$check) {
+        if (preg_match_all('/href\s*=\s*"([^"]*)"/i', $html, $mm)) {
+            foreach ($mm[1] as $href) {
+                [$st, $d] = link_classify($href, $known);
+                $row = ['src' => $src, 'href' => $href, 'detail' => $d];
+                if ($st === 'broken') $broken[] = $row;
+                elseif ($st === 'empty') $empty[] = $row;
+                elseif ($st === 'external') $ext[] = $row;
+                elseif ($st === 'check') $check[] = $row;
+            }
+        }
+    };
+
+    // 1) Pages du site (contenu + complétude)
+    try {
+        foreach (db()->query('SELECT slug,title,body_html,missing_note FROM site_pages ORDER BY slug') as $pg) {
+            $body = (string)($pg['body_html'] ?? '');
+            if (trim(strip_tags($body)) === '') $incomplete[] = ['src' => 'Page « ' . $pg['slug'] . ' »', 'detail' => trim((string)($pg['missing_note'] ?? '')) !== '' ? 'corps vide — note : ' . mb_strimwidth((string)$pg['missing_note'], 0, 80, '…') : 'corps vide (contenu à reproduire)'];
+            else $scan($body, 'Page « ' . $pg['slug'] . ' »');
+        }
+    } catch (Throwable $e) {}
+
+    // 2) Actualités
+    try { foreach (db()->query('SELECT id,title,body FROM site_news ORDER BY id DESC LIMIT 200') as $n) $scan((string)$n['body'], 'Actu #' . $n['id'] . ' « ' . mb_strimwidth((string)$n['title'], 0, 30, '…') . ' »'); } catch (Throwable $e) {}
+
+    // 3) Carrousel (image + lien des slides actives)
+    try {
+        foreach (db()->query('SELECT page,slot,title,image,link,active FROM site_carousel') as $c) {
+            if (!(int)$c['active']) continue;
+            $src = 'Carrousel ' . $c['page'] . ' #' . $c['slot'];
+            if (trim((string)$c['image']) === '') $incomplete[] = ['src' => $src, 'detail' => 'slide active sans image'];
+            if (trim((string)$c['link']) !== '') { [$st, $d] = link_classify((string)$c['link'], $known); if ($st === 'broken') $broken[] = ['src' => $src, 'href' => (string)$c['link'], 'detail' => $d]; }
+        }
+    } catch (Throwable $e) {}
+
+    $tot = count($broken) + count($empty) + count($incomplete);
+    echo '<div class="panel"><div class="ph"><h3>🔗 Contrôle des liens & contenus</h3><span class="' . ($tot ? 'rk red' : 'rk') . '" style="margin-left:auto">' . ($tot ? $tot . ' à corriger' : 'aucun problème 🎉') . '</span></div>';
+    echo '<p class="muted sm" style="margin:-2px 0 10px">Analyse des contenus gérés (pages, actualités, carrousel) : liens internes cassés, boutons sans destination et contenus incomplets. Les liens externes et les cibles à vérifier sont listés à titre indicatif.</p>';
+
+    $tbl = function (string $title, array $rows, string $kind) {
+        echo '<h4 style="margin:12px 0 6px">' . $title . ' <span class="muted">(' . count($rows) . ')</span></h4>';
+        if (!$rows) { echo '<div class="empty" style="padding:8px">Rien à signaler.</div>'; return; }
+        echo '<table class="clean"><tr><th>Source</th>' . ($kind === 'incomplete' ? '' : '<th>Lien</th>') . '<th>Détail</th></tr>';
+        foreach ($rows as $r) echo '<tr><td class="sm">' . h((string)$r['src']) . '</td>' . ($kind === 'incomplete' ? '' : '<td class="sm muted" style="word-break:break-all">' . h((string)($r['href'] ?? '')) . '</td>') . '<td class="sm">' . h((string)$r['detail']) . '</td></tr>';
+        echo '</table>';
+    };
+    $tbl('❌ Liens internes cassés', $broken, 'broken');
+    $tbl('🔘 Boutons sans destination', $empty, 'empty');
+    $tbl('⚠️ Contenus incomplets', $incomplete, 'incomplete');
+    echo '<details style="margin-top:12px"><summary class="mini">🌐 Liens externes (' . count($ext) . ') & à vérifier (' . count($check) . ')</summary>';
+    $tbl('🌐 Liens externes (non vérifiés automatiquement)', $ext, 'broken');
+    $tbl('❓ Liens à vérifier (forme inhabituelle)', $check, 'broken');
+    echo '</details>';
+    echo '<p class="muted sm" style="margin-top:10px">ℹ️ Contrôle <b>statique</b> des contenus gérés dans l\'admin. Il ne teste pas encore les liens ouverts depuis le client (external_texts) ni l\'état HTTP réel des cibles externes — prévus dans un lot ultérieur.</p>';
     echo '</div>';
 }
 function sp_tablabel(string $k): string {
