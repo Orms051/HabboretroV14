@@ -1835,11 +1835,22 @@ function sitemgr_linkcheck(): void {
         echo '<table class="clean"><tr><th>Route</th><th>Code</th><th>État</th></tr>';
         foreach ($routes as $rt) {
             $url = 'http://127.0.0.1/?p=' . $rt;
-            $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 3, 'ignore_errors' => true, 'header' => "User-Agent: linkcheck\r\n"]]);
             $code = 0; $err = '';
-            $resp = @file_get_contents($url, false, $ctx);
-            if ($resp === false) { $err = 'injoignable'; }
-            elseif (isset($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $m)) { $code = (int)$m[1]; }
+            if (function_exists('curl_init')) {
+                // cURL : évite la variable magique $http_response_header (dépréciée en PHP 8.4)
+                $ch = curl_init($url);
+                curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 3, CURLOPT_CONNECTTIMEOUT => 2, CURLOPT_FOLLOWLOCATION => false, CURLOPT_USERAGENT => 'linkcheck']);
+                $resp = curl_exec($ch);
+                $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+                if ($resp === false && $code === 0) $err = 'injoignable';
+                curl_close($ch);
+            } else {
+                $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 3, 'ignore_errors' => true, 'header' => "User-Agent: linkcheck\r\n"]]);
+                $resp = @file_get_contents($url, false, $ctx);
+                $hdrs = function_exists('http_get_last_response_headers') ? (http_get_last_response_headers() ?: []) : [];
+                if ($resp === false && !$hdrs) { $err = 'injoignable'; }
+                elseif (isset($hdrs[0]) && preg_match('/\s(\d{3})\s/', $hdrs[0], $m)) { $code = (int)$m[1]; }
+            }
             $okc = ($code >= 200 && $code < 400);
             echo '<tr><td class="sm">?p=' . h($rt) . '</td><td class="sm">' . ($code ?: '—') . '</td><td class="sm">' . ($err !== '' ? '🔴 ' . h($err) . ' (site démarré ?)' : ($okc ? '🟢 OK' : '🔴 erreur')) . '</td></tr>';
         }
