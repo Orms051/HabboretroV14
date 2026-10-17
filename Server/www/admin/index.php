@@ -455,14 +455,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = $on ? '🚫 Message masqué aux participants.' : '✅ Message rétabli.'; break;
             }
             case 'umsg_send':
-                ensure_user_msgs();
+                // Bascule vers le nouveau système : crée une conversation (staff -> joueur),
+                // lisible par le joueur dans « Mes messages ». (Les anciens user_messages ne
+                // sont plus affichés côté joueur.)
                 $toName = trim((string)($_POST['username'] ?? ''));
                 if ($toName !== '') { $rs = db()->prepare('SELECT id,username FROM users WHERE username=?'); $rs->execute([$toName]); if ($row = $rs->fetch()) { $uid = (int)$row['id']; $un = $row['username']; } else { $uid = 0; $un = false; } }
                 else { $uid = (int)($_POST['id'] ?? 0); $chk = db()->prepare('SELECT username FROM users WHERE id=?'); $chk->execute([$uid]); $un = $chk->fetchColumn(); }
                 if ($un === false) { $ok = false; $msg = '❌ Joueur introuvable' . ($toName !== '' ? ' : « ' . $toName . ' »' : '') . '.'; break; }
-                $body = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 2000);
+                $body = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 4000);
                 if ($body === '') { $ok = false; $msg = '❌ Message vide.'; break; }
-                db()->prepare('INSERT INTO user_messages (user_id,from_staff,subject,body) VALUES (?,?,?,?)')->execute([$uid, $_SESSION['admin']['username'] ?? 'Équipe', mb_substr(trim((string)($_POST['subject'] ?? '')), 0, 120), $body]);
+                $meU = (string)($_SESSION['admin']['username'] ?? 'Équipe');
+                $subj = mb_substr(trim((string)($_POST['subject'] ?? '')), 0, 150); if ($subj === '') $subj = 'Message de l\'équipe';
+                if (function_exists('conv_create')) { $ncid = conv_create($uid, $subj, 'staff', 'staff', $meU, $body); if ($ncid) conv_event_log($ncid, $meU, 'create', 'message depuis la fiche joueur'); }
+                else { ensure_user_msgs(); db()->prepare('INSERT INTO user_messages (user_id,from_staff,subject,body) VALUES (?,?,?,?)')->execute([$uid, $meU, $subj, $body]); }
                 $msg = '✉️ Message envoyé à ' . $un . '.'; break;
             case 'smsg_post':
                 ensure_staff_msgs();
