@@ -8,6 +8,16 @@
  * Utilise db() (défini dans chaque contexte : v2/inc/boot.php et admin/index.php).
  */
 
+/** Ajoute une colonne si absente (portable MySQL 8 / MariaDB, sans IF NOT EXISTS). */
+function conv_ensure_col(string $table, string $col, string $ddl): void
+{
+    try {
+        $st = db()->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?');
+        $st->execute([$table, $col]);
+        if ((int)$st->fetchColumn() === 0) db()->exec("ALTER TABLE `$table` ADD COLUMN `$col` $ddl");
+    } catch (Throwable $e) {}
+}
+
 function ensure_conversations(): void
 {
     static $done = false;
@@ -23,6 +33,9 @@ function ensure_conversations(): void
             assigned_to VARCHAR(64) NOT NULL DEFAULT '',
             player_archived TINYINT NOT NULL DEFAULT 0,
             player_trashed TINYINT NOT NULL DEFAULT 0,
+            player_deleted TINYINT NOT NULL DEFAULT 0,
+            staff_archived TINYINT NOT NULL DEFAULT 0,
+            staff_trashed TINYINT NOT NULL DEFAULT 0,
             legacy_ref VARCHAR(24) NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -37,10 +50,48 @@ function ensure_conversations(): void
             is_internal TINYINT NOT NULL DEFAULT 0,
             read_player TINYINT NOT NULL DEFAULT 0,
             read_staff TINYINT NOT NULL DEFAULT 0,
+            hidden_player TINYINT NOT NULL DEFAULT 0,
+            moderated TINYINT NOT NULL DEFAULT 0,
+            moderated_by VARCHAR(64) NOT NULL DEFAULT '',
+            moderated_at DATETIME NULL,
+            moderated_reason VARCHAR(255) NOT NULL DEFAULT '',
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             INDEX(conv_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        db()->exec("CREATE TABLE IF NOT EXISTS conv_events (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            conv_id INT NOT NULL,
+            actor VARCHAR(64) NOT NULL DEFAULT '',
+            action VARCHAR(40) NOT NULL DEFAULT '',
+            detail VARCHAR(255) NOT NULL DEFAULT '',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX(conv_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        // Montées de version idempotentes (bases créées avant ces colonnes)
+        conv_ensure_col('conversations', 'player_deleted', 'TINYINT NOT NULL DEFAULT 0');
+        conv_ensure_col('conversations', 'staff_archived', 'TINYINT NOT NULL DEFAULT 0');
+        conv_ensure_col('conversations', 'staff_trashed', 'TINYINT NOT NULL DEFAULT 0');
+        conv_ensure_col('conversation_messages', 'hidden_player', 'TINYINT NOT NULL DEFAULT 0');
+        conv_ensure_col('conversation_messages', 'moderated', 'TINYINT NOT NULL DEFAULT 0');
+        conv_ensure_col('conversation_messages', 'moderated_by', "VARCHAR(64) NOT NULL DEFAULT ''");
+        conv_ensure_col('conversation_messages', 'moderated_at', 'DATETIME NULL');
+        conv_ensure_col('conversation_messages', 'moderated_reason', "VARCHAR(255) NOT NULL DEFAULT ''");
     } catch (Throwable $e) {}
+}
+
+/** Journalise une action sur une conversation (historique du dossier). */
+function conv_event_log(int $convId, string $actor, string $action, string $detail = ''): void
+{
+    if ($convId <= 0) return;
+    try { db()->prepare('INSERT INTO conv_events (conv_id,actor,action,detail) VALUES (?,?,?,?)')
+        ->execute([$convId, mb_substr($actor, 0, 64), mb_substr($action, 0, 40), mb_substr($detail, 0, 255)]); } catch (Throwable $e) {}
+}
+
+/** Événements d'une conversation (plus récents d'abord). */
+function conv_events(int $convId, int $limit = 50): array
+{
+    try { $st = db()->prepare('SELECT * FROM conv_events WHERE conv_id=? ORDER BY id DESC LIMIT ' . (int)$limit); $st->execute([$convId]); return $st->fetchAll(); }
+    catch (Throwable $e) { return []; }
 }
 
 /** Crée une conversation + son 1er message. Retourne l'id (0 si échec). */
@@ -78,7 +129,7 @@ function conv_add_message(int $convId, string $sender, string $senderName, strin
             // Un message public (re)met la conversation dans la file de l'autre partie
             // et la fait ressortir de l'archive / corbeille du joueur, quel que soit l'expéditeur.
             $newStatus = ($sender === 'player') ? 'waiting_staff' : 'waiting_player';
-            db()->prepare('UPDATE conversations SET status=?, updated_at=NOW(), player_trashed=0, player_archived=0 WHERE id=?')
+            db()->prepare('UPDATE conversations SET status=?, updated_at=NOW(), player_trashed=0, player_archived=0, player_deleted=0 WHERE id=?')
                 ->execute([$newStatus, $convId]);
         }
         return true;
@@ -128,7 +179,7 @@ function conv_unread_player(int $playerId): int
 {
     ensure_conversations();
     try {
-        $st = db()->prepare("SELECT COUNT(DISTINCT c.id) FROM conversations c JOIN conversation_messages m ON m.conv_id=c.id WHERE c.player_id=? AND c.player_trashed=0 AND m.is_internal=0 AND m.sender<>'player' AND m.read_player=0");
+        $st = db()->prepare("SELECT COUNT(DISTINCT c.id) FROM conversations c JOIN conversation_messages m ON m.conv_id=c.id WHERE c.player_id=? AND c.player_trashed=0 AND c.player_deleted=0 AND m.is_internal=0 AND m.sender<>'player' AND m.read_player=0 AND m.hidden_player=0");
         $st->execute([$playerId]);
         return (int)$st->fetchColumn();
     } catch (Throwable $e) {
@@ -152,7 +203,8 @@ function conv_messages(int $convId, bool $includeInternal = true): array
 {
     ensure_conversations();
     try {
-        $sql = 'SELECT * FROM conversation_messages WHERE conv_id=?' . ($includeInternal ? '' : ' AND is_internal=0') . ' ORDER BY id ASC';
+        // Côté joueur (includeInternal=false) : on masque aussi les messages qu'il a retirés de sa vue.
+        $sql = 'SELECT * FROM conversation_messages WHERE conv_id=?' . ($includeInternal ? '' : ' AND is_internal=0 AND hidden_player=0') . ' ORDER BY id ASC';
         $st = db()->prepare($sql); $st->execute([$convId]);
         return $st->fetchAll();
     } catch (Throwable $e) {
@@ -205,6 +257,44 @@ function conv_merge(int $target, int $source): bool
     } catch (Throwable $e) {
         return false;
     }
+}
+
+/** Joueur : retire UN message de sa propre vue (sans l'effacer chez le staff). */
+function conv_hide_msg_player(int $msgId, int $playerId): bool
+{
+    if ($msgId <= 0 || $playerId <= 0) return false;
+    try {
+        $st = db()->prepare('UPDATE conversation_messages m JOIN conversations c ON c.id=m.conv_id SET m.hidden_player=1 WHERE m.id=? AND c.player_id=?');
+        $st->execute([$msgId, $playerId]);
+        return $st->rowCount() > 0;
+    } catch (Throwable $e) { return false; }
+}
+
+/** Joueur : supprime définitivement la conversation de SA boîte (le dossier staff reste intact). */
+function conv_purge_player(int $convId, int $playerId): bool
+{
+    if ($convId <= 0 || $playerId <= 0) return false;
+    try {
+        // Vérifie la propriété
+        $chk = db()->prepare('SELECT 1 FROM conversations WHERE id=? AND player_id=?'); $chk->execute([$convId, $playerId]);
+        if (!$chk->fetchColumn()) return false;
+        // Cache tous les messages pour le joueur + marque la conversation supprimée de sa boîte
+        db()->prepare('UPDATE conversation_messages SET hidden_player=1 WHERE conv_id=?')->execute([$convId]);
+        db()->prepare('UPDATE conversations SET player_deleted=1, player_trashed=0, player_archived=0 WHERE id=?')->execute([$convId]);
+        return true;
+    } catch (Throwable $e) { return false; }
+}
+
+/** Staff : masque un message aux participants (motif + auteur + date conservés). */
+function conv_moderate_msg(int $msgId, string $by, string $reason, bool $on = true): bool
+{
+    if ($msgId <= 0) return false;
+    try {
+        if ($on) db()->prepare('UPDATE conversation_messages SET moderated=1, moderated_by=?, moderated_at=NOW(), moderated_reason=? WHERE id=?')
+            ->execute([mb_substr($by, 0, 64), mb_substr($reason, 0, 255), $msgId]);
+        else db()->prepare('UPDATE conversation_messages SET moderated=0 WHERE id=?')->execute([$msgId]);
+        return true;
+    } catch (Throwable $e) { return false; }
 }
 
 /**

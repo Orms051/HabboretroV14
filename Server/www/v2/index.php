@@ -593,9 +593,10 @@ if ($p === 'conv_move') {
     if (!$u) redirect('?p=messages');
     $cid = (int)($_POST['cid'] ?? 0);
     $op  = (string)($_POST['op'] ?? '');
-    if (!csrf_ok() || $cid <= 0 || !in_array($op, ['archive', 'trash', 'restore'], true)) redirect('?p=messages');
+    if (!csrf_ok() || $cid <= 0 || !in_array($op, ['archive', 'trash', 'restore', 'purge'], true)) redirect('?p=messages');
     $own = false; try { $st = db()->prepare('SELECT 1 FROM conversations WHERE id=? AND player_id=?'); $st->execute([$cid, (int)$u['id']]); $own = (bool)$st->fetchColumn(); } catch (Throwable $e) {}
     if (!$own) redirect('?p=messages');
+    if ($op === 'purge') { if (function_exists('conv_purge_player')) conv_purge_player($cid, (int)$u['id']); redirect('?p=messages&box=trashed&done=purged'); }
     try {
         if ($op === 'archive')      db()->prepare('UPDATE conversations SET player_archived=1, player_trashed=0 WHERE id=?')->execute([$cid]);
         elseif ($op === 'trash')    db()->prepare('UPDATE conversations SET player_trashed=1, player_archived=0 WHERE id=?')->execute([$cid]);
@@ -603,6 +604,15 @@ if ($p === 'conv_move') {
     } catch (Throwable $e) {}
     $box = $op === 'archive' ? 'archived' : ($op === 'trash' ? 'trashed' : 'active');
     redirect('?p=messages&box=' . $box . '&done=moved');
+}
+/* ---- Joueur : retirer UN message de sa vue (le dossier staff reste intact) ---- */
+if ($p === 'conv_msg_hide') {
+    $u = me();
+    $cid = (int)($_POST['cid'] ?? 0);
+    $mid = (int)($_POST['mid'] ?? 0);
+    if (!$u || !csrf_ok() || $cid <= 0 || $mid <= 0) redirect('?p=messages');
+    if (function_exists('conv_hide_msg_player')) conv_hide_msg_player($mid, (int)$u['id']);
+    redirect('?p=messages&c=' . $cid . '&done=msghidden');
 }
 
 if ($p === 'messages') {
@@ -617,14 +627,14 @@ if ($p === 'messages') {
     ensure_user_msgs();
     if (function_exists('ensure_conversations')) ensure_conversations();
     $done = (string)($_GET['done'] ?? '');
-    $flash = ['sent' => '✅ Ta demande a bien été envoyée à l\'équipe.', 'replied' => '✅ Ta réponse a été envoyée.', 'empty' => '⚠️ Ton message était vide.', 'err' => '⚠️ Oups, l\'envoi a échoué, réessaie.', 'moved' => '✅ Conversation déplacée.'];
+    $flash = ['sent' => '✅ Ta demande a bien été envoyée à l\'équipe.', 'replied' => '✅ Ta réponse a été envoyée.', 'empty' => '⚠️ Ton message était vide.', 'err' => '⚠️ Oups, l\'envoi a échoué, réessaie.', 'moved' => '✅ Conversation déplacée.', 'purged' => '🗑 Conversation supprimée de ta boîte.', 'msghidden' => '✅ Message retiré de ta vue.'];
     $box = in_array(($_GET['box'] ?? ''), ['archived', 'trashed'], true) ? (string)$_GET['box'] : 'active';
     $flashHtml = isset($flash[$done]) ? '<div style="background:#e7f6ea;border:1px solid #9ed3ad;color:#1c5a2e;border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:11px">' . h($flash[$done]) . '</div>' : '';
     $cid = (int)($_GET['c'] ?? 0);
 
     /* === Détail d'une conversation === */
     if ($cid > 0 && function_exists('conv_messages')) {
-        $conv = null; try { $st = db()->prepare('SELECT * FROM conversations WHERE id=? AND player_id=?'); $st->execute([$cid, $uid]); $conv = $st->fetch() ?: null; } catch (Throwable $e) {}
+        $conv = null; try { $st = db()->prepare('SELECT * FROM conversations WHERE id=? AND player_id=? AND player_deleted=0'); $st->execute([$cid, $uid]); $conv = $st->fetch() ?: null; } catch (Throwable $e) {}
         if (!$conv) redirect('?p=messages');
         conv_mark_read_player($cid, $uid);
         $statut = ['waiting_staff' => '⏳ En attente de l\'équipe', 'waiting_player' => '💬 L\'équipe t\'a répondu', 'resolved' => '✅ Résolu'];
@@ -647,33 +657,38 @@ if ($p === 'messages') {
                . '<div style="flex:1;border:1px solid ' . ($staff ? '#9fc6e8' : '#d9d2b8') . ';border-radius:4px;padding:8px;background:' . ($staff ? '#eef6fd' : '#fffef7') . '">'
                . '<div style="font-size:10px;color:#8a97a3;margin-bottom:3px"><b style="color:#5b5b5b">' . ($staff ? '👮 ' : '🙂 ') . h($who) . '</b>'
                . ' · ' . h(date('d/m/Y H:i', strtotime((string)$m['created_at']))) . '</div>'
-               . '<div style="font-size:11px;color:#5b5b5b">' . nl2br(h((string)$m['body'])) . '</div></div></div>';
+               . '<div style="font-size:11px;color:#5b5b5b">' . ((int)$m['moderated'] ? '<span style="font-style:italic;color:#a33">🚫 Message retiré par la modération</span>' : nl2br(h((string)$m['body']))) . '</div>'
+               . '<div style="text-align:right;margin-top:2px"><form method="post" action="?p=conv_msg_hide" style="display:inline" onsubmit="return confirm(\'Retirer ce message de ta vue ? Il reste visible par l equipe.\')"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="cid" value="' . $cid . '"><input type="hidden" name="mid" value="' . (int)$m['id'] . '"><button type="submit" title="Supprimer de ma vue" style="border:0;background:none;color:#b7bdc4;cursor:pointer;font-size:10px;padding:0">✕ retirer</button></form></div>'
+               . '</div></div>';
         }
         echo '<form method="post" action="?p=conv_reply" style="margin-top:8px"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="cid" value="' . $cid . '">'
            . '<textarea name="body" rows="3" maxlength="4000" required placeholder="Écris ta réponse…" style="width:100%;border:2px solid #7f7f7f;padding:4px 6px;font-size:11px"></textarea>'
            . '<div style="margin-top:6px"><button class="new-button" type="submit"><b>Envoyer</b><i></i></button></div></form>';
         // Déplacement (archive / corbeille / restaurer)
-        $mvBtn = function (string $op, string $lbl) use ($cid) {
-            return '<form method="post" action="?p=conv_move" style="display:inline"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="cid" value="' . $cid . '"><input type="hidden" name="op" value="' . $op . '"><button type="submit" style="border:0;background:none;color:#5f6b78;cursor:pointer;font-size:10px;text-decoration:underline;padding:0 6px 0 0">' . $lbl . '</button></form>';
+        $mvBtn = function (string $op, string $lbl, string $confirm = '') use ($cid) {
+            $onsub = $confirm !== '' ? ' onsubmit="return confirm(\'' . $confirm . '\')"' : '';
+            return '<form method="post" action="?p=conv_move" style="display:inline"' . $onsub . '><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="cid" value="' . $cid . '"><input type="hidden" name="op" value="' . $op . '"><button type="submit" style="border:0;background:none;color:#5f6b78;cursor:pointer;font-size:10px;text-decoration:underline;padding:0 6px 0 0">' . $lbl . '</button></form>';
         };
         echo '<div style="margin-top:10px;border-top:1px dotted #ddd6c2;padding-top:6px">';
-        if ((int)$conv['player_archived'] || (int)$conv['player_trashed']) echo $mvBtn('restore', '↩︎ Remettre dans mes messages');
+        if ((int)$conv['player_trashed']) { echo $mvBtn('restore', '↩︎ Remettre dans mes messages'); echo $mvBtn('purge', '❌ Supprimer définitivement de ma boîte', 'Supprimer définitivement cette conversation de ta boite ? Cela ne la supprime pas chez l equipe.'); }
+        elseif ((int)$conv['player_archived']) echo $mvBtn('restore', '↩︎ Remettre dans mes messages');
         else { echo $mvBtn('archive', '🗂 Archiver'); echo $mvBtn('trash', '🗑 Mettre à la corbeille'); }
+        echo '<div style="font-size:9px;color:#9aa3ab;margin-top:4px">Retirer un message ou une conversation de ta boîte ne le supprime pas chez l\'équipe et ne détruit pas le dossier d\'assistance.</div>';
         echo '</div>';
         box_close();
         render_foot(); exit;
     }
 
     /* === Liste des conversations (selon la boîte) === */
-    $boxCond = $box === 'archived' ? 'c.player_archived=1' : ($box === 'trashed' ? 'c.player_trashed=1' : 'c.player_archived=0 AND c.player_trashed=0');
+    $boxCond = 'c.player_deleted=0 AND ' . ($box === 'archived' ? 'c.player_archived=1' : ($box === 'trashed' ? 'c.player_trashed=1' : 'c.player_archived=0 AND c.player_trashed=0'));
     $convs = [];
     if (function_exists('conv_unread_player')) {
         try {
             $list = db()->prepare("SELECT c.id,c.subject,c.status,c.updated_at,
-                    (SELECT COUNT(*) FROM conversation_messages m WHERE m.conv_id=c.id AND m.is_internal=0 AND m.sender<>'player' AND m.read_player=0) AS unread,
-                    (SELECT body FROM conversation_messages m2 WHERE m2.conv_id=c.id AND m2.is_internal=0 ORDER BY m2.id DESC LIMIT 1) AS last_body,
-                    (SELECT sender FROM conversation_messages m3 WHERE m3.conv_id=c.id AND m3.is_internal=0 ORDER BY m3.id DESC LIMIT 1) AS last_sender,
-                    (SELECT sender_name FROM conversation_messages m4 WHERE m4.conv_id=c.id AND m4.is_internal=0 ORDER BY m4.id DESC LIMIT 1) AS last_name
+                    (SELECT COUNT(*) FROM conversation_messages m WHERE m.conv_id=c.id AND m.is_internal=0 AND m.hidden_player=0 AND m.sender<>'player' AND m.read_player=0) AS unread,
+                    (SELECT body FROM conversation_messages m2 WHERE m2.conv_id=c.id AND m2.is_internal=0 AND m2.hidden_player=0 ORDER BY m2.id DESC LIMIT 1) AS last_body,
+                    (SELECT sender FROM conversation_messages m3 WHERE m3.conv_id=c.id AND m3.is_internal=0 AND m3.hidden_player=0 ORDER BY m3.id DESC LIMIT 1) AS last_sender,
+                    (SELECT sender_name FROM conversation_messages m4 WHERE m4.conv_id=c.id AND m4.is_internal=0 AND m4.hidden_player=0 ORDER BY m4.id DESC LIMIT 1) AS last_name
                 FROM conversations c WHERE c.player_id=? AND $boxCond ORDER BY c.updated_at DESC");
             $list->execute([$uid]); $convs = $list->fetchAll();
         } catch (Throwable $e) { $convs = []; }

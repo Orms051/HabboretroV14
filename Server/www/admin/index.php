@@ -326,8 +326,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $cid = (int)($_POST['cid'] ?? 0);
                 $body = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 4000);
                 if ($cid <= 0 || $body === '') { $ok = false; $msg = '❌ Réponse vide.'; break; }
-                conv_add_message($cid, 'staff', (string)($_SESSION['admin']['username'] ?? 'Équipe'), $body, 0);
+                $meU = (string)($_SESSION['admin']['username'] ?? 'Équipe');
+                conv_add_message($cid, 'staff', $meU, $body, 0);
                 if (!empty($_POST['resolve'])) db()->prepare("UPDATE conversations SET status='resolved' WHERE id=?")->execute([$cid]);
+                conv_event_log($cid, $meU, 'reply', !empty($_POST['resolve']) ? 'réponse + résolu' : 'réponse');
                 admin_log('conv_reply', '#' . $cid . (!empty($_POST['resolve']) ? ' (résolu)' : ''));
                 $msg = '✉️ Réponse envoyée au joueur.'; break;
             }
@@ -336,6 +338,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $cid = (int)($_POST['cid'] ?? 0);
                 $s = in_array(($_POST['status'] ?? ''), ['waiting_staff', 'waiting_player', 'resolved'], true) ? $_POST['status'] : 'waiting_staff';
                 db()->prepare('UPDATE conversations SET status=? WHERE id=?')->execute([$s, $cid]);
+                conv_event_log($cid, (string)($_SESSION['admin']['username'] ?? ''), 'status', $s);
                 admin_log('conv_status', '#' . $cid . ' → ' . $s);
                 $msg = '✅ Statut mis à jour.'; break;
             }
@@ -347,7 +350,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $subj = mb_substr(trim((string)($_POST['subject'] ?? '')), 0, 150); if ($subj === '') $subj = 'Message de l\'équipe';
                 $body = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 4000);
                 if ($body === '') { $ok = false; $msg = '❌ Message vide.'; break; }
-                $cid = conv_create($uid, $subj, 'staff', 'staff', (string)($_SESSION['admin']['username'] ?? 'Équipe'), $body);
+                $meU = (string)($_SESSION['admin']['username'] ?? 'Équipe');
+                $cid = conv_create($uid, $subj, 'staff', 'staff', $meU, $body);
+                if ($cid) conv_event_log($cid, $meU, 'create', 'conversation créée par le staff');
                 admin_log('conv_new', '→ ' . $toName . ' #' . $cid);
                 $msg = $cid ? '✉️ Conversation créée et message envoyé.' : '❌ Échec de l\'envoi.'; break;
             }
@@ -362,6 +367,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $me = (string)($_SESSION['admin']['username'] ?? '');
                 $to = (($_POST['to'] ?? '') === 'me') ? $me : '';
                 db()->prepare('UPDATE conversations SET assigned_to=? WHERE id=?')->execute([$to, $cid]);
+                conv_event_log($cid, $me, 'assign', $to !== '' ? ('→ ' . $to) : 'libérée');
                 admin_log('conv_assign', '#' . $cid . ($to !== '' ? ' → ' . $to : ' (libérée)'));
                 $msg = $to !== '' ? '🙋 Conversation prise en charge.' : '↩︎ Conversation libérée.'; break;
             }
@@ -370,7 +376,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $cid = (int)($_POST['cid'] ?? 0);
                 $body = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 4000);
                 if ($cid <= 0 || $body === '') { $ok = false; $msg = '❌ Note vide.'; break; }
-                conv_add_message($cid, 'staff', (string)($_SESSION['admin']['username'] ?? 'Équipe'), $body, 1);
+                $meU = (string)($_SESSION['admin']['username'] ?? 'Équipe');
+                conv_add_message($cid, 'staff', $meU, $body, 1);
+                conv_event_log($cid, $meU, 'note', 'note interne');
                 admin_log('conv_note', '#' . $cid);
                 $msg = '🔒 Note interne ajoutée (non visible par le joueur).'; break;
             }
@@ -380,6 +388,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $cat = mb_substr(trim((string)($_POST['category'] ?? '')), 0, 40);
                 if ($cat === '') $cat = 'question';
                 db()->prepare('UPDATE conversations SET category=? WHERE id=?')->execute([$cat, $cid]);
+                conv_event_log($cid, (string)($_SESSION['admin']['username'] ?? ''), 'category', $cat);
                 admin_log('conv_category', '#' . $cid . ' → ' . $cat);
                 $msg = '🏷️ Catégorie mise à jour.'; break;
             }
@@ -414,9 +423,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ensure_conversations();
                 $target = (int)($_POST['cid'] ?? 0);
                 $source = (int)($_POST['src'] ?? 0);
-                if (conv_merge($target, $source)) { admin_log('conv_merge', '#' . $source . ' → #' . $target); $msg = '🔗 Conversations fusionnées.'; }
+                if (conv_merge($target, $source)) { conv_event_log($target, (string)($_SESSION['admin']['username'] ?? ''), 'merge', 'absorbe #' . $source); admin_log('conv_merge', '#' . $source . ' → #' . $target); $msg = '🔗 Conversations fusionnées.'; }
                 else { $ok = false; $msg = '❌ Fusion impossible (joueurs différents ou conversation invalide).'; }
                 break;
+            }
+            case 'conv_staff_box': {
+                ensure_conversations();
+                $cid = (int)($_POST['cid'] ?? 0);
+                $op = (string)($_POST['op'] ?? '');
+                $meU = (string)($_SESSION['admin']['username'] ?? '');
+                if ($cid <= 0 || !in_array($op, ['archive', 'trash', 'restore'], true)) { $ok = false; $msg = '❌ Action invalide.'; break; }
+                if ($op === 'archive')    db()->prepare('UPDATE conversations SET staff_archived=1, staff_trashed=0 WHERE id=?')->execute([$cid]);
+                elseif ($op === 'trash')  db()->prepare('UPDATE conversations SET staff_trashed=1, staff_archived=0 WHERE id=?')->execute([$cid]);
+                else                      db()->prepare('UPDATE conversations SET staff_trashed=0, staff_archived=0 WHERE id=?')->execute([$cid]);
+                conv_event_log($cid, $meU, 'box', $op);
+                admin_log('conv_staff_box', '#' . $cid . ' ' . $op);
+                $msg = $op === 'archive' ? '🗂 Dossier archivé.' : ($op === 'trash' ? '🗑 Dossier mis à la corbeille.' : '↩︎ Dossier restauré.'); break;
+            }
+            case 'conv_hide': {
+                ensure_conversations();
+                $mid = (int)($_POST['mid'] ?? 0);
+                $cid = (int)($_POST['cid'] ?? 0);
+                $on = (string)($_POST['on'] ?? '1') === '1';
+                $reason = mb_substr(trim((string)($_POST['reason'] ?? '')), 0, 255);
+                $meU = (string)($_SESSION['admin']['username'] ?? '');
+                if ($mid <= 0) { $ok = false; $msg = '❌ Message introuvable.'; break; }
+                if ($on && $reason === '') { $ok = false; $msg = '❌ Motif obligatoire pour masquer un message.'; break; }
+                conv_moderate_msg($mid, $meU, $reason, $on);
+                conv_event_log($cid, $meU, $on ? 'hide_msg' : 'unhide_msg', $on ? ('msg#' . $mid . ' : ' . $reason) : ('msg#' . $mid));
+                admin_log('conv_hide', ($on ? 'masque' : 'rétablit') . ' msg#' . $mid);
+                $msg = $on ? '🚫 Message masqué aux participants.' : '✅ Message rétabli.'; break;
             }
             case 'umsg_send':
                 ensure_user_msgs();
@@ -2513,7 +2549,7 @@ function action_tab(string $a): string {
         'smsg_post' => 'messages', 'smsg_delete' => 'messages',
         'conv_reply' => 'messages', 'conv_status' => 'messages', 'conv_new' => 'messages', 'conv_reprise' => 'messages',
         'conv_assign' => 'messages', 'conv_note' => 'messages', 'conv_category' => 'messages', 'conv_ack_set' => 'messages',
-        'conv_broadcast' => 'messages', 'conv_merge' => 'messages',
+        'conv_broadcast' => 'messages', 'conv_merge' => 'messages', 'conv_staff_box' => 'messages', 'conv_hide' => 'messages',
         // Jeux : codes & recycleur
         'voucher_add' => 'vouchers', 'voucher_delete' => 'vouchers',
         'recy_add' => 'recycler', 'recy_update' => 'recycler', 'recy_delete' => 'recycler',
@@ -3554,61 +3590,16 @@ function page_ranks(): void {
     }
 }
 
-/* === Assistance : conversations joueur ↔ staff (maître-détail) ============ */
-function conv_assistance_view(): void {
-    ensure_conversations();
-    $me = (string)($_SESSION['admin']['username'] ?? '?');
+/* === Assistance : conversations joueur ↔ staff (3 colonnes, à vues) ======== */
+function conv_cats(): array { return ['question' => '❓ Question', 'bug' => '🐞 Bug', 'signalement' => '🚩 Signalement', 'compte' => '👤 Compte', 'contact' => '✉️ Contact', 'staff' => '📣 Équipe', 'autre' => '• Autre']; }
+function conv_stat_labels(): array { return ['waiting_staff' => '🔴 À répondre', 'waiting_player' => '⏳ Attente joueur', 'resolved' => '✅ Résolu']; }
 
-    // Détail d'une conversation ouverte ?
-    $cid = (int)($_GET['c'] ?? 0);
-    $conv = null;
-    if ($cid > 0) {
-        $st = db()->prepare('SELECT c.*, u.username AS uname FROM conversations c LEFT JOIN users u ON u.id=c.player_id WHERE c.id=?');
-        $st->execute([$cid]);
-        $conv = $st->fetch() ?: null;
-        if ($conv) conv_mark_read_staff($cid);
-    }
-
-    // Catégories connues (libellé + emoji) — 'autre' pour le reste.
-    $CATS = ['question' => '❓ Question', 'bug' => '🐞 Bug', 'signalement' => '🚩 Signalement', 'compte' => '👤 Compte', 'contact' => '✉️ Contact', 'staff' => '📣 Équipe', 'autre' => '•  Autre'];
-    $catLabel = function (string $c) use ($CATS) { return $CATS[$c] ?? ('• ' . $c); };
-
-    // Liste (ouvertes d'abord, résolues ensuite) — filtres facultatifs (attribution + catégorie)
-    $filter = in_array(($_GET['f'] ?? ''), ['mine', 'unassigned'], true) ? (string)$_GET['f'] : 'all';
-    $catFilter = (isset($_GET['cat']) && isset($CATS[(string)$_GET['cat']])) ? (string)$_GET['cat'] : '';
-    $plFilter = (int)($_GET['pl'] ?? 0);
-    $plName = ''; if ($plFilter > 0) { try { $qp = db()->prepare('SELECT username FROM users WHERE id=?'); $qp->execute([$plFilter]); $plName = (string)$qp->fetchColumn(); } catch (Throwable $e) {} }
-    $conds = []; $args = [];
-    if ($filter === 'mine') { $conds[] = 'c.assigned_to=?'; $args[] = $me; }
-    elseif ($filter === 'unassigned') { $conds[] = "c.assigned_to=''"; }
-    if ($catFilter !== '') { $conds[] = 'c.category=?'; $args[] = $catFilter; }
-    if ($plFilter > 0) { $conds[] = 'c.player_id=?'; $args[] = $plFilter; }
-    $where = $conds ? ('WHERE ' . implode(' AND ', $conds)) : '';
-    $rows = [];
-    try {
-        $sql = "SELECT c.id,c.subject,c.category,c.status,c.player_id,c.legacy_ref,c.assigned_to,c.updated_at,
-                u.username AS uname,
-                (SELECT COUNT(*) FROM conversation_messages m WHERE m.conv_id=c.id AND m.sender='player' AND m.read_staff=0) AS unread,
-                (SELECT body FROM conversation_messages m2 WHERE m2.conv_id=c.id ORDER BY m2.id DESC LIMIT 1) AS last_body,
-                (SELECT sender_name FROM conversation_messages m3 WHERE m3.conv_id=c.id AND m3.sender='player' ORDER BY m3.id ASC LIMIT 1) AS pname
-            FROM conversations c LEFT JOIN users u ON u.id=c.player_id
-            $where
-            ORDER BY (c.status='resolved') ASC, c.updated_at DESC LIMIT 120";
-        $qs = db()->prepare($sql); $qs->execute($args); $rows = $qs->fetchAll();
-    } catch (Throwable $e) { $rows = []; }
-
-    $statLabel = ['waiting_staff' => '🔴 À répondre', 'waiting_player' => '⏳ Attente joueur', 'resolved' => '✅ Résolu'];
-    $nbWait = 0; foreach ($rows as $r) { if ((string)$r['status'] === 'waiting_staff') $nbWait++; }
-
-    echo '<div class="panel"><div class="ph"><h3>🎧 Assistance — conversations</h3>'
-       . ($nbWait ? '<span class="rk red" style="margin-left:auto">' . $nbWait . ' à répondre</span>' : '<span class="muted sm" style="margin-left:auto">joueurs ↔ équipe</span>') . '</div>';
-    if ($plFilter > 0) {
-        echo '<div class="note" style="margin:0 0 8px">👤 Conversations de <b>' . h($plName !== '' ? $plName : ('#' . $plFilter)) . '</b> · <a class="lnk" href="?p=messages">voir toutes les conversations</a></div>';
-    }
-
-    // Barre d'outils : nouveau message + reprise des anciens
-    echo '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-start">';
-    echo '<details style="flex:1;min-width:280px"' . ($plFilter > 0 ? ' open' : '') . '><summary class="mini">✉️ Nouveau message à un joueur</summary>'
+/** Barre d'outils de l'assistance (nouveau message, reprise, accusé, annonce). */
+function conv_tools_bar(string $me): void {
+    $plName = ''; $plFilter = (int)($_GET['pl'] ?? 0);
+    if ($plFilter > 0) { try { $qp = db()->prepare('SELECT username FROM users WHERE id=?'); $qp->execute([$plFilter]); $plName = (string)$qp->fetchColumn(); } catch (Throwable $e) {} }
+    echo '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-start;margin-bottom:8px">';
+    echo '<details style="flex:1;min-width:260px"' . ($plFilter > 0 ? ' open' : '') . '><summary class="mini">✉️ Nouveau message à un joueur</summary>'
        . '<form method="post" class="js" data-reload style="margin-top:8px"><input type="hidden" name="action" value="conv_new">' . csrf_field()
        . '<div class="row"><label style="flex:1">Destinataire<input name="username" list="dl_pseudos" autocomplete="off" placeholder="Pseudo…" value="' . h($plName) . '" required></label>'
        . '<label style="flex:1">Sujet<input name="subject" maxlength="150" placeholder="Ex : Réponse à ta demande"></label></div>'
@@ -3616,15 +3607,13 @@ function conv_assistance_view(): void {
        . '<button style="margin-top:8px">✉️ Créer la conversation</button></form></details>';
     echo '<form method="post" class="js" data-reload data-confirm="Reprendre les anciens messages (formulaire contact + messages équipe) en conversations ? Opération sans doublon, relançable sans risque."><input type="hidden" name="action" value="conv_reprise">' . csrf_field()
        . '<button class="mini ghost" title="Importe les anciens messages dans le nouveau système, sans doublon">📥 Reprendre les anciens messages</button></form>';
-    // Réglage de l'accusé de réception automatique
     $ackVal = ''; try { $qa = db()->prepare('SELECT value FROM settings WHERE setting=?'); $qa->execute(['conv.ack']); $v = $qa->fetchColumn(); if ($v !== false) $ackVal = (string)$v; } catch (Throwable $e) {}
-    echo '<details style="min-width:260px"><summary class="mini">⚙️ Accusé de réception auto</summary>'
+    echo '<details style="min-width:240px"><summary class="mini">⚙️ Accusé de réception auto</summary>'
        . '<form method="post" class="js" data-reload style="margin-top:8px"><input type="hidden" name="action" value="conv_ack_set">' . csrf_field()
        . '<textarea name="body" rows="2" maxlength="1000" placeholder="Laisser vide pour désactiver" style="width:100%">' . h($ackVal) . '</textarea>'
-       . '<p class="muted sm" style="margin:4px 0 0">Message automatique envoyé au joueur dès qu\'il crée une demande.</p>'
+       . '<p class="muted sm" style="margin:4px 0 0">Envoyé au joueur dès qu\'il crée une demande.</p>'
        . '<button class="mini" style="margin-top:6px">💾 Enregistrer</button></form></details>';
-    // Annonce collective
-    echo '<details style="min-width:260px"><summary class="mini">📣 Annonce collective</summary>'
+    echo '<details style="min-width:240px"><summary class="mini">📣 Annonce collective</summary>'
        . '<form method="post" class="js" data-reload data-confirm="Envoyer cette annonce (une conversation par destinataire) ?" style="margin-top:8px"><input type="hidden" name="action" value="conv_broadcast">' . csrf_field()
        . '<div class="sm" style="margin-bottom:4px"><label style="margin-right:12px"><input type="radio" name="mode" value="list" checked> Liste de pseudos</label>'
        . '<label><input type="radio" name="mode" value="rank"> Par rang minimum</label></div>'
@@ -3632,218 +3621,270 @@ function conv_assistance_view(): void {
        . '<label class="sm" style="display:block;margin-top:4px">Rang minimum (si « par rang ») <input type="number" name="min_rank" value="5" min="1" max="7" style="width:70px"></label>'
        . '<input name="subject" maxlength="150" placeholder="Sujet" style="width:100%;margin-top:6px">'
        . '<textarea name="body" rows="3" maxlength="4000" required placeholder="Texte de l\'annonce…" style="width:100%;margin-top:6px"></textarea>'
-       . '<p class="muted sm" style="margin:4px 0 0">Crée une conversation par destinataire (max 500). À utiliser avec parcimonie.</p>'
+       . '<p class="muted sm" style="margin:4px 0 0">Crée une conversation par destinataire (max 500).</p>'
        . '<button class="mini" style="margin-top:6px">📣 Envoyer l\'annonce</button></form></details>';
     echo '</div>';
-
-    // Filtres : attribution + catégorie (conservent catégorie/attribution + contexte joueur)
-    $plQS = $plFilter > 0 ? '&pl=' . $plFilter : '';
-    $catQS = ($catFilter !== '' ? '&cat=' . rawurlencode($catFilter) : '') . $plQS;
-    $fl = function (string $k, string $lbl) use ($filter, $catQS) { return '<a class="mini ghost' . ($filter === $k ? ' on' : '') . '" href="?p=messages&f=' . $k . $catQS . '">' . $lbl . '</a>'; };
-    echo '<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">'
-       . $fl('all', 'Toutes') . ' ' . $fl('unassigned', 'Non attribuées') . ' ' . $fl('mine', 'Les miennes')
-       . ' <span class="muted sm" style="margin-left:8px">Catégorie :</span>'
-       . '<select class="mini" onchange="location.href=this.value">'
-       . '<option value="?p=messages&f=' . $filter . $plQS . '"' . ($catFilter === '' ? ' selected' : '') . '>Toutes</option>';
-    foreach ($CATS as $ck => $cl) echo '<option value="?p=messages&f=' . $filter . '&cat=' . rawurlencode($ck) . $plQS . '"' . ($catFilter === $ck ? ' selected' : '') . '>' . h($cl) . '</option>';
-    echo '</select></div>';
-
-    if (!$rows) {
-        echo '<div class="empty" style="margin-top:10px">' . (($filter !== 'all' || $catFilter !== '')
-                ? 'Aucune conversation pour ce filtre. <a class="lnk" href="?p=messages">Voir toutes</a>.'
-                : 'Aucune conversation pour l\'instant. Les nouvelles demandes des joueurs apparaîtront ici. Les anciens messages peuvent être repris via le bouton ci-dessus.')
-           . '</div></div>';
-        return;
-    }
-
-    echo '<div class="hmwrap" style="margin-top:10px">';
-    // --- Liste (gauche) ---
-    echo '<div class="hmlist">';
-    foreach ($rows as $r) {
-        $name = trim((string)($r['uname'] ?: $r['pname'] ?? '')) ?: '—';
-        $sel = ($cid === (int)$r['id']) ? ' sel' : '';
-        $unread = (int)$r['unread'];
-        $snippet = mb_substr(trim(preg_replace('/\s+/', ' ', (string)$r['last_body'])), 0, 60);
-        echo '<a class="hmrow' . $sel . '" href="?p=messages&c=' . (int)$r['id'] . '">'
-           . '<div class="hmrow-top"><b>' . h((string)($r['subject'] ?: 'Sans sujet')) . '</b>'
-           . ($unread ? '<span class="rk red" style="margin-left:auto">' . $unread . '</span>' : '') . '</div>'
-           . '<div class="sm muted">' . h($catLabel((string)$r['category'])) . ' · ' . h($statLabel[(string)$r['status']] ?? (string)$r['status'])
-           . ((string)$r['assigned_to'] !== '' ? ' · 🙋 ' . h((string)$r['assigned_to']) : '')
-           . ($r['legacy_ref'] ? ' · <span title="Ancien message repris">↩︎ repris</span>' : '') . '</div>'
-           . '<div class="sm muted" style="opacity:.8">' . h($name) . '</div>'
-           . '<div class="sm muted" style="opacity:.8">' . h($snippet) . '</div></a>';
-    }
-    echo '</div>';
-
-    // --- Détail (droite) ---
-    echo '<div class="hmdetail">';
-    if (!$conv) {
-        echo '<div class="empty">← Choisis une conversation dans la liste.</div>';
-    } else {
-        $name = trim((string)($conv['uname'] ?? '')) ?: '—';
-        echo '<div class="ph"><h3>' . h((string)($conv['subject'] ?: 'Sans sujet')) . '</h3>'
-           . '<span class="rk" style="margin-left:auto">' . h($statLabel[(string)$conv['status']] ?? (string)$conv['status']) . '</span></div>';
-        $assignedTo = (string)($conv['assigned_to'] ?? '');
-        echo '<p class="sm muted" style="margin:-4px 0 8px">Joueur : <b>' . h($name) . '</b>'
-           . ((int)$conv['player_id'] > 0 ? ' · <a class="lnk" href="?p=user&id=' . (int)$conv['player_id'] . '">fiche</a> · <a class="lnk" href="?p=messages&pl=' . (int)$conv['player_id'] . '">autres conversations</a>' : '')
-           . ($conv['legacy_ref'] ? ' · <span title="Repris de l\'ancienne messagerie">ancien message repris</span>' : '') . '</p>';
-
-        // Catégorie (modifiable)
-        $curCat = (string)$conv['category']; if (!isset($CATS[$curCat])) $curCat = 'autre';
-        echo '<form method="post" class="js row" data-reload style="margin:0 0 10px;align-items:center;gap:6px;flex-wrap:wrap">' . csrf_field()
-           . '<input type="hidden" name="action" value="conv_category"><input type="hidden" name="cid" value="' . $cid . '">'
-           . '<span class="sm muted">🏷️ Catégorie :</span><select name="category" class="mini">';
-        foreach ($CATS as $ck => $cl) echo '<option value="' . h($ck) . '"' . ($curCat === $ck ? ' selected' : '') . '>' . h($cl) . '</option>';
-        echo '</select><button class="mini ghost">Changer</button></form>';
-
-        // Attribution (prise en charge)
-        echo '<form method="post" class="js row" data-reload style="margin:0 0 10px;align-items:center;gap:8px;flex-wrap:wrap">' . csrf_field()
-           . '<input type="hidden" name="action" value="conv_assign"><input type="hidden" name="cid" value="' . $cid . '">';
-        if ($assignedTo === '') {
-            echo '<span class="sm muted">Non attribuée.</span> <button class="mini" name="to" value="me">🙋 M\'attribuer</button>';
-        } elseif ($assignedTo === $me) {
-            echo '<span class="sm">🙋 Pris en charge par <b>toi</b>.</span> <button class="mini ghost" name="to" value="">↩︎ Libérer</button>';
-        } else {
-            echo '<span class="sm" style="color:#b5651d">🙋 Pris en charge par <b>' . h($assignedTo) . '</b>.</span> '
-               . '<button class="mini ghost" name="to" value="me" data-confirm="Cette conversation est déjà prise par ' . h($assignedTo) . '. La reprendre ?">Reprendre</button>';
-        }
-        echo '</form>';
-
-        echo '<div class="convthread">';
-        foreach (conv_messages($cid, true) as $m) {
-            $snd = (string)$m['sender'];
-            if ($snd === 'system') {
-                echo '<div class="cmsg2 cm-system"><div class="sm muted">ℹ️ Message automatique · ' . h(date('d/m H:i', strtotime((string)$m['created_at']))) . '</div>'
-                   . '<div class="cm-body">' . nl2br(h((string)$m['body'])) . '</div></div>';
-                continue;
-            }
-            $staff = ($snd !== 'player');
-            $cls = $staff ? 'cm-staff' : 'cm-player';
-            if ((int)$m['is_internal']) $cls .= ' cm-internal';
-            echo '<div class="cmsg2 ' . $cls . '"><div class="sm muted">'
-               . ($staff ? '👮 ' : '🙂 ') . h((string)($m['sender_name'] ?: ($staff ? 'Équipe' : $name)))
-               . ' · ' . h(date('d/m H:i', strtotime((string)$m['created_at'])))
-               . ((int)$m['is_internal'] ? ' · 🔒 note interne' : '') . '</div>'
-               . '<div class="cm-body">' . nl2br(h((string)$m['body'])) . '</div></div>';
-        }
-        echo '</div>';
-
-        // Réponses types (modèles) — insérées dans le champ ci-dessous
-        $CANNED = [
-            'Bonjour, merci pour ton message ! ',
-            'Bonjour, merci de ton message. Peux-tu nous donner plus de détails (pseudo concerné, heure, salle) ?',
-            'C\'est corrigé de notre côté, n\'hésite pas si le souci revient. Bon jeu ! 😊',
-            'Ta demande a bien été transmise à l\'équipe concernée, on revient vers toi dès que possible.',
-            'Pour des raisons de sécurité, nous ne demandons jamais ton mot de passe. Ne le communique à personne.',
-            'Nous ne pouvons pas donner suite à cette demande. Merci de ta compréhension.',
-        ];
-        $rid = 'cvbody' . $cid;
-        // Répondre
-        echo '<form method="post" class="js" data-reload style="margin-top:10px"><input type="hidden" name="action" value="conv_reply">' . csrf_field()
-           . '<input type="hidden" name="cid" value="' . $cid . '">'
-           . '<select class="mini" style="margin-bottom:6px" onchange="if(this.value){var t=document.getElementById(\'' . $rid . '\');t.value=(t.value?t.value+\'\n\':\'\')+this.value;t.focus();this.selectedIndex=0;}">'
-           . '<option value="">💬 Insérer une réponse type…</option>';
-        foreach ($CANNED as $txt) echo '<option value="' . h($txt) . '">' . h(mb_strimwidth($txt, 0, 60, '…')) . '</option>';
-        echo '</select>'
-           . '<textarea id="' . $rid . '" name="body" rows="3" maxlength="4000" required placeholder="Ta réponse au joueur…" style="width:100%"></textarea>'
-           . '<div class="row" style="margin-top:8px;gap:8px;align-items:center">'
-           . '<button>✉️ Répondre</button>'
-           . '<label class="sm" style="display:flex;gap:4px;align-items:center"><input type="checkbox" name="resolve" value="1"> Marquer comme résolu</label>'
-           . '</div></form>';
-
-        // Statut rapide
-        echo '<form method="post" class="js row" data-reload style="margin-top:8px;align-items:center;gap:6px;flex-wrap:wrap">' . csrf_field()
-           . '<input type="hidden" name="action" value="conv_status"><input type="hidden" name="cid" value="' . $cid . '">'
-           . '<span class="sm muted">Statut : </span> '
-           . '<button class="mini ghost" name="status" value="waiting_staff">🔴 À répondre</button> '
-           . '<button class="mini ghost" name="status" value="waiting_player">⏳ Attente joueur</button> '
-           . '<button class="mini ghost" name="status" value="resolved">✅ Résolu</button></form>';
-
-        // Note interne (équipe seulement — jamais vue par le joueur)
-        echo '<details style="margin-top:10px"><summary class="mini">🔒 Ajouter une note interne</summary>'
-           . '<form method="post" class="js" data-reload style="margin-top:8px"><input type="hidden" name="action" value="conv_note">' . csrf_field()
-           . '<input type="hidden" name="cid" value="' . $cid . '">'
-           . '<textarea name="body" rows="2" maxlength="4000" required placeholder="Note visible uniquement par l\'équipe…" style="width:100%"></textarea>'
-           . '<button class="mini" style="margin-top:6px">🔒 Enregistrer la note</button></form></details>';
-
-        // Fusion avec une autre conversation du même joueur (doublons)
-        $pid = (int)$conv['player_id'];
-        if ($pid > 0) {
-            $dups = []; try { $qd = db()->prepare('SELECT id,subject,updated_at FROM conversations WHERE player_id=? AND id<>? ORDER BY updated_at DESC LIMIT 50'); $qd->execute([$pid, $cid]); $dups = $qd->fetchAll(); } catch (Throwable $e) {}
-            if ($dups) {
-                echo '<details style="margin-top:10px"><summary class="mini">🔗 Fusionner un doublon dans cette conversation</summary>'
-                   . '<form method="post" class="js" data-reload data-confirm="Fusionner : tous les messages de la conversation choisie seront déplacés ici, puis elle sera supprimée. Continuer ?" style="margin-top:8px"><input type="hidden" name="action" value="conv_merge">' . csrf_field()
-                   . '<input type="hidden" name="cid" value="' . $cid . '">'
-                   . '<select name="src" class="mini" required><option value="">Choisir la conversation à absorber…</option>';
-                foreach ($dups as $d) echo '<option value="' . (int)$d['id'] . '">#' . (int)$d['id'] . ' · ' . h(mb_strimwidth((string)($d['subject'] ?: 'Sans sujet'), 0, 40, '…')) . ' (' . h(date('d/m/y', strtotime((string)$d['updated_at']))) . ')</option>';
-                echo '</select> <button class="mini">🔗 Fusionner ici</button>'
-                   . '<p class="muted sm" style="margin:4px 0 0">Les messages sont conservés et regroupés ici ; la conversation absorbée disparaît.</p></form></details>';
-            }
-        }
-    }
-    echo '</div>'; // hmdetail
-    echo '</div>';  // hmwrap
-    echo '</div>';  // panel
 }
 
-function page_messages(): void {
-    page_title('Messagerie', 'Assistance : conversations joueurs ↔ équipe');
-    ensure_contact_msgs(); ensure_pw_resets(); ensure_user_msgs();
-    if (function_exists('ensure_conversations')) { conv_assistance_view(); }
-
-    /* --- Écrire à un joueur (Staff -> joueur) --- */
-    $pre = trim($_GET['to'] ?? '');
-    echo '<div class="panel"><div class="ph"><h3>✉️ Écrire à un joueur</h3></div>';
-    echo '<form method="post" class="js" data-reload><input type="hidden" name="action" value="umsg_send">' . csrf_field()
-       . '<div class="row"><label style="flex:1">Destinataire (pseudo)<input name="username" list="dl_pseudos" autocomplete="off" value="' . h($pre) . '" placeholder="Tape les premières lettres…" required></label>'
-       . '<label style="flex:1">Sujet (facultatif)<input name="subject" maxlength="100" placeholder="Ex : Réponse à ta demande"></label></div>'
-       . '<label style="margin-top:8px">Message<textarea name="body" rows="3" maxlength="2000" required placeholder="Ton message pour le joueur (il le lira sur le site)."></textarea></label>'
-       . '<button style="margin-top:8px">✉️ Envoyer</button></form>';
-    echo '<p class="muted sm" style="margin-top:8px">💡 Tu peux aussi écrire depuis la fiche d\'un joueur (Joueurs → un joueur), avec l\'historique lu/non-lu.</p>';
-    echo '</div>';
-
-    /* --- Messages du formulaire Contact --- */
-    $new = db()->query("SELECT id,username,subject,message,ip,created_at FROM contact_messages WHERE status='new' ORDER BY created_at ASC")->fetchAll();
-    echo '<div class="panel"><div class="ph"><h3>📥 Messages des joueurs</h3>' . ($new ? '<span class="rk red" style="margin-left:auto">' . count($new) . ' non lu' . (count($new) > 1 ? 's' : '') . '</span>' : '') . '</div>';
-    if (!$new) echo '<div class="empty">Aucun nouveau message 🎉</div>';
+/** Panneau droit : informations du joueur. */
+function conv_info_panel(array $conv): void {
+    $pid = (int)$conv['player_id'];
+    echo '<div class="ph"><h3>👤 Joueur</h3></div>';
+    $info = null;
+    if ($pid > 0) { try { $qi = db()->prepare('SELECT username,`rank`,credits,motto,last_online FROM users WHERE id=?'); $qi->execute([$pid]); $info = $qi->fetch() ?: null; } catch (Throwable $e) {} }
+    if (!$info) echo '<p class="muted sm">Joueur introuvable (compte supprimé ou message repris sans compte).</p>';
     else {
-        echo '<table class="clean"><tr><th>Reçu</th><th>De</th><th>Sujet & message</th><th style="width:200px">Action</th></tr>';
-        foreach ($new as $m) {
-            $when = h(date('d/m H:i', strtotime((string)$m['created_at'])));
-            $subj = trim((string)$m['subject']);
-            echo '<tr><td class="sm muted">' . $when . '</td>'
-               . '<td><b>' . h((string)($m['username'] ?: '—')) . '</b><br><span class="sm muted">' . h((string)$m['ip']) . '</span></td>'
-               . '<td>' . ($subj !== '' ? '<b>' . h($subj) . '</b><br>' : '') . '<span class="muted">' . nl2br(h((string)$m['message'])) . '</span></td>'
-               . '<td>' . ($m['username'] ? '<a class="mini ghost lnkbtn" href="?p=messages&to=' . h(rawurlencode((string)$m['username'])) . '">✉️ Répondre</a> ' : '') . '<form method="post" class="js" data-reload style="display:inline"><input type="hidden" name="action" value="cmsg_handle">' . csrf_field() . '<input type="hidden" name="id" value="' . (int)$m['id'] . '"><button class="mini">✅ Traité</button></form> '
-               . '<form method="post" class="js" data-reload style="display:inline" data-confirm="Supprimer ce message ?"><input type="hidden" name="action" value="cmsg_delete">' . csrf_field() . '<input type="hidden" name="id" value="' . (int)$m['id'] . '"><button class="mini ghost">Supprimer</button></form></td></tr>';
+        echo '<p style="margin:0 0 4px"><b>' . h((string)$info['username']) . '</b> ' . rank_badge((int)$info['rank']) . '</p>';
+        if (trim((string)$info['motto']) !== '') echo '<p class="sm muted" style="margin:0 0 3px">💬 ' . h((string)$info['motto']) . '</p>';
+        echo '<p class="sm muted" style="margin:0 0 3px">🪙 ' . number_format((int)$info['credits'], 0, ',', ' ') . ' crédits</p>';
+        echo '<p class="sm muted" style="margin:0 0 8px">🕑 ' . ((int)$info['last_online'] > 0 ? h(date('d/m/Y H:i', (int)$info['last_online'])) : '—') . '</p>';
+        echo '<div style="display:flex;flex-direction:column;gap:6px">'
+           . '<a class="mini ghost" href="?p=user&id=' . $pid . '">👤 Fiche complète</a>'
+           . '<a class="mini ghost" href="/?p=home/' . h(rawurlencode((string)$info['username'])) . '" target="_blank">🏠 Habbo Home ↗</a>'
+           . '<a class="mini ghost" href="?p=messages&pl=' . $pid . '">💬 Ses conversations</a>'
+           . '<a class="mini ghost" href="?p=homemod&sec=reports">🚩 Dossiers Homes</a>'
+           . '</div>';
+    }
+    echo '<div class="ph" style="margin-top:12px"><h3>📌 Responsable</h3></div>';
+    echo '<p class="sm" style="margin:0">' . ((string)$conv['assigned_to'] !== '' ? '🙋 ' . h((string)$conv['assigned_to']) : '<span class="muted">non attribuée</span>') . '</p>';
+}
+
+/** Panneau central : fil + actions d'une conversation. */
+function conv_detail_panel(array $conv, int $cid, string $me, array $CATS, array $statLabel, string $scope): void {
+    $name = trim((string)($conv['uname'] ?? '')) ?: '—';
+    echo '<div class="ph"><h3>' . h((string)($conv['subject'] ?: 'Sans sujet')) . '</h3>'
+       . '<span class="rk" style="margin-left:auto">' . h($statLabel[(string)$conv['status']] ?? (string)$conv['status']) . '</span></div>';
+    $assignedTo = (string)($conv['assigned_to'] ?? '');
+    echo '<p class="sm muted" style="margin:-4px 0 8px">Joueur : <b>' . h($name) . '</b>'
+       . ((int)$conv['player_id'] > 0 ? ' · <a class="lnk" href="?p=user&id=' . (int)$conv['player_id'] . '">fiche</a>' : '')
+       . ($conv['legacy_ref'] ? ' · <span title="Repris de l\'ancienne messagerie">repris</span>' : '') . '</p>';
+
+    // Catégorie + attribution sur une ligne
+    $curCat = (string)$conv['category']; if (!isset($CATS[$curCat])) $curCat = 'autre';
+    echo '<form method="post" class="js row" data-reload style="margin:0 0 8px;align-items:center;gap:6px;flex-wrap:wrap">' . csrf_field()
+       . '<input type="hidden" name="action" value="conv_category"><input type="hidden" name="cid" value="' . $cid . '">'
+       . '<span class="sm muted">🏷️</span><select name="category" class="mini">';
+    foreach ($CATS as $ck => $cl) echo '<option value="' . h($ck) . '"' . ($curCat === $ck ? ' selected' : '') . '>' . h($cl) . '</option>';
+    echo '</select><button class="mini ghost">Changer</button></form>';
+
+    echo '<form method="post" class="js row" data-reload style="margin:0 0 10px;align-items:center;gap:8px;flex-wrap:wrap">' . csrf_field()
+       . '<input type="hidden" name="action" value="conv_assign"><input type="hidden" name="cid" value="' . $cid . '">';
+    if ($assignedTo === '') echo '<span class="sm muted">Non attribuée.</span> <button class="mini" name="to" value="me">🙋 M\'attribuer</button>';
+    elseif ($assignedTo === $me) echo '<span class="sm">🙋 Pris par <b>toi</b>.</span> <button class="mini ghost" name="to" value="">↩︎ Libérer</button>';
+    else echo '<span class="sm" style="color:#b5651d">🙋 Pris par <b>' . h($assignedTo) . '</b>.</span> <button class="mini ghost" name="to" value="me" data-confirm="Déjà pris par ' . h($assignedTo) . '. Reprendre ?">Reprendre</button>';
+    echo '</form>';
+
+    // Fil
+    echo '<div class="convthread">';
+    foreach (conv_messages($cid, true) as $m) {
+        $snd = (string)$m['sender'];
+        $mid = (int)$m['id'];
+        if ($snd === 'system') {
+            echo '<div class="cmsg2 cm-system"><div class="sm muted">ℹ️ Message automatique · ' . h(date('d/m H:i', strtotime((string)$m['created_at']))) . '</div><div class="cm-body">' . nl2br(h((string)$m['body'])) . '</div></div>';
+            continue;
         }
-        echo '</table>';
+        $staff = ($snd !== 'player');
+        $internal = (int)$m['is_internal'];
+        $cls = $staff ? 'cm-staff' : 'cm-player';
+        if ($internal) $cls .= ' cm-internal';
+        $head = ($staff ? '👮 ' : '🙂 ') . h((string)($m['sender_name'] ?: ($staff ? 'Équipe' : $name))) . ' · ' . h(date('d/m H:i', strtotime((string)$m['created_at']))) . ($internal ? ' · 🔒 note interne' : '');
+        echo '<div class="cmsg2 ' . $cls . '"><div class="sm muted">' . $head . '</div>';
+        if ((int)$m['moderated']) {
+            echo '<div class="cm-body" style="font-style:italic;color:#a33">🚫 Message retiré par la modération'
+               . ((string)$m['moderated_reason'] !== '' ? ' — ' . h((string)$m['moderated_reason']) : '') . '</div>'
+               . '<details style="margin-top:4px"><summary class="mini">👁️ Voir le contenu masqué (réservé staff)</summary>'
+               . '<div class="cm-body" style="margin-top:4px;opacity:.75">' . nl2br(h((string)$m['body'])) . '</div>'
+               . '<div class="sm muted">masqué par ' . h((string)$m['moderated_by']) . ($m['moderated_at'] ? ' le ' . h(date('d/m H:i', strtotime((string)$m['moderated_at']))) : '') . '</div>'
+               . '<form method="post" class="js" data-reload style="margin-top:4px"><input type="hidden" name="action" value="conv_hide">' . csrf_field()
+               . '<input type="hidden" name="cid" value="' . $cid . '"><input type="hidden" name="mid" value="' . $mid . '"><input type="hidden" name="on" value="0"><button class="mini ghost">✅ Rétablir le message</button></form></details>';
+        } else {
+            echo '<div class="cm-body">' . nl2br(h((string)$m['body'])) . '</div>';
+            if (!$internal) {
+                echo '<details style="margin-top:4px"><summary class="mini" style="font-size:10px">🚫 Masquer (modération)</summary>'
+                   . '<form method="post" class="js" data-reload data-confirm="Masquer ce message aux participants ?" style="margin-top:4px"><input type="hidden" name="action" value="conv_hide">' . csrf_field()
+                   . '<input type="hidden" name="cid" value="' . $cid . '"><input type="hidden" name="mid" value="' . $mid . '"><input type="hidden" name="on" value="1">'
+                   . '<input name="reason" maxlength="255" placeholder="Motif (obligatoire)" required style="width:100%;margin-bottom:4px"><button class="mini">Masquer</button></form></details>';
+            }
+        }
+        echo '</div>';
     }
     echo '</div>';
 
-    /* --- Demandes de réinitialisation de mot de passe --- */
-    $reqs = db()->query("SELECT id,username,message,ip,created_at FROM password_resets WHERE status='pending' ORDER BY created_at ASC")->fetchAll();
-    echo '<div class="panel"><div class="ph"><h3>🔑 Demandes de mot de passe</h3>' . ($reqs ? '<span class="rk red" style="margin-left:auto">' . count($reqs) . ' en attente</span>' : '') . '</div>';
-    if (!$reqs) echo '<div class="empty">Aucune demande en attente 🎉</div>';
-    else {
-        echo '<table class="clean"><tr><th>Reçue</th><th>Pseudo</th><th>Indice</th><th>IP</th><th style="width:230px">Action</th></tr>';
-        foreach ($reqs as $r) {
-            $when = h(date('d/m H:i', strtotime((string)$r['created_at'])));
-            echo '<tr><td class="sm muted">' . $when . '</td>'
-               . '<td><b>' . h((string)$r['username']) . '</b></td>'
-               . '<td class="muted sm">' . h((string)$r['message']) . '</td>'
-               . '<td class="sm muted">' . h((string)$r['ip']) . '</td>'
-               . '<td><form method="post" style="display:inline" onsubmit="return confirm(\'Réinitialiser le mot de passe de « ' . h(addslashes((string)$r['username'])) . ' » ? Un mot de passe provisoire sera généré.\')">' . csrf_field() . '<input type="hidden" name="action" value="pwreset_do"><input type="hidden" name="rid" value="' . (int)$r['id'] . '"><button class="mini">🔑 Traiter</button></form> '
-               . '<form method="post" class="js" data-reload style="display:inline" data-confirm="Rejeter cette demande ?"><input type="hidden" name="action" value="pwreset_reject">' . csrf_field() . '<input type="hidden" name="rid" value="' . (int)$r['id'] . '"><button class="mini ghost">Rejeter</button></form></td></tr>';
-        }
-        echo '</table>';
+    // Réponse + réponses types
+    $CANNED = [
+        'Bonjour, merci pour ton message ! ',
+        'Bonjour, merci de ton message. Peux-tu nous donner plus de détails (pseudo concerné, heure, salle) ?',
+        'C\'est corrigé de notre côté, n\'hésite pas si le souci revient. Bon jeu ! 😊',
+        'Ta demande a bien été transmise à l\'équipe concernée, on revient vers toi dès que possible.',
+        'Pour des raisons de sécurité, nous ne demandons jamais ton mot de passe. Ne le communique à personne.',
+        'Nous ne pouvons pas donner suite à cette demande. Merci de ta compréhension.',
+    ];
+    $rid = 'cvbody' . $cid;
+    echo '<form method="post" class="js" data-reload style="margin-top:10px"><input type="hidden" name="action" value="conv_reply">' . csrf_field()
+       . '<input type="hidden" name="cid" value="' . $cid . '">'
+       . '<select class="mini" style="margin-bottom:6px" onchange="if(this.value){var t=document.getElementById(\'' . $rid . '\');t.value=(t.value?t.value+\'\n\':\'\')+this.value;t.focus();this.selectedIndex=0;}">'
+       . '<option value="">💬 Insérer une réponse type…</option>';
+    foreach ($CANNED as $txt) echo '<option value="' . h($txt) . '">' . h(mb_strimwidth($txt, 0, 60, '…')) . '</option>';
+    echo '</select>'
+       . '<textarea id="' . $rid . '" name="body" rows="3" maxlength="4000" required placeholder="Ta réponse au joueur…" style="width:100%"></textarea>'
+       . '<div class="row" style="margin-top:8px;gap:8px;align-items:center"><button>✉️ Répondre</button>'
+       . '<label class="sm" style="display:flex;gap:4px;align-items:center"><input type="checkbox" name="resolve" value="1"> Résoudre</label></div></form>';
+
+    // Note interne
+    echo '<details style="margin-top:10px"><summary class="mini">🔒 Note interne (non visible du joueur)</summary>'
+       . '<form method="post" class="js" data-reload style="margin-top:8px"><input type="hidden" name="action" value="conv_note">' . csrf_field()
+       . '<input type="hidden" name="cid" value="' . $cid . '"><textarea name="body" rows="2" maxlength="4000" required placeholder="Note visible uniquement par l\'équipe…" style="width:100%"></textarea>'
+       . '<button class="mini" style="margin-top:6px">🔒 Enregistrer la note</button></form></details>';
+
+    // Statut + archivage/corbeille du dossier
+    echo '<div class="row" style="margin-top:10px;gap:6px;flex-wrap:wrap;align-items:center">';
+    echo '<form method="post" class="js" data-reload style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="conv_status"><input type="hidden" name="cid" value="' . $cid . '">'
+       . '<span class="sm muted">Statut :</span> <button class="mini ghost" name="status" value="waiting_staff">🔴</button> <button class="mini ghost" name="status" value="waiting_player">⏳</button> <button class="mini ghost" name="status" value="resolved">✅ Résolu</button></form>';
+    echo ' <span class="sm muted">·</span> ';
+    if ($scope === 'archives' || $scope === 'trash') {
+        echo '<form method="post" class="js" data-reload style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="conv_staff_box"><input type="hidden" name="cid" value="' . $cid . '"><input type="hidden" name="op" value="restore"><button class="mini ghost">↩︎ Restaurer</button></form>';
+    } else {
+        echo '<form method="post" class="js" data-reload style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="conv_staff_box"><input type="hidden" name="cid" value="' . $cid . '"><input type="hidden" name="op" value="archive"><button class="mini ghost" title="Archiver un dossier traité">🗂 Archiver</button></form> ';
+        echo '<form method="post" class="js" data-reload style="display:inline" data-confirm="Mettre ce dossier à la corbeille ?">' . csrf_field() . '<input type="hidden" name="action" value="conv_staff_box"><input type="hidden" name="cid" value="' . $cid . '"><input type="hidden" name="op" value="trash"><button class="mini ghost">🗑 Corbeille</button></form>';
     }
     echo '</div>';
 
-    /* --- Discussion interne de l'équipe (staff <-> staff) --- */
+    // Fusion de doublons
+    $pid = (int)$conv['player_id'];
+    if ($pid > 0) {
+        $dups = []; try { $qd = db()->prepare('SELECT id,subject,updated_at FROM conversations WHERE player_id=? AND id<>? ORDER BY updated_at DESC LIMIT 50'); $qd->execute([$pid, $cid]); $dups = $qd->fetchAll(); } catch (Throwable $e) {}
+        if ($dups) {
+            echo '<details style="margin-top:10px"><summary class="mini">🔗 Fusionner un doublon ici</summary>'
+               . '<form method="post" class="js" data-reload data-confirm="Fusionner : les messages de la conversation choisie seront déplacés ici, puis elle sera supprimée. Continuer ?" style="margin-top:8px"><input type="hidden" name="action" value="conv_merge">' . csrf_field()
+               . '<input type="hidden" name="cid" value="' . $cid . '"><select name="src" class="mini" required><option value="">Conversation à absorber…</option>';
+            foreach ($dups as $d) echo '<option value="' . (int)$d['id'] . '">#' . (int)$d['id'] . ' · ' . h(mb_strimwidth((string)($d['subject'] ?: 'Sans sujet'), 0, 40, '…')) . '</option>';
+            echo '</select> <button class="mini">🔗 Fusionner</button></form></details>';
+        }
+    }
+
+    // Historique des actions
+    $evs = function_exists('conv_events') ? conv_events($cid, 40) : [];
+    echo '<details style="margin-top:10px"><summary class="mini">📜 Historique des actions</summary>';
+    if (!$evs) echo '<p class="muted sm" style="margin-top:6px">Aucune action enregistrée.</p>';
+    else {
+        echo '<table class="clean" style="margin-top:6px"><tr><th>Quand</th><th>Par</th><th>Action</th></tr>';
+        foreach ($evs as $e) echo '<tr><td class="sm muted">' . h(date('d/m H:i', strtotime((string)$e['created_at']))) . '</td><td class="sm">' . h((string)$e['actor']) . '</td><td class="sm">' . h((string)$e['action']) . ((string)$e['detail'] !== '' ? ' — ' . h((string)$e['detail']) : '') . '</td></tr>';
+        echo '</table>';
+    }
+    echo '</details>';
+}
+
+function conv_assistance_view(string $scope = 'assistance'): void {
+    ensure_conversations();
+    $me = (string)($_SESSION['admin']['username'] ?? '?');
+    $CATS = conv_cats(); $statLabel = conv_stat_labels();
+    $catLabel = function (string $c) use ($CATS) { return $CATS[$c] ?? ('• ' . $c); };
+
+    // Détail ouvert ?
+    $cid = (int)($_GET['c'] ?? 0);
+    $conv = null;
+    if ($cid > 0) {
+        $st = db()->prepare('SELECT c.*, u.username AS uname FROM conversations c LEFT JOIN users u ON u.id=c.player_id WHERE c.id=?');
+        $st->execute([$cid]); $conv = $st->fetch() ?: null;
+        if ($conv) conv_mark_read_staff($cid);
+    }
+
+    // Filtres + recherche
+    $filter = in_array(($_GET['f'] ?? ''), ['mine', 'unassigned'], true) ? (string)$_GET['f'] : 'all';
+    $catFilter = (isset($_GET['cat']) && isset($CATS[(string)$_GET['cat']])) ? (string)$_GET['cat'] : '';
+    $plFilter = (int)($_GET['pl'] ?? 0);
+    $q = trim((string)($_GET['q'] ?? ''));
+    $plName = ''; if ($plFilter > 0) { try { $qp = db()->prepare('SELECT username FROM users WHERE id=?'); $qp->execute([$plFilter]); $plName = (string)$qp->fetchColumn(); } catch (Throwable $e) {} }
+
+    // Périmètre (scope)
+    $conds = []; $args = [];
+    if ($scope === 'archives') $conds[] = "c.staff_trashed=0 AND (c.staff_archived=1 OR c.status='resolved')";
+    elseif ($scope === 'trash') $conds[] = 'c.staff_trashed=1';
+    elseif ($scope === 'sent') $conds[] = "c.staff_trashed=0 AND c.category='staff'";
+    else { $scope = 'assistance'; $conds[] = "c.staff_trashed=0 AND c.staff_archived=0 AND c.status<>'resolved'"; }
+    if ($filter === 'mine') { $conds[] = 'c.assigned_to=?'; $args[] = $me; }
+    elseif ($filter === 'unassigned') { $conds[] = "c.assigned_to=''"; }
+    if ($catFilter !== '') { $conds[] = 'c.category=?'; $args[] = $catFilter; }
+    if ($plFilter > 0) { $conds[] = 'c.player_id=?'; $args[] = $plFilter; }
+    if ($q !== '') { $conds[] = '(c.subject LIKE ? OR u.username LIKE ?)'; $args[] = '%' . $q . '%'; $args[] = '%' . $q . '%'; }
+    $where = $conds ? ('WHERE ' . implode(' AND ', $conds)) : '';
+
+    // Pagination
+    $pg = max(1, (int)($_GET['pg'] ?? 1)); $per = 40; $off = ($pg - 1) * $per;
+    $rows = []; $total = 0;
+    try {
+        $cs = db()->prepare("SELECT COUNT(*) FROM conversations c LEFT JOIN users u ON u.id=c.player_id $where"); $cs->execute($args); $total = (int)$cs->fetchColumn();
+        $sql = "SELECT c.id,c.subject,c.category,c.status,c.player_id,c.legacy_ref,c.assigned_to,c.updated_at,
+                u.username AS uname,
+                (SELECT COUNT(*) FROM conversation_messages m WHERE m.conv_id=c.id AND m.sender='player' AND m.read_staff=0) AS unread,
+                (SELECT body FROM conversation_messages m2 WHERE m2.conv_id=c.id AND m2.is_internal=0 ORDER BY m2.id DESC LIMIT 1) AS last_body
+            FROM conversations c LEFT JOIN users u ON u.id=c.player_id
+            $where ORDER BY (c.status='resolved') ASC, c.updated_at DESC LIMIT $per OFFSET $off";
+        $qs = db()->prepare($sql); $qs->execute($args); $rows = $qs->fetchAll();
+    } catch (Throwable $e) { $rows = []; }
+
+    $titles = ['assistance' => '🎧 Assistance', 'sent' => '📤 Envoyés', 'archives' => '🗂 Archives', 'trash' => '🗑 Corbeille'];
+    $base = '?p=messages&vue=' . $scope . ($plFilter > 0 ? '&pl=' . $plFilter : '');
+
+    echo '<div class="panel">';
+    echo '<div class="ph"><h3>' . ($titles[$scope] ?? '🎧 Assistance') . '</h3>'
+       . '<span class="muted sm" style="margin-left:auto">' . $total . ' conversation' . ($total > 1 ? 's' : '') . '</span> '
+       . '<button class="mini ghost" type="button" onclick="document.getElementById(\'cvwrap\').classList.toggle(\'noinfo\')" title="Afficher/masquer les infos joueur">↔ Infos</button></div>';
+    if ($plFilter > 0) echo '<div class="note" style="margin:0 0 8px">👤 Conversations de <b>' . h($plName !== '' ? $plName : ('#' . $plFilter)) . '</b> · <a class="lnk" href="?p=messages&vue=' . $scope . '">voir toutes</a></div>';
+
+    // Recherche + filtres
+    echo '<form method="get" class="row" style="gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px"><input type="hidden" name="p" value="messages"><input type="hidden" name="vue" value="' . $scope . '">' . ($plFilter > 0 ? '<input type="hidden" name="pl" value="' . $plFilter . '">' : '')
+       . '<input name="q" value="' . h($q) . '" placeholder="Rechercher sujet ou joueur…" style="flex:1;min-width:150px">'
+       . '<select name="f"><option value="all"' . ($filter === 'all' ? ' selected' : '') . '>Toutes</option><option value="unassigned"' . ($filter === 'unassigned' ? ' selected' : '') . '>Non attribuées</option><option value="mine"' . ($filter === 'mine' ? ' selected' : '') . '>Les miennes</option></select>'
+       . '<select name="cat"><option value="">Catégorie…</option>';
+    foreach ($CATS as $ck => $cl) echo '<option value="' . h($ck) . '"' . ($catFilter === $ck ? ' selected' : '') . '>' . h($cl) . '</option>';
+    echo '</select><button class="mini">Filtrer</button></form>';
+
+    if ($scope === 'assistance') conv_tools_bar($me);
+
+    // Layout 3 colonnes
+    echo '<div class="cvwrap" id="cvwrap">';
+    // Gauche : liste
+    echo '<div class="cvlist">';
+    if (!$rows) echo '<div class="empty">Aucune conversation ici.</div>';
+    else foreach ($rows as $r) {
+        $nm = trim((string)($r['uname'] ?: '')) ?: ('#' . (int)$r['player_id']);
+        $sel = ($cid === (int)$r['id']) ? ' sel' : '';
+        $unread = (int)$r['unread'];
+        $snip = mb_substr(trim(preg_replace('/\s+/', ' ', (string)$r['last_body'])), 0, 54);
+        echo '<a class="hmrow' . $sel . '" href="' . $base . '&c=' . (int)$r['id'] . '">'
+           . '<div class="hmrow-top"><b>' . h((string)($r['subject'] ?: 'Sans sujet')) . '</b>' . ($unread ? '<span class="rk red" style="margin-left:auto">' . $unread . '</span>' : '') . '</div>'
+           . '<div class="sm muted">' . h($catLabel((string)$r['category'])) . ' · ' . h($statLabel[(string)$r['status']] ?? '') . ((string)$r['assigned_to'] !== '' ? ' · 🙋 ' . h((string)$r['assigned_to']) : '') . '</div>'
+           . '<div class="sm muted" style="opacity:.8">' . h($nm) . ' · ' . h(date('d/m H:i', strtotime((string)$r['updated_at']))) . '</div>'
+           . '<div class="sm muted" style="opacity:.7">' . h($snip) . '</div></a>';
+    }
+    $pages = (int)ceil($total / $per);
+    if ($pages > 1) {
+        $flt = ($q !== '' ? '&q=' . urlencode($q) : '') . ($filter !== 'all' ? '&f=' . $filter : '') . ($catFilter !== '' ? '&cat=' . urlencode($catFilter) : '');
+        echo '<div class="pager" style="margin-top:8px"><span class="muted sm">p.' . $pg . '/' . $pages . '</span><div>';
+        if ($pg > 1) echo '<a class="mini ghost" href="' . $base . $flt . '&pg=' . ($pg - 1) . '">←</a> ';
+        if ($pg < $pages) echo '<a class="mini ghost" href="' . $base . $flt . '&pg=' . ($pg + 1) . '">→</a>';
+        echo '</div></div>';
+    }
+    echo '</div>'; // cvlist
+    // Centre : fil
+    echo '<div class="cvmain">';
+    if (!$conv) echo '<div class="empty">← Choisis une conversation dans la liste.</div>';
+    else conv_detail_panel($conv, $cid, $me, $CATS, $statLabel, $scope);
+    echo '</div>';
+    // Droite : infos joueur
+    echo '<div class="cvinfo">';
+    if ($conv) conv_info_panel($conv); else echo '<div class="muted sm">Sélectionne une conversation pour voir les infos du joueur.</div>';
+    echo '</div>';
+    echo '</div>'; // cvwrap
+    echo '</div>'; // panel
+}
+
+/** Vue : discussion interne de l'équipe (staff ↔ staff). */
+function conv_view_team(): void {
     ensure_staff_msgs();
     $me = (string)($_SESSION['admin']['username'] ?? '?');
-    $feed = db()->query('SELECT id,author,body,created_at FROM staff_messages ORDER BY id DESC LIMIT 40')->fetchAll();
+    $feed = db()->query('SELECT id,author,body,created_at FROM staff_messages ORDER BY id DESC LIMIT 60')->fetchAll();
     echo '<div class="panel"><div class="ph"><h3>👥 Discussion de l\'équipe</h3><span class="muted sm" style="margin-left:auto">visible par tout le staff</span></div>';
     echo '<form method="post" class="js" data-reload><input type="hidden" name="action" value="smsg_post">' . csrf_field() . '<textarea name="body" rows="2" maxlength="2000" required placeholder="Écris un message à l\'équipe…" style="width:100%"></textarea><button style="margin-top:8px">💬 Publier</button></form>';
     if (!$feed) echo '<div class="empty">Aucun message pour l\'instant. Lance la discussion !</div>';
@@ -3858,16 +3899,73 @@ function page_messages(): void {
         echo '</div>';
     }
     echo '</div>';
-    // marque le fil comme lu pour ce staff
     if ($feed) { $maxId = (int)$feed[0]['id']; db()->prepare('INSERT INTO staff_seen (username,last_id) VALUES (?,?) ON DUPLICATE KEY UPDATE last_id=GREATEST(last_id,VALUES(last_id))')->execute([$me, $maxId]); }
+}
 
-    /* --- Historique récent (traité) --- */
-    $done = db()->query("SELECT username,subject,handled_by,handled_at FROM contact_messages WHERE status='handled' ORDER BY handled_at DESC LIMIT 10")->fetchAll();
-    if ($done) {
-        echo '<div class="panel"><div class="ph"><h3>🗂️ Messages traités (récents)</h3></div><table class="clean"><tr><th>De</th><th>Sujet</th><th>Traité par</th><th>Quand</th></tr>';
-        foreach ($done as $m) echo '<tr><td>' . h((string)($m['username'] ?: '—')) . '</td><td class="muted">' . h((string)($m['subject'] ?: '—')) . '</td><td>' . h((string)$m['handled_by']) . '</td><td class="sm muted">' . h($m['handled_at'] ? date('d/m H:i', strtotime((string)$m['handled_at'])) : '—') . '</td></tr>';
+/** Vue : récupération de compte (demandes MDP + anciens messages contact non repris). */
+function conv_view_recovery(): void {
+    ensure_pw_resets(); ensure_contact_msgs();
+    $reqs = db()->query("SELECT id,username,message,ip,created_at FROM password_resets WHERE status='pending' ORDER BY created_at ASC")->fetchAll();
+    echo '<div class="panel"><div class="ph"><h3>🔑 Demandes de mot de passe</h3>' . ($reqs ? '<span class="rk red" style="margin-left:auto">' . count($reqs) . ' en attente</span>' : '') . '</div>';
+    echo '<p class="muted sm" style="margin:-2px 0 8px">Vérifie l\'identité (indice fourni) avant de réinitialiser. Accès réservé au staff autorisé. Aucun mot de passe n\'est transmis par la messagerie.</p>';
+    if (!$reqs) echo '<div class="empty">Aucune demande en attente 🎉</div>';
+    else {
+        echo '<table class="clean"><tr><th>Reçue</th><th>Pseudo</th><th>Indice</th><th>IP</th><th style="width:230px">Action</th></tr>';
+        foreach ($reqs as $r) {
+            echo '<tr><td class="sm muted">' . h(date('d/m H:i', strtotime((string)$r['created_at']))) . '</td>'
+               . '<td><b>' . h((string)$r['username']) . '</b></td><td class="muted sm">' . h((string)$r['message']) . '</td><td class="sm muted">' . h((string)$r['ip']) . '</td>'
+               . '<td><form method="post" style="display:inline" onsubmit="return confirm(\'Réinitialiser le mot de passe de « ' . h(addslashes((string)$r['username'])) . ' » ? Un mot de passe provisoire sera généré.\')">' . csrf_field() . '<input type="hidden" name="action" value="pwreset_do"><input type="hidden" name="rid" value="' . (int)$r['id'] . '"><button class="mini">🔑 Traiter</button></form> '
+               . '<form method="post" class="js" data-reload style="display:inline" data-confirm="Rejeter cette demande ?"><input type="hidden" name="action" value="pwreset_reject">' . csrf_field() . '<input type="hidden" name="rid" value="' . (int)$r['id'] . '"><button class="mini ghost">Rejeter</button></form></td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '</div>';
+
+    // Anciens messages du formulaire contact non encore repris (accès préservé)
+    $new = db()->query("SELECT id,username,subject,message,ip,created_at FROM contact_messages WHERE status='new' ORDER BY created_at ASC")->fetchAll();
+    if ($new) {
+        echo '<div class="panel"><div class="ph"><h3>📥 Anciens messages du formulaire contact</h3><span class="rk red" style="margin-left:auto">' . count($new) . '</span></div>';
+        echo '<p class="muted sm" style="margin:-2px 0 8px">Messages de l\'ancien formulaire. Utilise « Reprendre les anciens messages » dans l\'Assistance pour les convertir en conversations.</p>';
+        echo '<table class="clean"><tr><th>Reçu</th><th>De</th><th>Message</th><th style="width:160px"></th></tr>';
+        foreach ($new as $m) {
+            echo '<tr><td class="sm muted">' . h(date('d/m H:i', strtotime((string)$m['created_at']))) . '</td><td><b>' . h((string)($m['username'] ?: '—')) . '</b></td>'
+               . '<td>' . (trim((string)$m['subject']) !== '' ? '<b>' . h((string)$m['subject']) . '</b><br>' : '') . '<span class="muted">' . nl2br(h((string)$m['message'])) . '</span></td>'
+               . '<td><form method="post" class="js" data-reload style="display:inline"><input type="hidden" name="action" value="cmsg_handle">' . csrf_field() . '<input type="hidden" name="id" value="' . (int)$m['id'] . '"><button class="mini">✅ Traité</button></form> '
+               . '<form method="post" class="js" data-reload style="display:inline" data-confirm="Supprimer ?"><input type="hidden" name="action" value="cmsg_delete">' . csrf_field() . '<input type="hidden" name="id" value="' . (int)$m['id'] . '"><button class="mini ghost">✕</button></form></td></tr>';
+        }
         echo '</table></div>';
     }
+}
+
+function page_messages(): void {
+    page_title('Messagerie', 'Assistance : conversations joueurs ↔ équipe');
+    ensure_contact_msgs(); ensure_pw_resets(); ensure_user_msgs();
+    if (!function_exists('ensure_conversations')) { echo '<div class="empty">Module de conversations indisponible.</div>'; return; }
+    ensure_conversations();
+    $me = (string)($_SESSION['admin']['username'] ?? '?');
+    $vue = (string)($_GET['vue'] ?? 'assistance');
+    if (!in_array($vue, ['assistance', 'sent', 'team', 'recovery', 'archives', 'trash'], true)) $vue = 'assistance';
+
+    // Compteurs d'onglets
+    $cWait = function_exists('conv_unread_staff') ? conv_unread_staff() : 0;
+    $cRecov = 0; try { $cRecov = (int)db()->query("SELECT COUNT(*) FROM password_resets WHERE status='pending'")->fetchColumn(); } catch (Throwable $e) {}
+    $cTeam = function_exists('staff_unread') ? staff_unread($me) : 0;
+
+    $tabs = [
+        'assistance' => '🎧 Assistance' . ($cWait ? ' (' . $cWait . ')' : ''),
+        'sent' => '📤 Envoyés',
+        'team' => '👥 Discussion équipe' . ($cTeam ? ' (' . $cTeam . ')' : ''),
+        'recovery' => '🔑 Récupération' . ($cRecov ? ' (' . $cRecov . ')' : ''),
+        'archives' => '🗂 Archives',
+        'trash' => '🗑 Corbeille',
+    ];
+    echo '<div class="row" style="gap:4px;flex-wrap:wrap;margin-bottom:12px;border-bottom:2px solid var(--line2);padding-bottom:6px">';
+    foreach ($tabs as $k => $lbl) echo '<a class="mini' . ($vue === $k ? '' : ' ghost') . '" href="?p=messages&vue=' . $k . '">' . $lbl . '</a>';
+    echo '</div>';
+
+    if ($vue === 'team') conv_view_team();
+    elseif ($vue === 'recovery') conv_view_recovery();
+    else conv_assistance_view($vue);
 }
 
 function page_moderation(): void {
@@ -4909,6 +5007,14 @@ code{background:var(--bg);padding:2px 7px;border-radius:6px;color:var(--acc);fon
 .cm-staff{align-self:flex-end;background:var(--soft);border-color:var(--acc)}
 .cm-internal{align-self:stretch;max-width:100%;background:#fff6d8;border-color:#e3c65a}
 .cm-system{align-self:center;max-width:100%;background:var(--soft);border-style:dashed;text-align:center}
+.cvwrap{display:grid;grid-template-columns:minmax(220px,26%) minmax(0,1fr) minmax(190px,22%);gap:14px;align-items:start;margin-top:10px}
+.cvwrap.noinfo{grid-template-columns:minmax(220px,26%) minmax(0,1fr)}
+.cvwrap.noinfo .cvinfo{display:none}
+.cvlist{display:flex;flex-direction:column;gap:8px;max-height:72vh;overflow:auto}
+.cvmain{min-width:0}
+.cvinfo{min-width:0;background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:12px}
+@media(max-width:1150px){.cvwrap,.cvwrap.noinfo{grid-template-columns:minmax(200px,32%) minmax(0,1fr)}.cvinfo{display:none}}
+@media(max-width:780px){.cvwrap,.cvwrap.noinfo{grid-template-columns:1fr}.cvlist{max-height:none}}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));grid-gap:14px;gap:14px;margin-bottom:18px}
 .stat{display:flex;align-items:center;background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:16px 18px}
 .stat .ic{font-size:24px;width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:var(--soft)}
