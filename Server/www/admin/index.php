@@ -1714,6 +1714,8 @@ function link_classify(string $href, array $known): array {
         if (in_array($p, $known, true)) return ['ok', $p];
         return ['broken', 'route inconnue : p=' . $p];
     }
+    // /help et /help/NN sont réécrits vers ?p=help par le .htaccess
+    if (preg_match('#^/help(/|$|\?|\#)#i', $u)) return ['ok', $u];
     // Fichiers/chemins connus (client, ancres, racine)
     if ($u === '/' || $u === '?' || strpos($u, '#') === 0) return ['ok', $u];
     if (preg_match('#\.(php|html?|gif|png|jpe?g|swf|dcr|cct|ico)(\?|$)#i', $u)) return ['ok', $u];
@@ -1779,7 +1781,58 @@ function sitemgr_linkcheck(): void {
     $tbl('🌐 Liens externes (non vérifiés automatiquement)', $ext, 'broken');
     $tbl('❓ Liens à vérifier (forme inhabituelle)', $check, 'broken');
     echo '</details>';
-    echo '<p class="muted sm" style="margin-top:10px">ℹ️ Contrôle <b>statique</b> des contenus gérés dans l\'admin. Il ne teste pas encore les liens ouverts depuis le client (external_texts) ni l\'état HTTP réel des cibles externes — prévus dans un lot ultérieur.</p>';
+    echo '</div>';
+
+    // ===== Liens ouverts depuis le client (external_texts) =====
+    $cli = []; $cliBad = 0;
+    foreach (['external_texts.txt', 'external_texts_en.txt'] as $fn) {
+        $path = __DIR__ . '/../dcr/14.1_b8/' . $fn;
+        if (!is_file($path)) continue;
+        $raw = @file_get_contents($path); if ($raw === false) continue;
+        $txt = @mb_convert_encoding($raw, 'UTF-8', 'Windows-1252'); // external_texts = CP1252
+        foreach (preg_split('/\r\n|\n|\r/', $txt) as $line) {
+            if ($line === '' || $line[0] === '#') continue;
+            $eq = strpos($line, '='); if ($eq === false) continue;
+            $key = substr($line, 0, $eq); $val = trim(substr($line, $eq + 1));
+            // On ne garde que les valeurs qui sont des liens (URL ou ?p=)
+            if (!preg_match('#https?://|\?p=#i', $val)) continue;
+            // Normalise : retire l'hôte dynamique du client
+            $norm = preg_replace('#https?://(%predefined%|localhost|127\.0\.0\.1)#i', '', $val);
+            [$st, $d] = link_classify($norm, $known);
+            if ($st === 'external') continue; // lien externe réel (sulake, imaging…) : non bloquant
+            if ($st === 'ok') continue;
+            $cli[] = ['src' => $fn . ' · ' . $key, 'href' => $val, 'detail' => $d];
+            $cliBad++;
+        }
+    }
+    echo '<div class="panel"><div class="ph"><h3>🎮 Liens ouverts depuis le client</h3><span class="' . ($cliBad ? 'rk red' : 'rk') . '" style="margin-left:auto">' . ($cliBad ? $cliBad . ' à vérifier' : 'OK 🎉') . '</span></div>';
+    echo '<p class="muted sm" style="margin:-2px 0 10px">Liens définis dans <code>external_texts</code> (boutons/pages ouverts par le client Habbo). On vérifie que la cible <code>?p=…</code> correspond à une route réelle du site. Les liens vers des pages externes (Sulake, imaging) ne sont pas signalés.</p>';
+    if (!$cli) echo '<div class="empty">Aucun lien client cassé détecté 🎉</div>';
+    else { echo '<table class="clean"><tr><th>Clé client</th><th>Lien</th><th>Détail</th></tr>';
+        foreach ($cli as $r) echo '<tr><td class="sm">' . h((string)$r['src']) . '</td><td class="sm muted" style="word-break:break-all">' . h((string)$r['href']) . '</td><td class="sm">' . h((string)$r['detail']) . '</td></tr>';
+        echo '</table>'; }
+    echo '</div>';
+
+    // ===== Test HTTP en direct (opt-in) =====
+    echo '<div class="panel"><div class="ph"><h3>🌐 Test HTTP des routes (en direct)</h3></div>';
+    echo '<p class="muted sm" style="margin:-2px 0 10px">Vérifie l\'état réel (code HTTP) des principales pages du site en les appelant sur <code>127.0.0.1</code>. À lancer <b>site démarré</b> ; un port ouvert ne prouve pas que la page fonctionne.</p>';
+    if (($_GET['http'] ?? '') !== '1') {
+        echo '<a class="mini" href="?p=sitemgr&sec=linkcheck&http=1">▶️ Lancer le test HTTP</a>';
+    } else {
+        $routes = ['home', 'news', 'events', 'community', 'help', 'forgot', 'club', 'credits', 'shop', 'mobile', 'register'];
+        echo '<table class="clean"><tr><th>Route</th><th>Code</th><th>État</th></tr>';
+        foreach ($routes as $rt) {
+            $url = 'http://127.0.0.1/?p=' . $rt;
+            $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 3, 'ignore_errors' => true, 'header' => "User-Agent: linkcheck\r\n"]]);
+            $code = 0; $err = '';
+            $resp = @file_get_contents($url, false, $ctx);
+            if ($resp === false) { $err = 'injoignable'; }
+            elseif (isset($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $m)) { $code = (int)$m[1]; }
+            $okc = ($code >= 200 && $code < 400);
+            echo '<tr><td class="sm">?p=' . h($rt) . '</td><td class="sm">' . ($code ?: '—') . '</td><td class="sm">' . ($err !== '' ? '🔴 ' . h($err) . ' (site démarré ?)' : ($okc ? '🟢 OK' : '🔴 erreur')) . '</td></tr>';
+        }
+        echo '</table><a class="mini ghost" style="margin-top:8px" href="?p=sitemgr&sec=linkcheck">↩︎ Masquer</a>';
+    }
     echo '</div>';
 }
 function sp_tablabel(string $k): string {
