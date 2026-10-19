@@ -147,6 +147,9 @@ public class TeleportInteractor extends GenericTrigger {
             /*item.setCustomData(TELEPORTER_EFFECTS);
             item.updateStatus();*/
             room.send(new BROADCAST_TELEPORTER(item, player.getDetails().getName(), false));
+            // Ferme la porte MAINTENANT : le joueur est encore présent → il voit l'animation de fermeture
+            item.setCustomData(TELEPORTER_CLOSE);
+            item.updateStatus();
         }, 1000, TimeUnit.MILLISECONDS);
 
         GameScheduler.getInstance().getService().schedule(() -> {
@@ -154,11 +157,13 @@ public class TeleportInteractor extends GenericTrigger {
                 return;
             }
 
+            // Porte déjà fermée depuis +1000ms → on peut téléporter (l'animation a eu le temps de se jouer)
             room.send(new LOGOUT(player.getRoomUser().getInstanceId()));
-            item.setCustomData(TELEPORTER_CLOSE);
-            item.updateStatus();
 
             if (pairedTeleporter.getRoomId() != item.getRoomId()) {
+                // Arrivée dans une AUTRE salle : version d'origine (on apparaît à la porte de la salle d'arrivée).
+                // NB : tenter de faire émerger l'avatar DU téléporteur (enterRoom sur la case du téléporteur) provoque
+                // une boucle de re-téléportation (la case re-déclenche le téléporteur) -> abandonné, voir mémoire.
                 roomUser.setAuthenticateId(pairedTeleporter.getRoom().getId());
                 pairedTeleporter.getRoom().getEntityManager().enterRoom(player, null);
                 //pairedTeleporter.getRoom().forward(player, false);
@@ -171,7 +176,7 @@ public class TeleportInteractor extends GenericTrigger {
                 pairedTeleporter.updateStatus();*/
                 room.send(new BROADCAST_TELEPORTER(pairedTeleporter, player.getDetails().getName(), false));
             }
-        }, 1500, TimeUnit.MILLISECONDS);
+        }, 2000, TimeUnit.MILLISECONDS); // téléporte 1s après la fermeture de la porte (animation visible ; était 1500 d'origine)
 
         if (pairedTeleporter.getRoomId() == item.getRoomId()) {
             GameScheduler.getInstance().getService().schedule(() -> {

@@ -433,7 +433,7 @@ public abstract class RoomEntity {
      * @param recieveMessages the message to send to
      */
     public void talk(String message, CHAT_MESSAGE.ChatMessageType chatMessageType, List<Player> recieveMessages) {
-        //message = WordfilterManager.filterSentence(message);
+        message = org.alexdev.kepler.game.moderation.WordfilterManager.filterSentence(message);
         if (chatMessageType != CHAT_MESSAGE.ChatMessageType.WHISPER) {
             List<Entity> entities = new ArrayList<>(recieveMessages);
 
