@@ -1220,6 +1220,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION[$lastKey] = time();
                 $nbU = (int)db()->query('SELECT COUNT(*) FROM users')->fetchColumn();
                 $msg = '🎁 Meuble distribué à ' . $nbU . ' joueur(s) (dans leur main). Ils doivent se reconnecter.'; break;
+            case 'furni_give_me': /* donner un exemplaire au compte admin courant (test) */
+                $def = (int)($_POST['definition_id'] ?? 0);
+                $meId = (int)($_SESSION['admin']['id'] ?? 0);
+                if ($meId <= 0) { $ok = false; $msg = '❌ Compte admin introuvable.'; break; }
+                $gk = 'furni_me_last_' . $def;
+                if ((int)($_SESSION[$gk] ?? 0) > time() - 5) { $ok = false; $msg = '⏳ Déjà ajouté il y a un instant (anti double-clic).'; break; }
+                $chk = db()->prepare('SELECT id FROM items_definitions WHERE id=?'); $chk->execute([$def]);
+                if (!$chk->fetch()) { $ok = false; $msg = 'Définition de meuble introuvable.'; break; }
+                db()->prepare("INSERT INTO items (user_id,room_id,definition_id,x,y,z,wall_position,custom_data) VALUES (?,0,?,0,0,0,'','')")->execute([$meId, $def]);
+                $_SESSION[$gk] = time();
+                $msg = '🎁 Un exemplaire ajouté à ton compte (dans ta main — reconnecte-toi au jeu pour le voir).'; break;
             case 'decor_season':
                 $season = in_array($_POST['season'] ?? '', array_keys(DECOR_LABELS), true) ? (string)$_POST['season'] : '';
                 $casts = available_casts(); $n = 0;
@@ -2853,7 +2864,7 @@ function action_tab(string $a): string {
         'cat_item' => 'catalogue', 'cat_page' => 'catalogue', 'cat_page_move' => 'catalogue', 'cat_bulk' => 'catalogue',
         'navcat_update' => 'navcats', 'navcat_move' => 'navcats',
         'pkg_add' => 'packages', 'pkg_update' => 'packages', 'pkg_delete' => 'packages',
-        'def_update' => 'furni', 'furni_def_save' => 'furni', 'furni_def_restore' => 'furni', 'furni_name_sync' => 'furni', 'furni_all' => 'furni', 'song_update' => 'trax', 'song_delete' => 'trax',
+        'def_update' => 'furni', 'furni_def_save' => 'furni', 'furni_def_restore' => 'furni', 'furni_name_sync' => 'furni', 'furni_all' => 'furni', 'furni_give_me' => 'furni', 'song_update' => 'trax', 'song_delete' => 'trax',
         'furni_convert' => 'convert', 'furni_decompile' => 'convert',
         // Communauté / modération
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
@@ -3108,6 +3119,40 @@ function furni_behaviour_dict(): array {
         'place_roller_on_top' => 'Peut recevoir un rouleau par-dessus',
     ];
 }
+/* Aide courte (effet concret) par comportement — affichée au survol et dans le résumé. */
+function furni_behaviour_help(): array {
+    return [
+        'solid' => 'Bloque la case : on ne peut pas marcher dessus ni traverser.',
+        'can_sit_on_top' => 'L\'avatar s\'assoit en montant dessus (hauteur = top_height). À coupler avec Interacteur « chair ».',
+        'can_lay_on_top' => 'L\'avatar s\'allonge dessus (lit). À coupler avec Interacteur « bed ».',
+        'can_stand_on_top' => 'On peut marcher/se tenir dessus (sol praticable).',
+        'can_stack_on_top' => 'On peut poser d\'autres meubles par-dessus (à la hauteur top_height).',
+        'place_roller_on_top' => 'Accepte un rouleau (tapis roulant) posé dessus.',
+        'requires_rights_for_interaction' => 'Seul le propriétaire (ou qui a les droits) peut l\'actionner.',
+        'requires_touching_for_interaction' => 'Il faut être sur une case adjacente pour l\'actionner.',
+        'gate' => 'Barrière/porte : s\'ouvre et se ferme pour laisser passer.',
+        'roller' => 'Rouleau : déplace automatiquement ce qui est dessus.',
+        'teleporter' => 'Téléporteur. ⚠️ Nécessite un vrai sprite de téléporteur + une paire liée : la case seule ne suffit pas.',
+        'prize_trophy' => 'Trophée avec texte gravé (coupe).',
+        'present' => 'Paquet cadeau que l\'on déballe.',
+        'redeemable' => 'Peut être échangé contre des crédits.',
+        'dice' => 'Dé que l\'on lance.',
+        'sound_machine' => 'Machine à sons (Trax). ⚠️ Dépend du sprite/logique Trax côté client.',
+        'sound_machine_sample_set' => 'Fournit un jeu d\'échantillons pour la Trax.',
+        'song_disk' => 'Disque de chanson pour la Trax.',
+        'jukebox' => 'Jukebox. ⚠️ Nécessite le sprite/logique jukebox : cocher ne suffit pas.',
+        'photo' => 'Photo prise avec l\'appareil.',
+        'post_it' => 'Pense-bête collant (note).',
+        'decoration' => 'Pure décoration, aucune interaction.',
+        'wheel_of_fortune' => 'Roue de la fortune (donne un résultat aléatoire).',
+        'roomdimmer' => 'Variateur d\'ambiance (Moodlight) : règle la lumière de la salle.',
+        'wall_item' => 'Se pose sur le MUR (et non au sol).',
+        'custom_data_true_false' => 'A deux états vrai/faux (ex. allumé/éteint).',
+        'custom_data_on_off' => 'A deux états on/off.',
+        'custom_data_numeric_on_off' => 'État on/off stocké en nombre.',
+        'custom_data_numeric_state' => 'Plusieurs états numériques (ex. plusieurs visuels).',
+    ];
+}
 /* Décompose la chaîne behaviour en flags connus / inconnus. */
 function furni_behaviour_parse(string $b): array {
     $flags = array_values(array_filter(array_map('trim', explode(',', $b)), fn($x) => $x !== ''));
@@ -3359,14 +3404,13 @@ function furni_fiche(int $id): void {
     echo '<p class="hint" style="margin-top:8px">⚠️ <b>Définition commune</b> : modifier ces valeurs peut affecter <b>tous les exemplaires</b> de ce meuble (posés et en inventaire).</p>';
     echo '</div></div>';
 
-    /* --- Action : donner ce meuble à tous (Lot 4, anti double-distribution côté serveur) --- */
+    /* --- Actions → Distribuer (repliées : moins mises en avant sur une fiche technique) --- */
     $nbUsers = (int)db()->query('SELECT COUNT(*) FROM users')->fetchColumn();
-    echo '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed rgba(128,128,128,.25)">';
-    echo '<form method="post" class="js" data-reload data-confirm="Distribuer « ' . h((string)$d['name']) . ' » à ' . $nbUsers . ' joueur(s) ? Chacun le recevra dans sa main (reconnexion requise)." style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' . csrf_field();
-    echo '<input type="hidden" name="action" value="furni_all"><input type="hidden" name="definition_id" value="' . $id . '">';
-    echo furni_icon_img($sprite, 24);
-    echo '<button>🎁 Donner « ' . h((string)$d['name']) . ' » à tous les joueurs</button>';
-    echo '<span class="muted sm">' . $nbUsers . ' destinataire(s)</span></form></div>';
+    echo '<details style="margin-top:10px;border-top:1px dashed rgba(128,128,128,.25);padding-top:8px"><summary class="sm" style="cursor:pointer;font-weight:600">⚙️ Actions → Distribuer ce meuble</summary>';
+    echo '<div style="margin-top:8px;display:flex;flex-direction:column;gap:8px">';
+    echo '<form method="post" class="js" data-reload style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' . csrf_field() . '<input type="hidden" name="action" value="furni_give_me"><input type="hidden" name="definition_id" value="' . $id . '">' . furni_icon_img($sprite, 24) . '<button class="mini">🎁 M\'en donner un exemplaire (mon compte)</button><span class="muted sm">pour tester — dans ta main, reconnexion requise</span></form>';
+    echo '<form method="post" class="js" data-reload data-confirm="Distribuer « ' . h((string)$d['name']) . ' » à ' . $nbUsers . ' joueur(s) ? Chacun le recevra dans sa main (reconnexion requise)." style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' . csrf_field() . '<input type="hidden" name="action" value="furni_all"><input type="hidden" name="definition_id" value="' . $id . '">' . furni_icon_img($sprite, 24) . '<button class="mini">🎁 Donner à TOUS les joueurs (' . $nbUsers . ')</button></form>';
+    echo '</div></details>';
 
     /* --- Onglets --- */
     $tabs = ['carac' => '🔧 Caractéristiques', 'cata' => '🛒 Catalogue & variantes', 'exemplaires' => '📦 Exemplaires', 'diag' => '🩺 Diagnostic & tests', 'hist' => '🕑 Historique'];
@@ -3374,32 +3418,30 @@ function furni_fiche(int $id): void {
     foreach ($tabs as $k => $lbl) echo '<button type="button" class="ftab' . ($k === 'carac' ? ' on' : '') . '" data-ft="' . $k . '" style="border:0;background:none;color:inherit;padding:8px 12px;cursor:pointer;font:inherit;font-weight:600;white-space:nowrap;border-bottom:2px solid transparent">' . h($lbl) . '</button>';
     echo '</div>';
 
-    /* Onglet Caractéristiques */
+    /* Onglet Caractéristiques — éditeur unique (plus de tableau en double), aide à côté des réglages */
     echo '<div class="ftp" data-ftp="carac">';
-    echo '<table class="clean" style="margin-top:10px"><tr><th style="width:200px">Caractéristique</th><th>Valeur</th><th>Effet</th></tr>';
-    echo '<tr><td>Dimensions (cases)</td><td>' . (int)$d['length'] . ' × ' . (int)$d['width'] . '</td><td class="sm muted">emprise au sol (longueur × largeur)</td></tr>';
-    echo '<tr><td>Hauteur (top_height)</td><td>' . h(rtrim(rtrim(number_format((float)$d['top_height'], 2, '.', ''), '0'), '.')) . '</td><td class="sm muted">hauteur du dessus (empilement, assise/pose d\'objets)</td></tr>';
-    echo '<tr><td>Comportement</td><td>' . furni_behaviour_chips((string)$d['behaviour']) . '</td><td class="sm muted">interactions exposées par Kepler</td></tr>';
-    echo '<tr><td>Interacteur</td><td><code>' . h((string)$d['interactor']) . '</code></td><td class="sm muted">type d\'interaction côté serveur</td></tr>';
-    echo '<tr><td>Couleur</td><td><code>' . h((string)$d['colour']) . '</code></td><td class="sm muted">RVB (technique)</td></tr>';
-    echo '<tr><td>max_status</td><td><code>' . h((string)$d['max_status']) . '</code></td><td class="sm muted">nombre d\'états (technique)</td></tr>';
-    echo '<tr><td>Échangeable</td><td>' . ($d['is_tradable'] ? '✅ oui' : '❌ non') . '</td><td class="sm muted">peut être échangé entre joueurs</td></tr>';
-    echo '<tr><td>Recyclable</td><td>' . ($d['is_recyclable'] ? '✅ oui' : '❌ non') . '</td><td class="sm muted">accepté par le recycleur</td></tr>';
-    if (trim((string)$d['drink_ids']) !== '' && $d['drink_ids'] !== "''") echo '<tr><td>Boissons (drink_ids)</td><td><code>' . h((string)$d['drink_ids']) . '</code></td><td class="sm muted">IDs des boissons servies</td></tr>';
-    echo '</table>';
     /* --- Éditeur complet (Lot 2) : validé, versionné, anti-concurrence --- */
     $origHash = furni_def_hash($d);
     $dict = furni_behaviour_dict();
     $curFlags = array_values(array_filter(array_map('trim', explode(',', (string)$d['behaviour'])), fn($x) => $x !== ''));
     $nbEx = 0; try { $ex = db()->prepare('SELECT COUNT(*) FROM items WHERE definition_id=?'); $ex->execute([$id]); $nbEx = (int)$ex->fetchColumn(); } catch (Throwable $e) {}
-    echo '<form method="post" class="js" data-reload style="margin-top:14px;border-top:1px dashed rgba(128,128,128,.3);padding-top:12px">' . csrf_field();
+    $origData = h(json_encode([
+        'name' => (string)$d['name'], 'description' => (string)$d['description'],
+        'length' => (string)(int)$d['length'], 'width' => (string)(int)$d['width'],
+        'top_height' => rtrim(rtrim(number_format((float)$d['top_height'], 2, '.', ''), '0'), '.'),
+        'interactor' => (string)$d['interactor'], 'colour' => (string)$d['colour'], 'max_status' => (string)$d['max_status'],
+        'is_tradable' => $d['is_tradable'] ? '1' : '0', 'is_recyclable' => $d['is_recyclable'] ? '1' : '0',
+        'behaviour' => implode(',', $curFlags),
+    ], JSON_UNESCAPED_UNICODE));
+    echo '<form method="post" class="js" data-reload id="furniform" data-orig="' . $origData . '" style="margin-top:6px">' . csrf_field();
     echo '<input type="hidden" name="action" value="furni_def_save"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="orig_hash" value="' . h($origHash) . '">';
     echo '<h4 style="margin:0 0 8px">✏️ Modifier ce meuble</h4>';
     echo '<label>Nom<input name="name" value="' . h((string)$d['name']) . '" required></label>';
     echo '<label style="margin-top:8px">Description<input name="description" value="' . h((string)$d['description']) . '"></label>';
     echo '<div class="row" style="margin-top:8px"><label>Longueur (cases)<input type="number" min="0" name="length" value="' . (int)$d['length'] . '" style="width:120px"></label><label>Largeur (cases)<input type="number" min="0" name="width" value="' . (int)$d['width'] . '" style="width:120px"></label><label>Hauteur (top_height)<input type="number" step="0.01" min="0" name="top_height" value="' . h(rtrim(rtrim(number_format((float)$d['top_height'], 2, '.', ''), '0'), '.')) . '" style="width:130px"></label></div>';
     echo '<p class="sm muted" style="margin:4px 0 0">📏 Avatar mal posé (assis/couché enfoncé ou flottant) ? La bonne hauteur est sur <a href="https://habbohistory.com/furniture" target="_blank" rel="noopener">habbohistory.com/furniture</a> (ligne « Height: X.XX ») → recopie-la ici.</p>';
-    echo '<p class="sm muted" style="margin:12px 0 4px">Comportement — <b>coche ce qui s\'applique</b> (interactions réellement gérées par Kepler) :</p>';
+    echo '<p class="sm muted" style="margin:12px 0 4px">Comportement — <b>coche ce qui s\'applique</b> (survole une case pour son effet). Le résumé en clair est juste en dessous.</p>';
+    $help = furni_behaviour_help();
     $groups = [
         '🚶 Position & praticabilité' => ['solid', 'can_sit_on_top', 'can_lay_on_top', 'can_stand_on_top', 'can_stack_on_top', 'place_roller_on_top'],
         '🖐️ Interaction' => ['requires_rights_for_interaction', 'requires_touching_for_interaction', 'gate', 'custom_data_true_false', 'custom_data_on_off', 'custom_data_numeric_on_off', 'custom_data_numeric_state'],
@@ -3407,8 +3449,9 @@ function furni_fiche(int $id): void {
         '🎵 Son, média & mur' => ['sound_machine', 'sound_machine_sample_set', 'song_disk', 'jukebox', 'photo', 'post_it', 'decoration', 'roomdimmer', 'wall_item'],
     ];
     $rendered = [];
-    $cb = function (string $f, string $lbl, bool $checked, bool $special = false) {
-        return '<label style="display:flex;flex-direction:row;align-items:center;gap:6px;padding:2px 0;font-weight:normal"><input type="checkbox" name="beh[]" value="' . h($f) . '"' . ($checked ? ' checked' : '') . '> <span>' . ($special ? '⚙ ' : '') . h($lbl) . ' <span class="muted sm">(' . h($f) . ')</span></span></label>';
+    $cb = function (string $f, string $lbl, bool $checked, bool $special = false) use ($help) {
+        $tip = $help[$f] ?? ($special ? 'Comportement particulier conservé tel quel.' : '');
+        return '<label title="' . h($tip) . '" style="display:flex;flex-direction:row;align-items:center;gap:6px;padding:2px 0;font-weight:normal;cursor:help"><input type="checkbox" name="beh[]" value="' . h($f) . '"' . ($checked ? ' checked' : '') . '> <span>' . ($special ? '⚙ ' : '') . h($lbl) . ' <span class="muted sm">(' . h($f) . ')</span></span></label>';
     };
     echo '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px 18px">';
     foreach ($groups as $gname => $flags) {
@@ -3416,18 +3459,24 @@ function furni_fiche(int $id): void {
         foreach ($flags as $f) { if (!isset($dict[$f])) continue; $rendered[$f] = 1; echo $cb($f, $dict[$f], in_array($f, $curFlags, true)); }
         echo '</div>';
     }
-    // flags du dictionnaire non classés + flags particuliers présents mais hors dictionnaire (conservés)
     $extra = '';
     foreach ($dict as $f => $lbl) { if (isset($rendered[$f])) continue; $rendered[$f] = 1; $extra .= $cb($f, $lbl, in_array($f, $curFlags, true)); }
     foreach ($curFlags as $f) { if (isset($dict[$f])) continue; $extra .= $cb($f, $f, true, true); }
     if ($extra !== '') echo '<div style="border:1px solid rgba(128,128,128,.18);border-radius:8px;padding:8px 10px"><div class="sm" style="font-weight:700;margin-bottom:4px;opacity:.8">🔩 Autres / spécifiques</div>' . $extra . '</div>';
     echo '</div>';
+    /* Résumé « ce que fait ce meuble » (rempli en direct par JS) + données d'aide */
+    echo '<div id="behsummary" data-help=\'' . h(json_encode($help, JSON_UNESCAPED_UNICODE)) . '\' style="margin-top:8px;padding:8px 10px;background:rgba(90,130,170,.10);border-radius:8px;font-size:12px"></div>';
+    echo '<p class="hint">⚠️ Cocher <b>Téléporteur</b>, <b>Jukebox</b>, <b>Trax</b>… ne suffit <b>pas</b> à rendre un meuble fonctionnel : il faut aussi le bon sprite côté client. À <b>tester en jeu</b>.</p>';
     echo '<div class="row" style="margin-top:4px"><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_tradable"' . ($d['is_tradable'] ? ' checked' : '') . '> Échangeable</label><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_recyclable"' . ($d['is_recyclable'] ? ' checked' : '') . '> Recyclable</label></div>';
     echo '<details style="margin-top:8px"><summary class="sm muted">⚙️ Paramètres techniques avancés</summary><div class="row" style="margin-top:6px"><label>Interacteur<input name="interactor" value="' . h((string)$d['interactor']) . '" style="width:170px"></label><label>Couleur (RVB)<input name="colour" value="' . h((string)$d['colour']) . '" style="width:130px"></label><label>max_status<input name="max_status" value="' . h((string)$d['max_status']) . '" style="width:90px"></label></div><p class="hint">Champs techniques : ne change que si tu sais ce que tu fais.</p></details>';
     echo '<label style="margin-top:8px">Motif de la modification (facultatif)<input name="reason" maxlength="255" placeholder="ex. correction de la hauteur d\'assise"></label>';
     echo '<div style="margin-top:10px;padding:8px 10px;background:rgba(224,160,32,.12);border-radius:6px;font-size:12px">⚠️ <b>Impact</b> : définition partagée par <b>' . $nbEx . '</b> exemplaire(s) (posés + inventaire) et <b>' . count($offers) . '</b> offre(s) catalogue. Les changements s\'appliquent à <b>tous</b>.</div>';
-    echo '<button style="margin-top:10px">💾 Enregistrer</button> <span class="muted sm">⚙️ Redémarrage de l\'émulateur nécessaire pour l\'affichage en jeu.</span></form>';
-    echo '<p class="hint">ℹ️ Enregistré en base + tracé dans l\'historique. Le <b>nom affiché en jeu</b> (meuble posé) vient des <b>textes client</b> — synchronisation au Lot 3.</p>';
+    echo '<div id="furnidiffbox" style="display:none;margin-top:10px;padding:8px 10px;border:1px solid rgba(90,130,170,.4);border-radius:8px;font-size:12px"></div>';
+    echo '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
+    echo '<button type="button" id="furnidiffbtn" class="mini ghost">👁 Voir les modifications</button>';
+    echo '<button>💾 Enregistrer</button>';
+    echo '<span class="muted sm">Enregistré en base + historique. ⚙️ Redémarrage émulateur pour l\'affichage en jeu. Le nom affiché en jeu se synchronise dans l\'onglet « Catalogue & variantes ».</span>';
+    echo '</div></form>';
     echo '</div>';
 
     /* Onglet Catalogue & variantes */
@@ -3557,6 +3606,44 @@ function furni_fiche(int $id): void {
     for(var p=0;p<panes.length;p++){ panes[p].style.display = panes[p].getAttribute('data-ftp')===k ? '' : 'none'; }
   }; }
   var first=document.querySelector('.ftab.on'); if(first) first.style.borderBottomColor='#6fb1ff';
+})();
+(function(){
+  var f=document.getElementById('furniform'); if(!f) return;
+  function esc(s){return String(s).replace(/[&<>]/g,function(c){return c==='&'?'&amp;':c==='<'?'&lt;':'&gt;';});}
+  var sumEl=document.getElementById('behsummary'), help={};
+  try{ help=JSON.parse((sumEl&&sumEl.getAttribute('data-help'))||'{}'); }catch(e){}
+  function updSummary(){
+    if(!sumEl) return;
+    var ch=[].slice.call(f.querySelectorAll('input[name="beh[]"]:checked'));
+    if(!ch.length){ sumEl.innerHTML='<b>Ce meuble ne fait rien de spécial</b> (aucun comportement coché).'; return; }
+    var s='<b>Ce meuble fait :</b><ul style="margin:4px 0 0;padding-left:18px">';
+    ch.forEach(function(c){ s+='<li>'+(help[c.value]?esc(help[c.value]):esc(c.value))+'</li>'; });
+    sumEl.innerHTML=s+'</ul>';
+  }
+  f.addEventListener('change',function(e){ if(e.target&&e.target.name==='beh[]') updSummary(); });
+  updSummary();
+  var btn=document.getElementById('furnidiffbtn'), box=document.getElementById('furnidiffbox');
+  var L={name:'Nom',description:'Description',length:'Longueur',width:'Largeur',top_height:'Hauteur',interactor:'Interacteur',colour:'Couleur',max_status:'max_status',is_tradable:'Échangeable',is_recyclable:'Recyclable',behaviour:'Comportement'};
+  if(btn){ btn.onclick=function(){
+    var orig={}; try{ orig=JSON.parse(f.getAttribute('data-orig')||'{}'); }catch(e){}
+    var ch=[];
+    ['name','description','length','width','top_height','interactor','colour','max_status'].forEach(function(n){
+      var el=f.querySelector('[name="'+n+'"]'); if(!el) return; var v=String(el.value).trim();
+      if(String(orig[n]==null?'':orig[n])!==v) ch.push([L[n],orig[n],v]);
+    });
+    ['is_tradable','is_recyclable'].forEach(function(n){
+      var el=f.querySelector('input[name="'+n+'"]'); if(!el) return; var v=el.checked?'1':'0';
+      if(String(orig[n]==null?'0':orig[n])!==v) ch.push([L[n],(orig[n]==='1'?'oui':'non'),(v==='1'?'oui':'non')]);
+    });
+    var curArr=[].slice.call(f.querySelectorAll('input[name="beh[]"]:checked')).map(function(x){return x.value;});
+    var curSet=curArr.slice().sort().join(','), origSet=String(orig.behaviour||'').split(',').filter(Boolean).sort().join(',');
+    if(curSet!==origSet) ch.push([L.behaviour,(orig.behaviour||'(aucun)'),(curArr.join(',')||'(aucun)')]);
+    box.style.display='';
+    if(!ch.length){ box.innerHTML='Aucune modification pour l\'instant.'; return; }
+    var html='<b>Modifications à enregistrer ('+ch.length+') :</b><table style="width:100%;margin-top:4px;border-collapse:collapse">';
+    ch.forEach(function(c){ html+='<tr><td style="padding:2px 6px;vertical-align:top"><b>'+esc(c[0])+'</b></td><td style="padding:2px 6px;color:#c0392b;text-decoration:line-through">'+esc(c[1]||'(vide)')+'</td><td style="padding:2px 6px">→ <span style="color:#2b8a3e">'+esc(c[2]||'(vide)')+'</span></td></tr>'; });
+    box.innerHTML=html+'</table>';
+  }; }
 })();
 </script>
     <?php
