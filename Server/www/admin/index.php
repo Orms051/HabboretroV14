@@ -1231,6 +1231,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 db()->prepare("INSERT INTO items (user_id,room_id,definition_id,x,y,z,wall_position,custom_data) VALUES (?,0,?,0,0,0,'','')")->execute([$meId, $def]);
                 $_SESSION[$gk] = time();
                 $msg = '🎁 Un exemplaire ajouté à ton compte (dans ta main — reconnecte-toi au jeu pour le voir).'; break;
+            case 'wf_add': { /* Filtre de mots : ajouter/mettre à jour */
+                ensure_wordfilter();
+                $w = mb_strtolower(trim((string)($_POST['word'] ?? '')));
+                if ($w === '' || mb_strlen($w) > 64) { $ok = false; $msg = '❌ Mot vide ou trop long.'; break; }
+                $r = trim((string)($_POST['replacement'] ?? 'bobba')); if ($r === '') $r = 'bobba';
+                db()->prepare('INSERT INTO wordfilter (word,replacement,enabled) VALUES (?,?,1) ON DUPLICATE KEY UPDATE replacement=VALUES(replacement), enabled=1')->execute([$w, mb_substr($r, 0, 64)]);
+                $msg = '✅ Mot « ' . h($w) . ' » ajouté. ⚙️ Redémarre l\'émulateur pour l\'appliquer en jeu.'; break;
+            }
+            case 'wf_del':
+                ensure_wordfilter();
+                db()->prepare('DELETE FROM wordfilter WHERE id=?')->execute([(int)($_POST['id'] ?? 0)]);
+                $msg = '🗑️ Mot retiré. ⚙️ Redémarre l\'émulateur pour l\'appliquer.'; break;
+            case 'wf_toggle':
+                ensure_wordfilter();
+                db()->prepare('UPDATE wordfilter SET enabled=1-enabled WHERE id=?')->execute([(int)($_POST['id'] ?? 0)]);
+                $msg = '🔁 Activé/désactivé. ⚙️ Redémarre l\'émulateur pour l\'appliquer.'; break;
             case 'decor_season':
                 $season = in_array($_POST['season'] ?? '', array_keys(DECOR_LABELS), true) ? (string)$_POST['season'] : '';
                 $casts = available_casts(); $n = 0;
@@ -1320,13 +1336,14 @@ switch ($p) {
     case 'mysql': page_mysql(); break;
     case 'server': page_server(); break;
     case 'journal': page_journal(); break;
+    case 'wordfilter': page_wordfilter(); break;
     default: page_dashboard(); break;
 }
 render_footer();
 
 /* ============ ACCÈS AUX ONGLETS PAR RANG ============ */
 function admin_nav(): array {
-    return ['dashboard' => ['🏠', 'Accueil'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal en direct']];
+    return ['dashboard' => ['🏠', 'Accueil'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal en direct'], 'wordfilter' => ['🤬', 'Filtre de mots']];
 }
 function tab_default_rank(string $tab): int {
     $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6, 'journal' => 7];
@@ -1338,7 +1355,7 @@ function nav_groups(): array {
         'Site & contenus' => ['sitemgr', 'news'],
         'Joueurs' => ['users', 'badges', 'ranks'],
         'Alertes & annonces' => ['alerts'],
-        'Modération & assistance' => ['messages', 'moderation', 'homemod', 'commandes', 'audit'],
+        'Modération & assistance' => ['messages', 'moderation', 'homemod', 'commandes', 'wordfilter', 'audit'],
         'Hôtel & appartements' => ['rooms', 'models', 'gamemaps', 'bots', 'games'],
         'Catalogue & économie' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax', 'recycler', 'vouchers'],
         'Animations' => ['events', 'bus'],
@@ -2864,7 +2881,8 @@ function action_tab(string $a): string {
         'cat_item' => 'catalogue', 'cat_page' => 'catalogue', 'cat_page_move' => 'catalogue', 'cat_bulk' => 'catalogue',
         'navcat_update' => 'navcats', 'navcat_move' => 'navcats',
         'pkg_add' => 'packages', 'pkg_update' => 'packages', 'pkg_delete' => 'packages',
-        'def_update' => 'furni', 'furni_def_save' => 'furni', 'furni_def_restore' => 'furni', 'furni_name_sync' => 'furni', 'furni_all' => 'furni', 'furni_give_me' => 'furni', 'song_update' => 'trax', 'song_delete' => 'trax',
+        'def_update' => 'furni', 'furni_def_save' => 'furni', 'furni_def_restore' => 'furni', 'furni_name_sync' => 'furni', 'furni_all' => 'furni', 'furni_give_me' => 'furni',
+        'wf_add' => 'wordfilter', 'wf_del' => 'wordfilter', 'wf_toggle' => 'wordfilter', 'song_update' => 'trax', 'song_delete' => 'trax',
         'furni_convert' => 'convert', 'furni_decompile' => 'convert',
         // Communauté / modération
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
@@ -5562,6 +5580,37 @@ function journal_ajax(): void {
     $rows = array_slice($rows, -200);
     echo json_encode(['ok' => true, 'rows' => $rows, 'emu' => emu_running(), 'ts' => date('H:i:s'), 'count' => count($rows)]);
 }
+/* ================= Filtre de mots (bobba) ================= */
+function ensure_wordfilter(): void {
+    static $done = false; if ($done) return; $done = true;
+    db()->exec("CREATE TABLE IF NOT EXISTS wordfilter (id INT AUTO_INCREMENT PRIMARY KEY, word VARCHAR(64) NOT NULL, replacement VARCHAR(64) NOT NULL DEFAULT 'bobba', enabled TINYINT(1) NOT NULL DEFAULT 1, UNIQUE KEY uniq_word (word)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+function page_wordfilter(): void {
+    page_title('Filtre de mots (bobba)', 'Mots remplacés automatiquement dans le chat en jeu');
+    ensure_wordfilter();
+    echo '<div class="panel"><p class="sub">Les mots de cette liste sont remplacés (mot <b>entier</b>, insensible à la casse/accents) dans le chat en salle. Ajoute/retire ce que tu veux.</p>';
+    echo '<form method="post" class="js" data-reload style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">' . csrf_field() . '<input type="hidden" name="action" value="wf_add">';
+    echo '<label>Mot interdit<input name="word" maxlength="64" required placeholder="ex. un gros mot" style="width:200px"></label>';
+    echo '<label>Remplacé par<input name="replacement" maxlength="64" value="bobba" style="width:120px"></label>';
+    echo '<button class="mini">＋ Ajouter</button></form>';
+    echo '<p class="hint">⚙️ Après chaque modif, <b>redémarre l\'émulateur</b> pour recharger la liste (elle est lue au démarrage du serveur de jeu).</p></div>';
+    $rows = db()->query('SELECT * FROM wordfilter ORDER BY word')->fetchAll();
+    echo '<div class="panel"><div class="ph"><h3>🤬 Mots filtrés <span class="muted sm">(' . count($rows) . ')</span></h3></div>';
+    if (!$rows) echo '<div class="empty">Liste vide.</div>';
+    else {
+        echo '<table class="clean"><tr><th>Mot</th><th>Remplacé par</th><th>Actif</th><th></th></tr>';
+        foreach ($rows as $r) {
+            echo '<tr><td><b>' . h((string)$r['word']) . '</b></td><td class="sm muted">' . h((string)$r['replacement']) . '</td>'
+                . '<td>' . ($r['enabled'] ? '✅' : '<span class="muted">non</span>') . '</td><td>'
+                . '<form method="post" class="js" data-reload style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="wf_toggle"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="mini ghost">' . ($r['enabled'] ? 'Désactiver' : 'Activer') . '</button></form> '
+                . '<form method="post" class="js" data-reload data-confirm="Retirer « ' . h((string)$r['word']) .' » ?" style="display:inline">' . csrf_field() . '<input type="hidden" name="action" value="wf_del"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="mini ghost">🗑️</button></form>'
+                . '</td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '<p class="hint">ℹ️ Le filtre s\'exécute côté <b>serveur de jeu (kepler.jar)</b> : il agit seulement une fois le jar « filtre » déployé. Sinon la liste est juste stockée ici.</p></div>';
+}
+
 function page_journal(): void {
     page_title('Journal en direct', 'Vois en temps réel les requêtes reçues par le site (qui se connecte, quelle page, quel code)');
     $f = journal_access_log();
