@@ -6255,7 +6255,7 @@ label>input,label>select,label>textarea{margin-top:4px}
 input[type=checkbox]{margin-top:0;margin-right:6px}
 #toasts>*+*{margin-top:8px}
 /* Barre supérieure */
-.topbar{display:flex;align-items:center;min-height:60px;flex:0 0 auto;padding:0 36px;border-bottom:1px solid var(--line2);background:var(--panel);position:sticky;top:0;z-index:20}
+.topbar{display:flex;flex-wrap:wrap;row-gap:8px;align-items:center;min-height:60px;flex:0 0 auto;padding:0 36px;border-bottom:1px solid var(--line2);background:var(--panel);position:sticky;top:0;z-index:20}
 .tb-crumb{font-size:14px;color:var(--mut);white-space:nowrap}
 .tb-crumb b{color:var(--txt)}
 .tb-sec{opacity:.85}
@@ -6344,8 +6344,10 @@ function toast(msg,ok){var t=document.createElement('div');t.className='toast'+(
 function tgl(id){var e=document.getElementById(id);if(e)e.style.display=e.style.display==='none'?'table-row':'none';}
 function setTheme(v){document.cookie='r14theme='+v+';path=/;max-age=31536000';location.reload();}
 function pickBadge(c){var e=document.getElementById('badgecode');if(e){e.value=c;e.scrollIntoView({block:'center'});e.focus();toast('Badge '+c+' sélectionné',true);}}
-function toggleGrp(btn){var g=btn.parentNode;g.classList.toggle('open');try{var o=JSON.parse(localStorage.getItem('r14nav')||'{}');o[g.getAttribute('data-g')]=g.classList.contains('open');localStorage.setItem('r14nav',JSON.stringify(o));}catch(e){}}
-(function(){try{var o=JSON.parse(localStorage.getItem('r14nav')||'{}');var l=document.querySelectorAll('.navgrp');for(var i=0;i<l.length;i++){var g=l[i];if(g.getAttribute('data-cur'))continue;var k=g.getAttribute('data-g');if(k in o){if(o[k])g.classList.add('open');else g.classList.remove('open');}}}catch(e){}})();
+/* Menu latéral en accordéon : ouvrir une catégorie referme les autres (au chargement, seule la catégorie de la page courante reste ouverte, rendue côté serveur). */
+function toggleGrp(btn){var g=btn.parentNode;var open=!g.classList.contains('open');var l=document.querySelectorAll('.navgrp');for(var i=0;i<l.length;i++)l[i].classList.remove('open');if(open)g.classList.add('open');}
+/* Pagination : rester à la même hauteur après « Précédent / Suivant » (on ne remonte plus en haut). */
+(function(){var cp=(new URLSearchParams(location.search)).get('p')||'';try{var s=JSON.parse(sessionStorage.getItem('r14pg')||'null');if(s&&s.p===cp){window.scrollTo(0,s.y||0);}sessionStorage.removeItem('r14pg');}catch(e){}document.addEventListener('click',function(ev){var a=ev.target.closest?ev.target.closest('a[href*="pg="]'):null;if(!a)return;try{sessionStorage.setItem('r14pg',JSON.stringify({p:cp,y:window.scrollY||window.pageYOffset||0}));}catch(e){}});})();
 function toggleSidebar(){var c=document.body.classList.toggle('sb-collapsed');try{localStorage.setItem('r14sb',c?'1':'0');}catch(e){}}
 (function(){try{if(localStorage.getItem('r14sb')==='1')document.body.classList.add('sb-collapsed');}catch(e){}})();
 /* Mémorise la position de défilement du menu latéral (reste au même endroit après navigation) */
