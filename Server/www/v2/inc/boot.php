@@ -159,9 +159,11 @@ function site_page_get(string $slug): ?array {
 }
 /* Staff connecté (rang >= 5) — pour l'aperçu des brouillons. Reconnaît la session site OU admin (même session partagée). */
 function is_staff(): bool {
-    if ((int)($_SESSION['admin']['rank'] ?? 0) >= 5) return true;
-    $u = me(); if (!$u) return false;
-    try { $r = db()->prepare('SELECT `rank` FROM users WHERE id=?'); $r->execute([(int)$u['id']]); return (int)$r->fetchColumn() >= 5; }
+    // SEC03 : ne pas se fier au rang mémorisé en session (périmé après une rétrogradation) — revalider en base à chaque appel.
+    $id = (int)($_SESSION['admin']['id'] ?? 0);
+    if ($id <= 0) { $u = me(); $id = $u ? (int)$u['id'] : 0; }
+    if ($id <= 0) return false;
+    try { $r = db()->prepare('SELECT `rank` FROM users WHERE id=?'); $r->execute([$id]); return (int)$r->fetchColumn() >= 5; }
     catch (Throwable $e) { return false; }
 }
 

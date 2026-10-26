@@ -629,13 +629,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ensure_news();
                 $col = in_array($_POST['color'] ?? '', ['blue', 'green', 'purple', 'orange'], true) ? $_POST['color'] : 'blue';
                 db()->prepare('INSERT INTO site_news (title,category,color,body,author) VALUES (?,?,?,?,?)')
-                    ->execute([substr(trim($_POST['title'] ?? ''), 0, 150), substr(trim($_POST['category'] ?? 'À la une'), 0, 40), $col, trim($_POST['body'] ?? ''), (string)$_SESSION['admin']['username']]);
+                    ->execute([substr(trim($_POST['title'] ?? ''), 0, 150), substr(trim($_POST['category'] ?? 'À la une'), 0, 40), $col, sanitize_html((string)($_POST['body'] ?? '')), (string)$_SESSION['admin']['username']]);
                 $msg = '📰 Actualité publiée.'; break;
             case 'news_update':
                 ensure_news();
                 $col = in_array($_POST['color'] ?? '', ['blue', 'green', 'purple', 'orange'], true) ? $_POST['color'] : 'blue';
                 db()->prepare('UPDATE site_news SET title=?, category=?, color=?, body=? WHERE id=?')
-                    ->execute([substr(trim($_POST['title'] ?? ''), 0, 150), substr(trim($_POST['category'] ?? 'À la une'), 0, 40), $col, trim($_POST['body'] ?? ''), (int)$_POST['id']]);
+                    ->execute([substr(trim($_POST['title'] ?? ''), 0, 150), substr(trim($_POST['category'] ?? 'À la une'), 0, 40), $col, sanitize_html((string)($_POST['body'] ?? '')), (int)$_POST['id']]);
                 $msg = '✅ Actualité mise à jour.'; break;
             case 'news_delete':
                 ensure_news();
@@ -1023,8 +1023,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 db()->prepare('DELETE FROM soundmachine_songs WHERE id=?')->execute([(int)$_POST['id']]); $msg = '🗑️ Musique supprimée.'; break;
             /* --- Meubles (définitions) --- */
             case 'def_update':
-                db()->prepare('UPDATE items_definitions SET name=?,description=?,behaviour=?,is_tradable=?,is_recyclable=?,length=?,width=? WHERE id=?')
-                    ->execute([substr(trim($_POST['name'] ?? ''), 0, 255), substr(trim($_POST['description'] ?? ''), 0, 255), substr(trim($_POST['behaviour'] ?? ''), 0, 150), isset($_POST['is_tradable']) ? 1 : 0, isset($_POST['is_recyclable']) ? 1 : 0, (int)$_POST['length'], (int)$_POST['width'], (int)$_POST['id']]); $msg = '🪑 Meuble mis à jour.'; break;
+                /* M01 : ancienne voie d'écriture SANS validation / versionnement / historique — FERMÉE.
+                   Toute modification de définition passe désormais par 'furni_def_save' (éditeur validé, anti-écrasement concurrent, journal). */
+                $ok = false; $msg = '⚠️ Action obsolète : passe par l\'éditeur de la fiche meuble (enregistrement validé + historique).'; break;
             case 'furni_def_save': { /* Lot 2 : éditeur complet, validé, versionné, anti-écrasement concurrent */
                 $fid = (int)($_POST['id'] ?? 0);
                 $stc = db()->prepare('SELECT * FROM items_definitions WHERE id=?'); $stc->execute([$fid]); $cur = $stc->fetch();
@@ -1411,34 +1412,56 @@ function sanitize_html(string $html): string {
         'table'=>['width','height','border','cellpadding','cellspacing','align','class','style'],
         '*'   => ['class','style'],
     ];
+    // Balises SUPPRIMÉES avec tout leur contenu (exécutables / plugins / formulaires) — jamais déballées.
+    $dropTags = ['script','style','svg','math','object','embed','applet','iframe','frame','frameset',
+                 'form','input','button','textarea','select','option','optgroup','noscript','template',
+                 'link','meta','base','title','head','xml','audio','video','source','track','canvas','map','area'];
+    // URL sûre : on décode les entités et on retire espaces/contrôles (contre « java\tscript: », encodages) avant de tester le schéma.
+    $urlSafe = function (string $v): bool {
+        $d = html_entity_decode($v, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $d = preg_replace('/[\x00-\x20\x7f]+/', '', (string)$d); // retire tab/newline/espaces/contrôles
+        if ($d === '') return true; // href vide / ancre vide = inoffensif
+        return !preg_match('#^(javascript|vbscript|livescript|mocha|data|about|file|blob):#i', $d);
+    };
+    // style sûr : bloque expression(), schémas actifs, behavior, -moz-binding, @import, url(javascript|vbscript|data:…).
+    $styleSafe = function (string $v): bool {
+        $d = strtolower(preg_replace('/\s+/', '', html_entity_decode($v, ENT_QUOTES | ENT_HTML5, 'UTF-8')));
+        return !preg_match('/expression\(|javascript:|vbscript:|-moz-binding|behavior:|@import|url\(["\']?(javascript|vbscript|data):/', (string)$d);
+    };
     $doc = new DOMDocument();
     libxml_use_internal_errors(true);
     $doc->loadHTML('<?xml encoding="utf-8"?><div id="__root__">' . $html . '</div>', LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
     libxml_clear_errors();
     $root = $doc->getElementById('__root__');
     if (!$root) return '';
-    $walk = function (DOMNode $node) use (&$walk, $allowedTags, $allowedAttr) {
+    $walk = function (DOMNode $node) use (&$walk, $allowedTags, $allowedAttr, $dropTags, $urlSafe, $styleSafe) {
         foreach (iterator_to_array($node->childNodes) as $child) {
             if ($child->nodeType === XML_ELEMENT_NODE) {
                 /** @var DOMElement $child */
                 $tag = strtolower($child->tagName);
                 if (!in_array($tag, $allowedTags, true)) {
-                    // déballer : remonter les enfants puis supprimer la balise interdite
+                    if (in_array($tag, $dropTags, true)) { // balise dangereuse : on supprime balise ET contenu
+                        $child->parentNode->removeChild($child);
+                        continue;
+                    }
+                    // balise inconnue (mise en forme) : NETTOYER le sous-arbre AVANT de déballer,
+                    // sinon les enfants promus échappent au parcours (snapshot) — c'était le trou.
+                    $walk($child);
                     while ($child->firstChild) $child->parentNode->insertBefore($child->firstChild, $child);
                     $child->parentNode->removeChild($child);
                     continue;
                 }
                 $allow = array_merge($allowedAttr['*'] ?? [], $allowedAttr[$tag] ?? []);
                 foreach (iterator_to_array($child->attributes) as $attr) {
-                    $an = strtolower($attr->name); $av = $attr->value;
+                    $an = strtolower($attr->name); $av = (string)$attr->value;
                     $bad = !in_array($an, $allow, true) || str_starts_with($an, 'on');
-                    if (($an === 'href' || $an === 'src') && preg_match('/^\s*javascript:/i', $av)) $bad = true;
-                    if ($an === 'style' && preg_match('/expression\s*\(|javascript:|url\s*\(\s*["\']?\s*javascript:/i', $av)) $bad = true;
+                    if (($an === 'href' || $an === 'src' || $an === 'xlink:href') && !$urlSafe($av)) $bad = true;
+                    if ($an === 'style' && !$styleSafe($av)) $bad = true;
                     if ($bad) $child->removeAttribute($attr->name);
                 }
-                if ($tag === 'a' && $child->getAttribute('target') === '_blank') $child->setAttribute('rel', 'noopener');
+                if ($tag === 'a' && $child->getAttribute('target') === '_blank') $child->setAttribute('rel', 'noopener noreferrer');
                 $walk($child);
-            } elseif ($child->nodeType === XML_COMMENT_NODE) {
+            } elseif ($child->nodeType === XML_COMMENT_NODE || $child->nodeType === XML_PI_NODE) {
                 $child->parentNode->removeChild($child);
             }
         }
@@ -6042,6 +6065,11 @@ function page_mysql(): void {
         echo '<tr>';
         foreach ($cols as $c) {
             $v = (string)($row[$c] ?? '');
+            // SEC04 : ne jamais exposer secrets / hashes (ni en clair dans la cellule, ni dans l'attribut title)
+            if ($v !== '' && preg_match('/pass|ticket|hash|secret|token|sso|auth|salt/i', $c)) {
+                echo '<td class="sm muted" title="(masqué)" style="max-width:340px">••••••</td>';
+                continue;
+            }
             $short = mb_strlen($v) > 90 ? mb_substr($v, 0, 90) . '…' : $v;
             echo '<td class="sm" title="' . h($v) . '" style="max-width:340px;overflow:hidden">' . h($short) . '</td>';
         }
@@ -6311,7 +6339,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
     }
     ?></nav><div class="foot">
     <label class="thsel">🎨 Thème<select onchange="setTheme(this.value)"><?php foreach (THEMES as $k => $tt) echo '<option value="' . $k . '"' . ($k === $tk ? ' selected' : '') . '>' . $tt[1] . ' ' . h($tt[0]) . '</option>'; ?></select></label>
-    <div class="who">👤 <?= h($_SESSION['admin']['username']) ?></div><a href="http://localhost/" target="_blank">▶️ Jeu</a><a href="?p=logout">Déconnexion</a></div></aside>
+    <div class="who">👤 <?= h($_SESSION['admin']['username']) ?></div><a href="/" target="_blank">▶️ Jeu</a><a href="?p=logout">Déconnexion</a></div></aside>
 <div class="main"><?php
     $secLabel = ''; foreach (nav_groups() as $gl => $keys) { if ($gl !== '' && in_array($p, $keys, true)) { $secLabel = $gl; break; } }
     $pageLabel = isset($nav[$p]) ? $nav[$p][1] : 'Tableau de bord';
