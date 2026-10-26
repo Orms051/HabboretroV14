@@ -35,6 +35,21 @@ function t(string $label, string $in, ?string $mustGone, ?string $mustKeep = nul
     }
 }
 
+/** Vérifie la SUPPRESSION RÉELLE d'un attribut dangereux (il ne doit plus apparaître du tout dans
+ *  la sortie), et optionnellement qu'un attribut sûr est CONSERVÉ. */
+function tAttr(string $label, string $in, string $attrGone, ?string $attrKeep = null): void {
+    global $fail, $n; $n++;
+    $out = sanitize_html($in);
+    $goneOk = stripos($out, $attrGone . '=') === false;
+    $keepOk = $attrKeep === null || stripos($out, $attrKeep . '=') !== false;
+    if (!$goneOk || !$keepOk) {
+        $fail++;
+        echo sprintf("  ECHEC #%02d  %s (attendu: %s absent%s)\n            out: %s\n", $n, $label, $attrGone, $attrKeep ? ", $attrKeep présent" : '', $out);
+    } else {
+        echo sprintf("  ok    #%02d  %s\n", $n, $label);
+    }
+}
+
 echo "== Contournements trouvés à l'audit (doivent être neutralisés) ==\n";
 t('svg>script',               '<svg><script>alert(2)</script></svg>',                         '/<script|alert\(2\)/i');
 t('object>a javascript',      '<object><a href="javascript:evil()">x</a></object>',           '/javascript:/i');
@@ -64,6 +79,22 @@ t('image http',               '<img src="http://img/x.gif" width="40" alt="x">',
 t('lien _blank -> noopener',  '<a href="http://site" target="_blank">lien</a>',                null, '/<a[^>]*href="http:\/\/site"[^>]*rel="noopener/i');
 t('mise en forme',            '<p><strong>gras</strong> <em>ital</em><br><ul><li>x</li></ul></p>', null, '/<strong>gras<\/strong>.*<li>x<\/li>/is');
 t('div class/style',          '<div class="v3box" style="padding:4px">z</div>',                null, '/<div class="v3box" style="padding:4px">z<\/div>/i');
+
+echo "== Suppression RÉELLE de l'attribut dangereux (plus présent du tout) ==\n";
+tAttr('href javascript retiré',  '<a href="javascript:x">t</a>',                             'href');
+tAttr('src javascript retiré',   '<img src="javascript:x" alt="a">',                         'src', 'alt');
+tAttr('onclick retiré',          '<b onclick="h()">t</b>',                                   'onclick');
+tAttr('onmouseover retiré',      '<span onmouseover="h()">t</span>',                         'onmouseover');
+tAttr('style expression retiré', '<p style="x:expression(1)">t</p>',                         'style');
+tAttr('style url(js) retiré',    '<p style="width:80px;background:url(javascript:y)">t</p>',  'style');
+tAttr('href http CONSERVÉ',      '<a href="http://ok.fr">t</a>',                             'onclick', 'href');
+tAttr('style 2007 CONSERVÉ',     '<div style="width:80px;padding:4px">z</div>',              'onclick', 'style');
+
+echo "== CSS obfusqué (échappes / commentaires / IE) refusé ==\n";
+tAttr('backslash CSS',           '<div style="x:url(java\\9 script:y)">z</div>',             'style');
+tAttr('commentaire CSS',         '<div style="x:/*c*/url(javascript:y)">z</div>',            'style');
+t('behavior IE',                 '<p style="behavior:url(#x)">t</p>',                        '/behavior/i');
+t('@import',                     '<p style="@import url(//evil)">t</p>',                     '/@import/i');
 
 echo "\n";
 echo $fail === 0

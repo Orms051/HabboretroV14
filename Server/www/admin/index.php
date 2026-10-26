@@ -1423,10 +1423,15 @@ function sanitize_html(string $html): string {
         if ($d === '') return true; // href vide / ancre vide = inoffensif
         return !preg_match('#^(javascript|vbscript|livescript|mocha|data|about|file|blob):#i', $d);
     };
-    // style sûr : bloque expression(), schémas actifs, behavior, -moz-binding, @import, url(javascript|vbscript|data:…).
+    // style sûr : d'abord on refuse les obfuscations rares en style inline 2007 (échappes CSS « \ »,
+    // commentaires « /* */ », chevrons) qui servent à casser les mots-clés ; puis on bloque
+    // expression(), schémas actifs, behavior, -moz-binding, @import et url(schéma dangereux).
     $styleSafe = function (string $v): bool {
-        $d = strtolower(preg_replace('/\s+/', '', html_entity_decode($v, ENT_QUOTES | ENT_HTML5, 'UTF-8')));
-        return !preg_match('/expression\(|javascript:|vbscript:|-moz-binding|behavior:|@import|url\(["\']?(javascript|vbscript|data):/', (string)$d);
+        $d = html_entity_decode($v, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        if (strpos($d, '\\') !== false || strpos($d, '<') !== false || strpos($d, '>') !== false) return false; // échappes CSS / chevrons
+        if (strpos($d, '/*') !== false || strpos($d, '*/') !== false) return false;                              // commentaires CSS
+        $d = strtolower(preg_replace('/\s+/', '', $d));
+        return !preg_match('/expression\(|javascript:|vbscript:|livescript:|mocha:|-moz-binding|behavior:|@import|url\(["\']?(?:javascript|vbscript|livescript|mocha|data|about|file|blob):/', (string)$d);
     };
     $doc = new DOMDocument();
     libxml_use_internal_errors(true);
