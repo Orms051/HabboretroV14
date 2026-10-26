@@ -96,6 +96,16 @@ tAttr('commentaire CSS',         '<div style="x:/*c*/url(javascript:y)">z</div>'
 t('behavior IE',                 '<p style="behavior:url(#x)">t</p>',                        '/behavior/i');
 t('@import',                     '<p style="@import url(//evil)">t</p>',                     '/@import/i');
 
+echo "== Suppression RÉELLE de l'attribut sur URL ENCODÉES (tab / newline / entités) ==\n";
+tAttr('href tab -> retiré',        "<a href=\"java\tscript:alert(1)\">t</a>",        'href');
+tAttr('href newline -> retiré',    "<a href=\"java\nscript:alert(1)\">t</a>",        'href');
+tAttr('href entité colon -> retiré','<a href="javascript&#58;alert(1)">t</a>',        'href');
+tAttr('href entité tab -> retiré', '<a href="java&#9;script:alert(1)">t</a>',         'href');
+tAttr('href entité j -> retiré',   '<a href="&#106;avascript:alert(1)">t</a>',        'href');
+tAttr('href data entité -> retiré','<a href="data&#58;text/html,x">t</a>',            'href');
+tAttr('src tab -> retiré',         "<img src=\"java\tscript:alert(1)\" alt=\"a\">",   'src', 'alt');
+tAttr('src entité -> retiré',      '<img src="javascript&#58;x" width="40">',         'src', 'width');
+
 echo "\n";
 echo $fail === 0
     ? "TOUS OK — $n cas de régression passés.\n"
