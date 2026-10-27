@@ -386,21 +386,26 @@ function Stop-Pack {
             else { Say 'INFO' "Port $($Cfg.Ports.Minerva) occupé par un processus étranger : préservé." }
         } else { Say 'INFO' "Avatars (Minerva) déjà arrêtés." }
 
-        # 2) Kepler (pack, marqueur) : arrêt PROPRE via Ctrl+C -> shutdown hook dispose()
-        #    (sauvegarde items/chat/joueurs). /f reste un DERNIER recours explicite.
+        # 2) Kepler (pack, marqueur) : arrêt PROPRE via RCON 'shutdown' (principal) ->
+        #    shutdown hook dispose() (sauvegarde items/chat/joueurs). Ctrl+C en secours
+        #    (lancement interactif). /f reste un DERNIER recours explicite.
         $kepler = @(Get-PackKepler)
         $keplerStopped = $true
         if($kepler.Count){
             # mémoriser les fenêtres cmd parentes (run.bat) pour les nettoyer après coup
             $parents = @($kepler | ForEach-Object { [int]$_.ParentProcessId } | Where-Object { $_ -gt 0 } | Select-Object -Unique)
-            foreach($k in $kepler){ Say 'STOP' "Émulateur Kepler : arrêt propre (Ctrl+C -> sauvegarde, PID $($k.ProcessId))…"; Request-KeplerShutdown ([int]$k.ProcessId) }
+            $rcon = Send-RconShutdown
+            if($rcon){ Say 'STOP' ("Émulateur Kepler : arrêt propre demandé via RCON (-> sauvegarde), PID {0}…" -f (($kepler | ForEach-Object { $_.ProcessId }) -join ',')) }
+            else { Say 'STOP' "Émulateur Kepler : RCON injoignable — tentative Ctrl+C (secours)…" }
+            foreach($k in $kepler){ Request-KeplerShutdown ([int]$k.ProcessId) }  # secours console (interactif)
             $sw=[Diagnostics.Stopwatch]::StartNew(); $gone=$false
             while($sw.Elapsed.TotalSeconds -lt $Cfg.StopTimeoutKepler){ if(-not (Get-PackKepler)){ $gone=$true; break }; Start-Sleep -Milliseconds 700 }
             if($gone){
                 # fenêtres run.bat restées sur « Terminate batch job (Y/N)? » : Kepler a
                 # déjà sauvegardé et quitté, ces cmd ne sont plus que cosmétiques.
                 foreach($pp in $parents){ $pc = Get-Process -Id $pp -EA SilentlyContinue; if($pc -and $pc.ProcessName -eq 'cmd'){ & taskkill /F /PID $pp *> $null } }
-                Say 'OK' "Kepler : arrêt propre demandé (Ctrl+C). ⚠ Sauvegarde À CONSTATER dans server.log (« Shutting down server! » + sauvegardes items/chat)."
+                if($rcon){ Say 'OK' "Kepler : arrêté proprement via RCON (sauvegarde déclenchée). server.log : « Shutting down server! » -> chat/items/players saved -> « Shutdown complete »." }
+                else { Say 'OK' "Kepler : arrêt propre demandé (Ctrl+C secours). ⚠ Sauvegarde À CONSTATER dans server.log (« Shutting down server! » + sauvegardes items/chat)." }
             }
             else {
                 Say 'FAIL' "Kepler ne s'est pas arrêté en $($Cfg.StopTimeoutKepler)s."
