@@ -101,13 +101,22 @@ function conv_create(int $playerId, string $subject, string $category, string $s
     $body = trim($body);
     if ($body === '') return 0;
     try {
+        // C01 : conversation + 1er message dans une MÊME transaction. Si le 1er message
+        // échoue, on annule tout (pas de conversation orpheline ni de faux succès).
+        // (ensure_conversations() a sa garde statique -> aucun DDL dans la transaction.)
+        db()->beginTransaction();
         $status = ($sender === 'player') ? 'waiting_staff' : 'waiting_player';
         $st = db()->prepare('INSERT INTO conversations (player_id,subject,category,status) VALUES (?,?,?,?)');
         $st->execute([$playerId, mb_substr(trim($subject), 0, 150), mb_substr(trim($category), 0, 40), $status]);
         $cid = (int)db()->lastInsertId();
-        conv_add_message($cid, $sender, $senderName, $body, 0);
+        if (!conv_add_message($cid, $sender, $senderName, $body, 0)) {
+            db()->rollBack();
+            return 0;
+        }
+        db()->commit();
         return $cid;
     } catch (Throwable $e) {
+        if (db()->inTransaction()) db()->rollBack();
         return 0;
     }
 }

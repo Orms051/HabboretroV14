@@ -714,7 +714,7 @@ if ($p === 'messages') {
         try {
             $list = db()->prepare("SELECT c.id,c.subject,c.status,c.updated_at,
                     (SELECT COUNT(*) FROM conversation_messages m WHERE m.conv_id=c.id AND m.is_internal=0 AND m.hidden_player=0 AND m.sender<>'player' AND m.read_player=0) AS unread,
-                    (SELECT body FROM conversation_messages m2 WHERE m2.conv_id=c.id AND m2.is_internal=0 AND m2.hidden_player=0 ORDER BY m2.id DESC LIMIT 1) AS last_body,
+                    (SELECT IF(m2.moderated=1,'[message modéré]',m2.body) FROM conversation_messages m2 WHERE m2.conv_id=c.id AND m2.is_internal=0 AND m2.hidden_player=0 ORDER BY m2.id DESC LIMIT 1) AS last_body,
                     (SELECT sender FROM conversation_messages m3 WHERE m3.conv_id=c.id AND m3.is_internal=0 AND m3.hidden_player=0 ORDER BY m3.id DESC LIMIT 1) AS last_sender,
                     (SELECT sender_name FROM conversation_messages m4 WHERE m4.conv_id=c.id AND m4.is_internal=0 AND m4.hidden_player=0 ORDER BY m4.id DESC LIMIT 1) AS last_name
                 FROM conversations c WHERE c.player_id=? AND $boxCond ORDER BY c.updated_at DESC");

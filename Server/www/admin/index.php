@@ -4745,7 +4745,7 @@ function conv_assistance_view(string $scope = 'assistance'): void {
         $sql = "SELECT c.id,c.subject,c.category,c.status,c.player_id,c.legacy_ref,c.assigned_to,c.updated_at,
                 u.username AS uname,
                 (SELECT COUNT(*) FROM conversation_messages m WHERE m.conv_id=c.id AND m.sender='player' AND m.read_staff=0) AS unread,
-                (SELECT body FROM conversation_messages m2 WHERE m2.conv_id=c.id AND m2.is_internal=0 ORDER BY m2.id DESC LIMIT 1) AS last_body
+                (SELECT IF(m2.moderated=1,'[message modéré]',m2.body) FROM conversation_messages m2 WHERE m2.conv_id=c.id AND m2.is_internal=0 ORDER BY m2.id DESC LIMIT 1) AS last_body
             FROM conversations c LEFT JOIN users u ON u.id=c.player_id
             $where ORDER BY (c.status='resolved') ASC, c.updated_at DESC LIMIT $per OFFSET $off";
         $qs = db()->prepare($sql); $qs->execute($args); $rows = $qs->fetchAll();
