@@ -225,16 +225,24 @@ public class Kepler {
             log.info("Shutting down server!");
             isShutdown = true;
 
-            // TODO: all the managers
+            // S02 : tracer la RÉUSSITE de chaque étape de sauvegarde (pas seulement le début),
+            // pour que server.log prouve que l'arrêt a bien tout sauvegardé (bouton admin / exploitation).
             ChatManager.getInstance().performChatSaving();
-            
+            log.info("Shutdown: chat saved.");
+
             GameScheduler.getInstance().performItemSaving();
+            log.info("Shutdown: items saved.");
+
             GameScheduler.getInstance().performItemDeletion();
+            log.info("Shutdown: item deletions applied.");
 
             PlayerManager.getInstance().dispose();
+            log.info("Shutdown: players saved.");
 
             server.dispose();
+            log.info("Shutdown complete: all saves finished OK.");
         } catch (Exception e) {
+            log.error("Shutdown FAILED during save — données possiblement NON sauvegardées", e);
             e.printStackTrace();
         }
     }
