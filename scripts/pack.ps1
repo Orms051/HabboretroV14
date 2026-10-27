@@ -119,20 +119,30 @@ function Get-PackKeplerPids { @(Get-PackKepler | ForEach-Object { [int]$_.Proces
 # /f ne lui parvient pas. On opère dans un process PowerShell ISOLÉ (sa propre console)
 # pour ne pas perturber la console de ce lanceur.
 function Request-KeplerShutdown([int]$kpid){
+    # Journal de diagnostic : prouve si AttachConsole ET GenerateConsoleCtrlEvent réussissent
+    # (avec code d'erreur Windows), pour savoir où casse l'arrêt propre via le bouton admin.
+    $log = Join-Path (Split-Path $PSScriptRoot -Parent) '_runtime\shutdown_debug.log'
+    $dir = Split-Path $log -Parent
+    if(-not (Test-Path $dir)){ New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $code = @"
 `$ErrorActionPreference='SilentlyContinue'
 Add-Type -Namespace Kp -Name Con -MemberDefinition @'
-[DllImport("kernel32.dll")] public static extern bool AttachConsole(uint p);
-[DllImport("kernel32.dll")] public static extern bool FreeConsole();
-[DllImport("kernel32.dll")] public static extern bool SetConsoleCtrlHandler(System.IntPtr h, bool a);
-[DllImport("kernel32.dll")] public static extern bool GenerateConsoleCtrlEvent(uint e, uint g);
+[DllImport("kernel32.dll", SetLastError=true)] public static extern bool AttachConsole(uint p);
+[DllImport("kernel32.dll", SetLastError=true)] public static extern bool FreeConsole();
+[DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleCtrlHandler(System.IntPtr h, bool a);
+[DllImport("kernel32.dll", SetLastError=true)] public static extern bool GenerateConsoleCtrlEvent(uint e, uint g);
 '@
 [Kp.Con]::FreeConsole() | Out-Null
-if([Kp.Con]::AttachConsole($kpid)){
+`$at=[Kp.Con]::AttachConsole($kpid)
+`$eAttach=[Runtime.InteropServices.Marshal]::GetLastWin32Error()
+`$sent=`$false; `$eCtrlC='n/a'
+if(`$at){
   [Kp.Con]::SetConsoleCtrlHandler([System.IntPtr]::Zero,`$true) | Out-Null  # ce helper ignore le Ctrl+C
-  [Kp.Con]::GenerateConsoleCtrlEvent(0,0) | Out-Null                         # 0 = CTRL_C_EVENT
+  `$sent=[Kp.Con]::GenerateConsoleCtrlEvent(0,0)                             # 0 = CTRL_C_EVENT
+  `$eCtrlC=[Runtime.InteropServices.Marshal]::GetLastWin32Error()
   Start-Sleep -Milliseconds 500
 }
+Add-Content -Path '$log' -Value ("{0} pid=$kpid Attach={1} errAttach={2} CtrlC={3} errCtrlC={4}" -f (Get-Date).ToString('o'),`$at,`$eAttach,`$sent,`$eCtrlC) -Encoding UTF8
 "@
     $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
     Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$enc -WindowStyle Hidden -Wait
