@@ -15,7 +15,7 @@
      reste ; le site passe en « mode secours » (silhouette).
 #>
 param(
-    [ValidateSet('start','stop','restart-kepler')] [string]$Action = 'start',
+    [ValidateSet('start','stop','restart-kepler','stop-kepler')] [string]$Action = 'start',
     [string]$StatusFile = '',   # fichier JSON de suivi (redémarrage Kepler piloté depuis l'admin)
     [int]$DelaySeconds = 0,      # redémarrage différé (fenêtre d'annulation)
     [switch]$DryRun              # simulation : prechecks + statut, SANS arrêter/démarrer Kepler
@@ -522,4 +522,27 @@ function Restart-Kepler {
 }
 
 # ============================================================================
-switch($Action){ 'start'{ exit (Start-Pack) } 'stop'{ exit (Stop-Pack) } 'restart-kepler'{ exit (Restart-Kepler) } }
+# Arrêt de Kepler SEUL (pour le bouton admin « Arrêter ») — propre, sans force-kill,
+# sans toucher MariaDB/Apache/Minerva. Réutilisé par _emu_stop.ps1.
+function Stop-KeplerOnly {
+    Log 'STOP-KEPLER (admin) demandé'
+    $mtx = Lock-Pack
+    if(-not $mtx){ Write-Host "Un lanceur (START/STOP) est déjà en cours pour ce pack."; return 1 }
+    try {
+        $kepler = @(Get-PackKepler)
+        if(-not $kepler.Count){ Write-Host "Aucun Kepler du pack (marqueur) en cours."; return 0 }
+        $parents = @($kepler | ForEach-Object { [int]$_.ParentProcessId } | Where-Object { $_ -gt 0 } | Select-Object -Unique)
+        foreach($k in $kepler){ Say 'STOP' "Émulateur Kepler : arrêt propre (Ctrl+C -> sauvegarde, PID $($k.ProcessId))…"; Request-KeplerShutdown ([int]$k.ProcessId) }
+        $sw=[Diagnostics.Stopwatch]::StartNew(); $gone=$false
+        while($sw.Elapsed.TotalSeconds -lt $Cfg.StopTimeoutKepler){ if(-not (Get-PackKepler)){ $gone=$true; break }; Start-Sleep -Milliseconds 700 }
+        if($gone){
+            foreach($pp in $parents){ $pc = Get-Process -Id $pp -EA SilentlyContinue; if($pc -and $pc.ProcessName -eq 'cmd'){ & taskkill /F /PID $pp *> $null } }
+            Say 'OK' "Kepler arrêté proprement (Ctrl+C). MariaDB/Apache/Minerva intacts."; return 0
+        } else {
+            Say 'FAIL' "Kepler ne s'est pas arrêté en $($Cfg.StopTimeoutKepler)s. AUCUN arrêt forcé — on le laisse actif."; return 1
+        }
+    } finally { if($mtx){ $mtx.ReleaseMutex() | Out-Null; $mtx.Dispose() } }
+}
+
+# ============================================================================
+switch($Action){ 'start'{ exit (Start-Pack) } 'stop'{ exit (Stop-Pack) } 'restart-kepler'{ exit (Restart-Kepler) } 'stop-kepler'{ exit (Stop-KeplerOnly) } }
