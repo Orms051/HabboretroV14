@@ -113,6 +113,17 @@ public class RconConnectionHandler extends ChannelInboundHandlerAdapter {
                     }
 
                     break;
+                case SHUTDOWN:
+                    // Arrêt propre déclenché à distance (bouton admin -> pack.ps1 -> RCON).
+                    // Indépendant de la console : fiable quel que soit le lanceur (fin du Ctrl+C fragile).
+                    // System.exit(0) déclenche le shutdown hook (Kepler.dispose() -> sauvegardes).
+                    // Thread séparé + court délai : laisse la pile RCON répondre/fermer avant la sortie.
+                    log.info("[RCON] Arret propre demande via RCON — lancement du shutdown.");
+                    new Thread(() -> {
+                        try { Thread.sleep(250); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                        System.exit(0);
+                    }, "rcon-shutdown").start();
+                    break;
             }
         } catch (Exception ex) {
             Log.getErrorLogger().error("[RCON] Error occurred when handling RCON message: ", ex);

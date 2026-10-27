@@ -118,6 +118,36 @@ function Get-PackKeplerPids { @(Get-PackKepler | ForEach-Object { [int]$_.Proces
 # fermeture des sockets). Un java.exe en console N'A PAS de fenêtre : un taskkill SANS
 # /f ne lui parvient pas. On opère dans un process PowerShell ISOLÉ (sa propre console)
 # pour ne pas perturber la console de ce lanceur.
+# Demande d'arrêt PROPRE via RCON (127.0.0.1:12309) — mécanisme PRINCIPAL.
+# Indépendant de la console Windows : fiable quel que soit le lanceur (contrairement au
+# Ctrl+C via AttachConsole, qui échoue quand le script est lancé détaché par Apache).
+# Kepler reçoit le header 'shutdown' -> System.exit(0) -> shutdown hook -> sauvegardes.
+# Protocole identique au décodeur RCON : [int32 BE longueur body][body], body =
+# [int32 BE longueur header]['shutdown'][int32 BE nb params = 0].
+function Send-RconShutdown {
+    $client = $null
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $iar = $client.BeginConnect('127.0.0.1', [int]$Cfg.Ports.Rcon, $null, $null)
+        if(-not $iar.AsyncWaitHandle.WaitOne(2000)){ $client.Close(); return $false }
+        $client.EndConnect($iar)
+        $ns = $client.GetStream()
+        $be = { param([int]$v) $b=[BitConverter]::GetBytes([int]$v); if([BitConverter]::IsLittleEndian){ [Array]::Reverse($b) }; return $b }
+        $hdr = [Text.Encoding]::ASCII.GetBytes('shutdown')
+        $body = New-Object System.IO.MemoryStream
+        $t = & $be $hdr.Length;       $body.Write($t,0,4)   # longueur du header
+        $body.Write($hdr,0,$hdr.Length)                      # 'shutdown'
+        $t = & $be 0;                 $body.Write($t,0,4)    # 0 paramètre
+        $bb = $body.ToArray()
+        $t = & $be $bb.Length;        $ns.Write($t,0,4)      # longueur du body
+        $ns.Write($bb,0,$bb.Length)                          # body
+        $ns.Flush()
+        Start-Sleep -Milliseconds 300
+        $client.Close()
+        return $true
+    } catch { if($client){ $client.Close() }; return $false }
+}
+
 function Request-KeplerShutdown([int]$kpid){
     # Journal de diagnostic : prouve si AttachConsole ET GenerateConsoleCtrlEvent réussissent
     # (avec code d'erreur Windows), pour savoir où casse l'arrêt propre via le bouton admin.
@@ -497,12 +527,15 @@ function Restart-Kepler {
         Set-Status 'precheck' 'running' 'Vérifications' 'MariaDB disponible + identité du serveur de jeu.'
         if(-not (Test-DbReady)){ Set-Status 'precheck' 'error' 'Vérifications échouées' "MariaDB ne répond pas / base incomplète. Kepler NON redémarré ; MariaDB intacte."; return 1 }
         $kepler = @(Get-PackKepler)
-        # 2) Arrêt PROPRE (Ctrl+C -> shutdown hook / sauvegarde). Jamais de force-kill automatique.
+        # 2) Arrêt PROPRE : RCON 'shutdown' (principal) -> shutdown hook / sauvegarde.
+        #    Ctrl+C conservé en secours (utile en lancement interactif). Jamais de force-kill auto.
         if($kepler.Count){
-            Set-Status 'stop' 'running' 'Sauvegarde et arrêt' ("Arrêt propre de Kepler (Ctrl+C), PID {0}." -f (($kepler | ForEach-Object { $_.ProcessId }) -join ','))
+            Set-Status 'stop' 'running' 'Sauvegarde et arrêt' ("Arrêt propre de Kepler (RCON), PID {0}." -f (($kepler | ForEach-Object { $_.ProcessId }) -join ','))
             $parents = @($kepler | ForEach-Object { [int]$_.ParentProcessId } | Where-Object { $_ -gt 0 } | Select-Object -Unique)
             if(-not $DryRun){
-                foreach($k in $kepler){ Request-KeplerShutdown ([int]$k.ProcessId) }
+                $rcon = Send-RconShutdown
+                if(-not $rcon){ Set-Status 'stop' 'running' 'Sauvegarde et arrêt' 'RCON injoignable — tentative Ctrl+C (secours).' }
+                foreach($k in $kepler){ Request-KeplerShutdown ([int]$k.ProcessId) }  # secours console (interactif)
                 $sw=[Diagnostics.Stopwatch]::StartNew(); $gone=$false
                 while($sw.Elapsed.TotalSeconds -lt $Cfg.StopTimeoutKepler){ if(-not (Get-PackKepler)){ $gone=$true; break }; Start-Sleep -Milliseconds 700 }
                 if(-not $gone){ Set-Status 'stop' 'error' 'Arrêt échoué' ("Kepler ne s'est pas arrêté en {0}s. AUCUN arrêt forcé — MariaDB préservée. Vérifie la fenêtre Émulateur." -f $Cfg.StopTimeoutKepler); return 1 }
@@ -542,7 +575,10 @@ function Stop-KeplerOnly {
         $kepler = @(Get-PackKepler)
         if(-not $kepler.Count){ Write-Host "Aucun Kepler du pack (marqueur) en cours."; return 0 }
         $parents = @($kepler | ForEach-Object { [int]$_.ParentProcessId } | Where-Object { $_ -gt 0 } | Select-Object -Unique)
-        foreach($k in $kepler){ Say 'STOP' "Émulateur Kepler : arrêt propre (Ctrl+C -> sauvegarde, PID $($k.ProcessId))…"; Request-KeplerShutdown ([int]$k.ProcessId) }
+        $rcon = Send-RconShutdown
+        if($rcon){ Say 'STOP' "Émulateur Kepler : arrêt propre demandé via RCON (-> sauvegarde)…" }
+        else { Say 'STOP' "RCON injoignable — tentative Ctrl+C (secours)." }
+        foreach($k in $kepler){ Request-KeplerShutdown ([int]$k.ProcessId) }  # secours console (interactif)
         $sw=[Diagnostics.Stopwatch]::StartNew(); $gone=$false
         while($sw.Elapsed.TotalSeconds -lt $Cfg.StopTimeoutKepler){ if(-not (Get-PackKepler)){ $gone=$true; break }; Start-Sleep -Milliseconds 700 }
         if($gone){
