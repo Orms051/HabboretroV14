@@ -14,7 +14,12 @@
    - Minerva (avatars) est FACULTATIF : son absence n'empêche pas de démarrer le
      reste ; le site passe en « mode secours » (silhouette).
 #>
-param([ValidateSet('start','stop')] [string]$Action = 'start')
+param(
+    [ValidateSet('start','stop','restart-kepler')] [string]$Action = 'start',
+    [string]$StatusFile = '',   # fichier JSON de suivi (redémarrage Kepler piloté depuis l'admin)
+    [int]$DelaySeconds = 0,      # redémarrage différé (fenêtre d'annulation)
+    [switch]$DryRun              # simulation : prechecks + statut, SANS arrêter/démarrer Kepler
+)
 
 $ErrorActionPreference = 'Continue'
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}
@@ -441,4 +446,80 @@ function Show-Summary($state){
 }
 
 # ============================================================================
-switch($Action){ 'start'{ exit (Start-Pack) } 'stop'{ exit (Stop-Pack) } }
+#  REDÉMARRAGE DE KEPLER UNIQUEMENT (piloté par l'admin web, suivi par fichier statut)
+#  MariaDB / Apache / Minerva ne sont PAS touchés. Aucun arrêt forcé automatique.
+# ============================================================================
+function Set-Status([string]$step,[string]$state,[string]$label,[string]$detail=''){
+    if(-not $StatusFile){ return }
+    $o = [ordered]@{ step=$step; state=$state; label=$label; detail=$detail; at=(Get-Date -Format 'o'); dry=[bool]$DryRun }
+    try {
+        $tmp = "$StatusFile.tmp"
+        ($o | ConvertTo-Json -Compress) | Out-File -FilePath $tmp -Encoding utf8 -Force
+        Move-Item $tmp $StatusFile -Force
+    } catch {}
+    Log ("STATUS {0}/{1} {2} {3}" -f $step,$state,$label,$detail)
+}
+# Constate dans server.log que l'arrêt a bien déclenché le shutdown (sauvegarde).
+function Test-ShutdownSaved {
+    $f = Join-Path $Cfg.Www 'server.log'
+    if(-not (Test-Path $f)){ return $false }
+    try { $tail = Get-Content $f -Tail 80 -EA SilentlyContinue } catch { return $false }
+    return (@($tail | Where-Object { $_ -match 'Shutting down server' }).Count -gt 0)
+}
+function Restart-Kepler {
+    Log 'RESTART-KEPLER demandé'
+    $mtx = Lock-Pack
+    if(-not $mtx){ Set-Status 'lock' 'error' 'Opération impossible' "Un lanceur (START/STOP) est déjà en cours pour ce pack."; return 1 }
+    try {
+        # Redémarrage différé : fenêtre d'annulation (drapeau <StatusFile>.cancel).
+        if($DelaySeconds -gt 0){
+            $cancel = "$StatusFile.cancel"
+            if(Test-Path $cancel){ Remove-Item $cancel -Force -EA SilentlyContinue }
+            $sw=[Diagnostics.Stopwatch]::StartNew()
+            while($sw.Elapsed.TotalSeconds -lt $DelaySeconds){
+                if(Test-Path $cancel){ Remove-Item $cancel -Force -EA SilentlyContinue; Set-Status 'cancelled' 'cancelled' 'Redémarrage annulé' "Annulé avant l'arrêt — aucun impact."; return 2 }
+                $left=[int][math]::Ceiling($DelaySeconds - $sw.Elapsed.TotalSeconds)
+                Set-Status 'scheduled' 'running' 'Redémarrage imminent' ("Arrêt dans {0}s (annulable)." -f $left)
+                Start-Sleep -Seconds 1
+            }
+        }
+        # 1) Précheck : MariaDB prête (Kepler en dépend — on ne redémarre pas dans une base cassée).
+        Set-Status 'precheck' 'running' 'Vérifications' 'MariaDB disponible + identité du serveur de jeu.'
+        if(-not (Test-DbReady)){ Set-Status 'precheck' 'error' 'Vérifications échouées' "MariaDB ne répond pas / base incomplète. Kepler NON redémarré ; MariaDB intacte."; return 1 }
+        $kepler = @(Get-PackKepler)
+        # 2) Arrêt PROPRE (Ctrl+C -> shutdown hook / sauvegarde). Jamais de force-kill automatique.
+        if($kepler.Count){
+            Set-Status 'stop' 'running' 'Sauvegarde et arrêt' ("Arrêt propre de Kepler (Ctrl+C), PID {0}." -f (($kepler | ForEach-Object { $_.ProcessId }) -join ','))
+            $parents = @($kepler | ForEach-Object { [int]$_.ParentProcessId } | Where-Object { $_ -gt 0 } | Select-Object -Unique)
+            if(-not $DryRun){
+                foreach($k in $kepler){ Request-KeplerShutdown ([int]$k.ProcessId) }
+                $sw=[Diagnostics.Stopwatch]::StartNew(); $gone=$false
+                while($sw.Elapsed.TotalSeconds -lt $Cfg.StopTimeoutKepler){ if(-not (Get-PackKepler)){ $gone=$true; break }; Start-Sleep -Milliseconds 700 }
+                if(-not $gone){ Set-Status 'stop' 'error' 'Arrêt échoué' ("Kepler ne s'est pas arrêté en {0}s. AUCUN arrêt forcé — MariaDB préservée. Vérifie la fenêtre Émulateur." -f $Cfg.StopTimeoutKepler); return 1 }
+                foreach($pp in $parents){ $pc = Get-Process -Id $pp -EA SilentlyContinue; if($pc -and $pc.ProcessName -eq 'cmd'){ & taskkill /F /PID $pp *> $null } }
+            }
+            $saveNote = 'server.log : marqueurs de sauvegarde non confirmés — à vérifier.'
+            if(Test-ShutdownSaved){ $saveNote = "server.log : arrêt (« Shutting down server ») repéré. Complétude des sauvegardes à confirmer côté log." }
+            Set-Status 'backup' 'running' 'Arrêt constaté' $saveNote
+        } else {
+            Set-Status 'stop' 'running' 'Aucun Kepler actif' 'Rien à arrêter — démarrage direct.'
+        }
+        # 3) Démarrage + disponibilité RÉELLE (port du jeu tenu par NOTRE Kepler).
+        Set-Status 'start' 'running' 'Démarrage' 'Lancement de Kepler (run.bat)…'
+        if(-not $DryRun){
+            $o = Get-PortOwner $Cfg.Ports.Game
+            if($o -and (-not ((Get-PackKeplerPids) -contains [int]$o.Pid))){ Set-Status 'start' 'error' 'Démarrage impossible' ("Port {0} tenu par un process non reconnu : {1} (PID {2}). Aucune 2e instance lancée." -f $Cfg.Ports.Game,$o.Name,$o.Pid); return 1 }
+            Start-Process 'cmd.exe' -ArgumentList '/c','run.bat' -WorkingDirectory $Cfg.Www -WindowStyle Minimized
+            if(-not (Wait-KeplerReady $Cfg.StartTimeoutGame)){ Set-Status 'start' 'error' 'Démarrage échoué' ("Kepler n'écoute pas sur {0} après {1}s (voir fenêtre Émulateur / server.log)." -f $Cfg.Ports.Game,$Cfg.StartTimeoutGame); return 1 }
+        } else {
+            Start-Sleep -Milliseconds 300
+        }
+        $readyNote = 'Kepler redémarré et à l''écoute du port du jeu.'
+        if($DryRun){ $readyNote = 'Simulation (DryRun) terminée — rien n''a été arrêté ni démarré.' }
+        Set-Status 'ready' 'ok' 'Prêt' $readyNote
+        return 0
+    } finally { if($mtx){ $mtx.ReleaseMutex() | Out-Null; $mtx.Dispose() } }
+}
+
+# ============================================================================
+switch($Action){ 'start'{ exit (Start-Pack) } 'stop'{ exit (Stop-Pack) } 'restart-kepler'{ exit (Restart-Kepler) } }

@@ -172,6 +172,15 @@ $curRank = $rv->fetchColumn();
 if ($curRank === false || (int)$curRank < MIN_RANK) { session_destroy(); redirect('/?p=login'); }
 $_SESSION['admin']['rank'] = (int)$curRank;
 
+/* ---------- Statut du redémarrage Kepler (AJAX, lecture seule, droit « server ») ---------- */
+if (isset($_GET['rkstatus'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    if (!tab_allowed('server')) { http_response_code(403); echo '{"state":"error","label":"Non autorisé"}'; exit; }
+    $f = rk_status_path();
+    echo (is_file($f) ? (string)@file_get_contents($f) : '{"state":"idle","label":"Aucune opération en cours"}');
+    exit;
+}
+
 /* ---------- Téléchargement d'une sauvegarde (rang 7) ---------- */
 if (isset($_GET['dlbackup']) && (int)($_SESSION['admin']['rank'] ?? 0) >= 7) {
     $name = basename((string)$_GET['dlbackup']);
@@ -1149,6 +1158,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'srv_restart':
                 srv_stop(); sleep(3); srv_start();
                 $msg = '🔄 Redémarrage de l\'émulateur… patiente ~10 s puis actualise. Les changements de décor sont maintenant appliqués.'; break;
+            case 'srv_rk_start': // Redémarrage « Kepler uniquement » — arrêt propre (pack.ps1), détaché, suivi JSON.
+                $delay = (($_POST['when'] ?? 'now') === 'later') ? 60 : 0;
+                if ($delay > 0) { @rcon_send('hotel_alert', ['message' => kepler_text('Redemarrage du jeu dans 1 minute. Reconnecte-toi juste apres.')]); }
+                $ok = rk_launch($delay);
+                admin_log('srv_rk_start', 'Redémarrage Kepler (' . ($delay > 0 ? 'dans 1 min, annonce envoyée' : 'immédiat') . ')');
+                $msg = $ok ? '🔁 Redémarrage de Kepler lancé — suis la progression ci-dessous (l\'opération continue même si tu fermes la page).' : '❌ Impossible de lancer le script (scripts/pack.ps1 introuvable ?).';
+                break;
+            case 'srv_rk_cancel': // Annule un redémarrage DIFFÉRÉ avant l'arrêt effectif.
+                @file_put_contents(rk_status_path() . '.cancel', '1', LOCK_EX);
+                admin_log('srv_rk_cancel', 'Annulation du redémarrage Kepler différé');
+                $msg = '✋ Annulation demandée (prise en compte si l\'arrêt n\'a pas encore commencé).'; break;
             case 'maint_on':
                 $mj = ['on' => true, 'message' => mb_substr(trim((string)($_POST['message'] ?? '')), 0, 300), 'eta' => mb_substr(trim((string)($_POST['eta'] ?? '')), 0, 60), 'by' => (string)($_SESSION['admin']['username'] ?? ''), 'at' => date('c')];
                 $mfp = dirname(__DIR__) . '/maintenance.json';
@@ -2905,6 +2925,7 @@ function action_tab(string $a): string {
         // Salles & décors (le bouton « Redémarrer l'ému » vit ici, rang 5)
         'room_update' => 'rooms', 'room_decor' => 'rooms', 'room_toggle' => 'rooms',
         'decor_season' => 'rooms', 'srv_restart' => 'rooms', 'model_update' => 'models',
+        'srv_rk_start' => 'server', 'srv_rk_cancel' => 'server', // Redémarrage Kepler : droit « Technique → Serveur » (rang 7)
         // Catalogue & mobis
         'cat_item' => 'catalogue', 'cat_page' => 'catalogue', 'cat_page_move' => 'catalogue', 'cat_bulk' => 'catalogue',
         'navcat_update' => 'navcats', 'navcat_move' => 'navcats',
@@ -5722,8 +5743,19 @@ function page_server(): void {
     echo '<div class="srv">';
     echo '<form method="post" class="js" data-reload><input type="hidden" name="action" value="srv_start">' . csrf_field() . '<button class="bigok"' . ($up ? ' disabled' : '') . '>▶️ Démarrer</button></form>';
     echo '<form method="post" class="js" data-reload data-confirm="Arrêter l\'émulateur ? Les joueurs seront déconnectés."><input type="hidden" name="action" value="srv_stop">' . csrf_field() . '<button class="bigred"' . ($up ? '' : ' disabled') . '>⏹️ Arrêter</button></form>';
-    echo '<form method="post" class="js" data-reload data-confirm="Redémarrer l\'émulateur ? Les joueurs seront déconnectés ~10 s."><input type="hidden" name="action" value="srv_restart">' . csrf_field() . '<button class="bigwarn">🔄 Redémarrer</button></form>';
-    echo '</div><p class="hint">💡 Le <b>redémarrage</b> applique les changements de décor, d\'activation de salle et certains réglages. La base de données et le site web ne sont pas touchés.</p></div>';
+    echo '</div><p class="hint">💡 Démarrer / Arrêter agissent sur l\'émulateur. Pour appliquer des changements <b>sans couper les autres services</b>, utilise le redémarrage ciblé ci-dessous.</p></div>';
+
+    /* --- Redémarrage « Kepler uniquement » (arrêt propre via pack.ps1, détaché, suivi JSON) --- */
+    echo '<div class="panel"><div class="ph"><h3>🔁 Redémarrer le serveur de jeu — Kepler uniquement</h3></div>';
+    echo '<p class="sub">MariaDB, Apache, le site et Minerva <b>restent en marche</b>. Arrêt <b>propre</b> (sauvegarde via Ctrl+C) puis redémarrage, avec contrôle de disponibilité réelle. <b>Aucun arrêt forcé.</b></p>';
+    echo '<div class="srv">';
+    echo '<form method="post" class="js" data-reload data-confirm="Redémarrer Kepler maintenant ? Les joueurs connectés seront déconnectés."><input type="hidden" name="action" value="srv_rk_start"><input type="hidden" name="when" value="now">' . csrf_field() . '<button class="bigwarn">🔁 Redémarrer maintenant</button></form>';
+    echo '<form method="post" class="js" data-reload><input type="hidden" name="action" value="srv_rk_start"><input type="hidden" name="when" value="later">' . csrf_field() . '<button class="bigok">⏲️ Dans 1 min (annonce aux joueurs)</button></form>';
+    echo '<form method="post" class="js" data-reload><input type="hidden" name="action" value="srv_rk_cancel">' . csrf_field() . '<button>✋ Annuler (avant l\'arrêt)</button></form>';
+    echo '</div>';
+    echo '<div id="rkprog" style="margin-top:10px;display:none;padding:10px 12px;border:1px solid var(--line2);border-radius:10px"><b>Progression :</b> <span id="rkprog-label">—</span><div id="rkprog-detail" class="muted sm" style="margin-top:4px"></div></div>';
+    echo '<p class="hint">💡 « Redémarrage de Kepler uniquement ». L\'opération continue même si tu fermes cette page ; « 🔄 Rafraîchir l\'état » (en haut) ne fait que consulter.</p></div>';
+    echo '<script>(function(){var b=document.getElementById("rkprog"),l=document.getElementById("rkprog-label"),d=document.getElementById("rkprog-detail");if(!b)return;function p(){fetch("?p=server&rkstatus=1",{credentials:"same-origin"}).then(function(r){return r.json();}).then(function(s){if(!s||s.state==="idle")return;b.style.display="block";var m={error:" ❌",ok:" ✅",cancelled:" ✋"};l.textContent=(s.label||"")+(s.dry?" (simulation)":"")+(m[s.state]||"");d.textContent=s.detail||"";if(s.state==="running")setTimeout(p,1500);}).catch(function(){});}p();})();</script>';
 
     /* --- Mode maintenance --- */
     $mf = dirname(__DIR__) . '/maintenance.json';
@@ -5829,6 +5861,22 @@ function ps_exe(): string {
 }
 function srv_stop(): array { $o = []; $c = -1; @exec(ps_exe() . ' -NoProfile -ExecutionPolicy Bypass -File "' . __DIR__ . '\\_emu_stop.ps1" 2>&1', $o, $c); return ['code' => $c, 'out' => $o]; }
 function srv_start(): array { $o = []; $c = -1; @exec(ps_exe() . ' -NoProfile -ExecutionPolicy Bypass -File "' . __DIR__ . '\\_emu_start.ps1" 2>&1', $o, $c); return ['code' => $c, 'out' => $o]; }
+
+/* ---- Redémarrage « Kepler uniquement » (réutilise scripts/pack.ps1, opération détachée + suivi JSON) ---- */
+function rk_status_path(): string { $d = dirname(__DIR__, 2) . '/_runtime'; if (!is_dir($d)) @mkdir($d, 0775, true); return $d . '/restart_kepler.json'; }
+function rk_pack_script(): string { return dirname(__DIR__, 2) . '/scripts/pack.ps1'; }
+/* Lance pack.ps1 -Action restart-kepler en PROCESS DÉTACHÉ (survit à la fermeture de la page). */
+function rk_launch(int $delay): bool {
+    $status = rk_status_path();
+    @unlink($status . '.cancel');
+    @file_put_contents($status, json_encode(['step' => 'launch', 'state' => 'running', 'label' => 'Lancement de l\'opération…', 'detail' => $delay > 0 ? 'Redémarrage différé (annonce envoyée).' : 'Démarrage immédiat.', 'at' => date('c')], JSON_UNESCAPED_UNICODE), LOCK_EX);
+    $pack = rk_pack_script();
+    if (!is_file($pack)) { @file_put_contents($status, json_encode(['step' => 'launch', 'state' => 'error', 'label' => 'Script introuvable', 'detail' => 'scripts/pack.ps1 absent.', 'at' => date('c')], JSON_UNESCAPED_UNICODE), LOCK_EX); return false; }
+    // 'start /B' détache le process du worker Apache -> l'opération continue si la page est fermée.
+    $cmd = 'start "rk" /B ' . ps_exe() . ' -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' . $pack . '" -Action restart-kepler -StatusFile "' . $status . '" -DelaySeconds ' . (int)$delay . ' > NUL 2>&1';
+    @pclose(@popen($cmd, 'r'));
+    return true;
+}
 
 /* ---- RCON (alerte hôtel, etc.) ---- */
 /* Prépare un texte pour le client Habbo (Shockwave) : retire les emoji (non rendus)
