@@ -5872,8 +5872,11 @@ function srv_stop(): array { $o = []; $c = -1; @exec(ps_exe() . ' -NoProfile -Ex
 function srv_start(): array { $o = []; $c = -1; @exec(ps_exe() . ' -NoProfile -ExecutionPolicy Bypass -File "' . __DIR__ . '\\_emu_start.ps1" 2>&1', $o, $c); return ['code' => $c, 'out' => $o]; }
 
 /* ---- Redémarrage « Kepler uniquement » (réutilise scripts/pack.ps1, opération détachée + suivi JSON) ---- */
-function rk_status_path(): string { $d = dirname(__DIR__, 2) . '/_runtime'; if (!is_dir($d)) @mkdir($d, 0775, true); return $d . '/restart_kepler.json'; }
-function rk_pack_script(): string { return dirname(__DIR__, 2) . '/scripts/pack.ps1'; }
+/* Racine du dépôt = 3 niveaux au-dessus de admin/ (admin -> www -> Server -> racine),
+   là où se trouvent scripts/pack.ps1 et _runtime/. dirname(__DIR__,2) pointait par erreur
+   sur Server/ -> « pack.ps1 introuvable » + _runtime créé au mauvais endroit. */
+function rk_status_path(): string { $d = dirname(__DIR__, 3) . '/_runtime'; if (!is_dir($d)) @mkdir($d, 0775, true); return $d . '/restart_kepler.json'; }
+function rk_pack_script(): string { return dirname(__DIR__, 3) . '/scripts/pack.ps1'; }
 /* Lance pack.ps1 -Action restart-kepler en PROCESS DÉTACHÉ (survit à la fermeture de la page). */
 function rk_launch(int $delay): bool {
     $status = rk_status_path();
