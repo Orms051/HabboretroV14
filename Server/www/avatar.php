@@ -24,10 +24,16 @@ error_reporting(E_ALL & ~E_WARNING & ~E_NOTICE & ~E_DEPRECATED);
 require __DIR__ . '/avatar/figure_lib.php';
 
 if (!defined('DB_HOST')) {
-    define('DB_HOST', '127.0.0.1'); define('DB_PORT', 3306);
-    define('DB_NAME', 'v14'); define('DB_USER', 'root'); define('DB_PASS', '');
+    // W01 : lire la MÊME config que le site/admin (variables V14_DB_*), avec repli local Laragon.
+    // Sinon un changement d'identifiants de base casse les avatars alors que le reste du site marche.
+    define('DB_HOST', getenv('V14_DB_HOST') ?: '127.0.0.1');
+    define('DB_PORT', (int)(getenv('V14_DB_PORT') ?: 3306));
+    define('DB_NAME', getenv('V14_DB_NAME') ?: 'v14');
+    define('DB_USER', getenv('V14_DB_USER') ?: 'root');
+    define('DB_PASS', getenv('V14_DB_PASS') !== false ? getenv('V14_DB_PASS') : '');
 }
-const MINERVA_BASE = 'http://localhost:5123';
+// URL de Minerva configurable via l'environnement (repli local) — W01.
+define('MINERVA_BASE', getenv('V14_MINERVA_URL') ?: 'http://localhost:5123');
 const AVA_CACHE_DIR = __DIR__ . '/cache/avatars';
 const AVA_TIMEOUT   = 4;   // secondes max pour Minerva
 
