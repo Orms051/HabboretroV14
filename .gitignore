@@ -49,6 +49,11 @@ desktop.ini
 # --- Runtime /v2 (throttle login, etc.) ---
 Server/www/v2/_runtime/
 
+# --- Runtime racine (bouton Redémarrer Kepler : statut + diag) ---
+/_runtime/
+Server/www/server_launch.out
+Server/www/_router_dev.php
+
 # --- Fichier d'identifiants de test local (ne pas committer) ---
 Server/www/v2/tools/.admin_test_login.txt
 
