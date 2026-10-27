@@ -110,6 +110,12 @@ function csrf_check(): void { $t = (string)($_POST['csrf'] ?? ''); if ($t === ''
 function flash(?string $m = null): ?string { if ($m !== null) { $_SESSION['flash'] = $m; return null; } $f = $_SESSION['flash'] ?? null; unset($_SESSION['flash']); return $f; }
 function require_login(): void { if (empty($_SESSION['admin'])) { header('Location: /?p=login'); exit; } }
 function make_hash(string $pw): string { return password_hash($pw, PASSWORD_ARGON2ID, ['memory_cost' => 65536, 'time_cost' => 2, 'threads' => 1]); }
+/* SEC02 : mot de passe provisoire ALÉATOIRE fort, compatible client V14 (6-10 car., alphanum sans ambiguïté). */
+function make_temp_password(int $len = 9): string {
+    $a = 'abcdefghjkmnpqrstuvwxyz23456789'; $n = strlen($a); $s = '';
+    for ($i = 0; $i < $len; $i++) $s .= $a[random_int(0, $n - 1)];
+    return $s;
+}
 function redirect(string $to): void { header('Location: ' . $to); exit; }
 function is_ajax(): bool { return (($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'fetch') || !empty($_POST['ajax']); }
 function cur_page(): int { return max(1, (int)($_GET['pg'] ?? 1)); }
@@ -314,11 +320,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $us = db()->prepare('SELECT id,`rank` FROM users WHERE username=?'); $us->execute([(string)$req['username']]); $tu = $us->fetch();
                 if (!$tu) { $ok = false; $msg = '❌ Aucun compte nommé « ' . $req['username'] .' » (demande marquée rejetée).'; db()->prepare('UPDATE password_resets SET status=\'rejected\', handled_by=?, handled_at=NOW() WHERE id=?')->execute([$_SESSION['admin']['username'] ?? '?', $rid]); break; }
                 if (is_protected_target((int)$tu['id'])) { $ok = false; $msg = '🔒 Ce compte est d\'un rang supérieur au tien : reset refusé.'; break; }
-                $tmp = 'Habbo' . random_int(1000, 9999);
-                db()->prepare('UPDATE users SET password=? WHERE id=?')->execute([make_hash($tmp), (int)$tu['id']]);
+                // SEC02 : usage unique — on ne (re)traite qu'une demande 'pending'.
+                if (($req['status'] ?? '') !== 'pending') { $ok = false; $msg = 'ℹ️ Cette demande a déjà été traitée (aucun nouveau mot de passe généré).'; break; }
+                // SEC02 : mot de passe provisoire ALÉATOIRE fort (fini « Habbo + 4 chiffres ») + invalidation du ticket SSO existant.
+                $tmp = make_temp_password();
+                db()->prepare('UPDATE users SET password=?, sso_ticket=? WHERE id=?')->execute([make_hash($tmp), '', (int)$tu['id']]);
                 db()->prepare('UPDATE password_resets SET status=\'done\', handled_by=?, handled_at=NOW() WHERE id=?')->execute([$_SESSION['admin']['username'] ?? '?', $rid]);
-                admin_log('pwreset_do', 'réinitialisation pour « ' . $req['username'] . ' » (mot de passe provisoire NON journalisé)');
-                $msg = '🔑 Mot de passe provisoire pour « ' . $req['username'] . ' » : ' . $tmp . ' — communique-le au joueur, il devra le changer.'; break;
+                admin_log('pwreset_do', 'réinitialisation pour « ' . $req['username'] . ' » (mot de passe provisoire aléatoire NON journalisé ; ticket SSO invalidé)');
+                $msg = '🔑 Mot de passe provisoire pour « ' . $req['username'] . ' » : ' . $tmp . ' — à usage unique, communique-le au joueur et demande-lui de le changer. Ses anciennes sessions/tickets sont invalidés.'; break;
             case 'pwreset_reject':
                 ensure_pw_resets();
                 db()->prepare('UPDATE password_resets SET status=\'rejected\', handled_by=?, handled_at=NOW() WHERE id=?')->execute([$_SESSION['admin']['username'] ?? '?', (int)($_POST['rid'] ?? 0)]);
