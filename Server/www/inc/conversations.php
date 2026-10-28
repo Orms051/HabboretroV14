@@ -184,7 +184,9 @@ function conv_system_notice(int $convId, string $body, bool $once = true): bool
 /** Marque les messages d'une conversation comme lus pour le joueur (à l'ouverture). */
 function conv_mark_read_player(int $convId, int $playerId): void
 {
-    try { db()->prepare("UPDATE conversation_messages SET read_player=1 WHERE conv_id=? AND is_internal=0 AND sender<>'player' AND read_player=0")->execute([$convId]); } catch (Throwable $e) {}
+    // C05 : le helper vérifie lui-même la propriété (player_id) au lieu d'ignorer $playerId —
+    // un (convId, playerId) incohérent ne peut plus marquer « lus » les messages d'autrui.
+    try { db()->prepare("UPDATE conversation_messages m JOIN conversations c ON c.id=m.conv_id SET m.read_player=1 WHERE m.conv_id=? AND c.player_id=? AND m.is_internal=0 AND m.sender<>'player' AND m.read_player=0")->execute([$convId, $playerId]); } catch (Throwable $e) {}
 }
 
 /** Marque les messages d'une conversation comme lus pour le staff (à l'ouverture). */
