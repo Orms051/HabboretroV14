@@ -68,12 +68,17 @@ function fig_caches(): array {
         && filemtime($p['cache']) >= max(filemtime($p['our']), filemtime($p['ava']));
     if ($cacheOk) {
         $raw = @file_get_contents($p['cache']);
-        $data = $raw !== false ? @unserialize($raw) : false;
+        // SEC06 : désérialisation durcie — le cache ne contient que des tableaux ; allowed_classes=false
+        // empêche toute instanciation d'objet si le fichier était altéré.
+        $data = $raw !== false ? @unserialize($raw, ['allowed_classes' => false]) : false;
         if (is_array($data) && ($data['v'] ?? '') === AVATAR_CONV_VERSION) { return $c = $data; }
     }
     $c = fig_build_caches($p);
+    // SEC06 : écriture ATOMIQUE (fichier temporaire + rename) pour éviter un cache tronqué si deux
+    // requêtes régénèrent en même temps (lecture d'un fichier à moitié écrit).
     @mkdir(dirname($p['cache']), 0775, true);
-    @file_put_contents($p['cache'], serialize($c));
+    $tmp = $p['cache'] . '.' . getmypid() . '.tmp';
+    if (@file_put_contents($tmp, serialize($c), LOCK_EX) !== false) { if (!@rename($tmp, $p['cache'])) @unlink($tmp); }
     return $c;
 }
 
