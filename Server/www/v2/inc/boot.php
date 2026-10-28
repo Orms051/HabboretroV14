@@ -209,11 +209,21 @@ function ensure_home(): void {
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         INDEX(owner_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // Statut d'une ressource Home (H01) : une LIGNE = ressource non « disponible ».
+    //   status 'shop_hidden' = retirée de la boutique (plus proposée à l'ajout) mais
+    //                          TOUJOURS affichée chez ses détenteurs ;
+    //   status 'banned'      = interdite d'affichage partout (modération), avec motif/trace.
+    //   Aucune ligne         = 'available' (proposée + affichée).
     db()->exec("CREATE TABLE IF NOT EXISTS home_assets_disabled (
         kind VARCHAR(8) NOT NULL,
         resource VARCHAR(160) NOT NULL,
+        status VARCHAR(12) NOT NULL DEFAULT 'shop_hidden',
+        reason VARCHAR(255) NOT NULL DEFAULT '',
+        updated_by VARCHAR(64) NOT NULL DEFAULT '',
+        updated_at DATETIME NULL DEFAULT NULL,
         PRIMARY KEY (kind, resource)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    home_assets_ensure_schema();
     db()->exec("CREATE TABLE IF NOT EXISTS home_reports (
         id INT AUTO_INCREMENT PRIMARY KEY,
         target_type VARCHAR(12) NOT NULL,
@@ -285,37 +295,61 @@ function home_asset_dir(string $kind): string {
     $root = dirname(__DIR__, 2) . '/c_images/myhabbo';   // .../www/c_images/myhabbo
     return $kind === 'bg' ? $root . '/backgrounds2' : $root . '/stickers';
 }
-function home_disabled_set(string $kind): array {
+/** Ajoute les colonnes de statut si une ancienne table home_assets_disabled existe sans elles.
+ *  SQL standard (information_schema + ALTER simple) compatible MySQL 8.4 et MariaDB 11.4. */
+function home_assets_ensure_schema(): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $cols = [];
+        foreach (db()->query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='home_assets_disabled'") as $r) $cols[$r['COLUMN_NAME']] = 1;
+        if ($cols && !isset($cols['status']))     db()->exec("ALTER TABLE home_assets_disabled ADD COLUMN status VARCHAR(12) NOT NULL DEFAULT 'shop_hidden'");
+        if ($cols && !isset($cols['reason']))     db()->exec("ALTER TABLE home_assets_disabled ADD COLUMN reason VARCHAR(255) NOT NULL DEFAULT ''");
+        if ($cols && !isset($cols['updated_by'])) db()->exec("ALTER TABLE home_assets_disabled ADD COLUMN updated_by VARCHAR(64) NOT NULL DEFAULT ''");
+        if ($cols && !isset($cols['updated_at'])) db()->exec("ALTER TABLE home_assets_disabled ADD COLUMN updated_at DATETIME NULL DEFAULT NULL");
+    } catch (Throwable $e) {}
+}
+/** resource => statut ('shop_hidden'|'banned') pour un type. Absent de la map = 'available'. */
+function home_asset_status_map(string $kind): array {
     ensure_home();
     static $cache = [];
     if (isset($cache[$kind])) return $cache[$kind];
-    $set = [];
-    try { $st = db()->prepare('SELECT resource FROM home_assets_disabled WHERE kind=?'); $st->execute([$kind]); foreach ($st->fetchAll() as $r) $set[$r['resource']] = 1; }
+    $m = [];
+    try { $st = db()->prepare('SELECT resource,status FROM home_assets_disabled WHERE kind=?'); $st->execute([$kind]); foreach ($st->fetchAll() as $r) $m[$r['resource']] = ($r['status'] ?? '') === 'banned' ? 'banned' : 'shop_hidden'; }
     catch (Throwable $e) {}
-    return $cache[$kind] = $set;
+    return $cache[$kind] = $m;
 }
-function home_asset_list(string $kind, bool $withDisabled = false): array {
+/** Statut d'une ressource : 'available' (défaut), 'shop_hidden' ou 'banned'. */
+function home_asset_status(string $kind, string $file): string {
+    return home_asset_status_map($kind)[basename($file)] ?? 'available';
+}
+/** Présente physiquement dans le catalogue (anti-chemin arbitraire) — indépendant du statut. */
+function home_asset_present(string $kind, string $file): bool {
+    $file = basename($file);
+    if ($file === '' || !preg_match('/\.(gif|png|jpg|jpeg)$/i', $file)) return false;
+    return is_file(home_asset_dir($kind) . '/' . $file);
+}
+/** Liste des ressources proposables à l'AJOUT (palette de l'éditeur) = présentes ET 'available'.
+ *  $withAll=true (ex. admin) renvoie toutes les présentes, quel que soit le statut. */
+function home_asset_list(string $kind, bool $withAll = false): array {
     $dir = home_asset_dir($kind);
     if (!is_dir($dir)) return [];
-    $disabled = $withDisabled ? [] : home_disabled_set($kind);
+    $flagged = $withAll ? [] : home_asset_status_map($kind);
     $out = [];
     foreach (scandir($dir) as $f) {
         if ($f === '.' || $f === '..') continue;
         if (!preg_match('/\.(gif|png|jpg|jpeg)$/i', $f)) continue;
         if (!is_file($dir . '/' . $f)) continue;
-        if (isset($disabled[$f])) continue;
+        if (isset($flagged[$f])) continue; // a un statut (retirée boutique ou bannie) -> pas dans la palette
         $out[] = $f;
     }
     sort($out, SORT_NATURAL | SORT_FLAG_CASE);
     return $out;
 }
-/** Un fichier de ressource est-il réellement présent dans le catalogue (anti-chemin arbitraire) ? */
+/** AFFICHABLE : présente ET non bannie. H01 — une ressource retirée de la boutique
+ *  ('shop_hidden') reste affichée chez ses détenteurs ; seul 'banned' la retire partout.
+ *  Utilisé à l'enregistrement d'une Home ET au rendu (on ne casse pas une Home existante). */
 function home_asset_ok(string $kind, string $file): bool {
-    $file = basename($file);
-    if ($file === '' || !preg_match('/\.(gif|png|jpg|jpeg)$/i', $file)) return false;
-    if (!is_file(home_asset_dir($kind) . '/' . $file)) return false;
-    if (isset(home_disabled_set($kind)[$file])) return false; // ressource désactivée par l'admin : refusée à l'enregistrement
-    return true;
+    return home_asset_present($kind, $file) && home_asset_status($kind, $file) !== 'banned';
 }
 function home_asset_url(string $kind, string $file): string {
     return '/c_images/myhabbo/' . ($kind === 'bg' ? 'backgrounds2' : 'stickers') . '/' . rawurlencode(basename($file));
