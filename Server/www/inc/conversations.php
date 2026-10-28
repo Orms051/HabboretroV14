@@ -138,8 +138,18 @@ function conv_add_message(int $convId, string $sender, string $senderName, strin
             // Un message public (re)met la conversation dans la file de l'autre partie
             // et la fait ressortir de l'archive / corbeille du joueur, quel que soit l'expéditeur.
             $newStatus = ($sender === 'player') ? 'waiting_staff' : 'waiting_player';
-            db()->prepare('UPDATE conversations SET status=?, updated_at=NOW(), player_trashed=0, player_archived=0, player_deleted=0 WHERE id=?')
-                ->execute([$newStatus, $convId]);
+            if ($sender === 'player') {
+                // C02 : une réponse du joueur doit AUSSI ressortir des dossiers écartés côté
+                // staff (archive/corbeille) et revenir dans la réception « assistance »
+                // (filtre admin : staff_trashed=0 AND staff_archived=0 AND status<>'resolved').
+                // Sinon la réponse reste invisible dans un dossier que le staff avait rangé.
+                db()->prepare('UPDATE conversations SET status=?, updated_at=NOW(), player_trashed=0, player_archived=0, player_deleted=0, staff_archived=0, staff_trashed=0 WHERE id=?')
+                    ->execute([$newStatus, $convId]);
+            } else {
+                // Message staff/système -> revient dans la boîte du joueur (comportement existant).
+                db()->prepare('UPDATE conversations SET status=?, updated_at=NOW(), player_trashed=0, player_archived=0, player_deleted=0 WHERE id=?')
+                    ->execute([$newStatus, $convId]);
+            }
         }
         return true;
     } catch (Throwable $e) {
@@ -196,12 +206,15 @@ function conv_unread_player(int $playerId): int
     }
 }
 
-/** Nombre de conversations avec un message joueur non lu par le staff. */
+/** Nombre de conversations avec un message joueur non lu par le staff, dans la file
+ *  « assistance ». C02 : MÊME règle que la vue assistance (staff_trashed=0 AND
+ *  staff_archived=0 AND status<>'resolved') pour que le badge ne compte pas des
+ *  conversations rangées/résolues invisibles dans la file -> badge == contenu réel. */
 function conv_unread_staff(): int
 {
     ensure_conversations();
     try {
-        return (int)db()->query("SELECT COUNT(DISTINCT c.id) FROM conversations c JOIN conversation_messages m ON m.conv_id=c.id WHERE m.sender='player' AND m.read_staff=0")->fetchColumn();
+        return (int)db()->query("SELECT COUNT(DISTINCT c.id) FROM conversations c JOIN conversation_messages m ON m.conv_id=c.id WHERE m.sender='player' AND m.read_staff=0 AND c.staff_trashed=0 AND c.staff_archived=0 AND c.status<>'resolved'")->fetchColumn();
     } catch (Throwable $e) {
         return 0;
     }
