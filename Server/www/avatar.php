@@ -47,7 +47,12 @@ $dir  = in_array($dirReq, $ALLOWED_DIR, true) ? $dirReq : 2;
 $head = (($_GET['head'] ?? '') === '1') ? 1 : 0;
 
 $figure = ''; $sex = 'M';
-$user = isset($_GET['user']) ? preg_replace('/[^A-Za-z0-9_.\-]/', '', (string)$_GET['user']) : '';
+// W02 : NE PAS retirer de caractères du pseudo. L'inscription autorise ?, !, @, :, virgule, =…
+// Les supprimer transformait un pseudo en un autre -> avatar erroné. Le pseudo n'est utilisé
+// QUE dans une requête préparée (ci-dessous) et n'est jamais réaffiché -> pas de risque SQL/XSS.
+// On le prend tel quel, avec un simple garde-fou de longueur.
+$user = isset($_GET['user']) ? trim((string)$_GET['user']) : '';
+if (mb_strlen($user) > 64) $user = '';
 if ($user !== '') {
     try {
         $pdo = new PDO('mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . DB_NAME . ';charset=utf8mb4', DB_USER, DB_PASS, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
