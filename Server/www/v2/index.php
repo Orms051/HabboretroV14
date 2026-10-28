@@ -204,7 +204,9 @@ function av_initial(string $name, int $size = 44): string {
     return '<span class="av-ini" style="width:' . $size . 'px;height:' . $size . 'px;line-height:' . $size . 'px;font-size:' . $fs . 'px;background:' . $bg . '">' . h($ch) . '</span>';
 }
 function hw_box(string $title, string $body, int $w = 280, string $hc = 'b', string $skin = ''): string {
-    $cls = 'hw ' . home_skin_class($skin !== '' ? $skin : 'habbohomes');
+    // H01/skins : un skin désactivé (banni) retombe sur le skin par défaut (ne casse pas le widget).
+    $useSkin = ($skin !== '' && home_asset_ok('skin', $skin)) ? $skin : 'habbohomes';
+    $cls = 'hw ' . home_skin_class($useSkin);
     return '<div class="' . $cls . '" style="width:' . $w . 'px">'
         . '<div class="widget-headline"><div class="widget-corner"><h3>' . h($title) . '</h3></div></div>'
         . '<div class="widget-content"><div class="widget-body">' . $body . '</div></div>'
@@ -1190,7 +1192,7 @@ if ($p === 'home_save') {
         $y = max(0, min(1360, (int)($it['y'] ?? 0)));
         $z = max(0, min(999, (int)($it['z'] ?? 1)));
         $style = (string)($it['style'] ?? '');
-        if ($type === 'sticker' || !isset($skins[$style])) $style = '';
+        if ($type === 'sticker' || !isset($skins[$style]) || !home_asset_ok('skin', $style)) $style = ''; // skin invalide ou désactivé -> défaut
         $content = $type === 'widget_notes' ? mb_substr(trim(strip_tags((string)($it['content'] ?? ''))), 0, 600) : null;
         $rows[] = [$type, $res, $x, $y, $z, $content, $style];
         if (count($rows) >= 80) break;
@@ -1267,7 +1269,7 @@ if ($p === 'home_edit') {
       labels: <?= json_encode($labels) ?>,
       bgList: <?= json_encode($bgList) ?>,
       stList: <?= json_encode($stList) ?>,
-      skins: <?= json_encode(array_keys(home_skins())) ?>,
+      skins: <?= json_encode(home_asset_list('skin')) ?>,
       skinCls: <?= json_encode(array_map('home_skin_class', array_combine(array_keys(home_skins()), array_keys(home_skins())))) ?>,
       csrf: <?= json_encode(csrf()) ?>,
       dirty: false, palKind: '', palShown: 48

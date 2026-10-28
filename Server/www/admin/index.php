@@ -877,7 +877,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'hm_asset_status': {
                 // H01 : 3 états. available = supprime la ligne ; shop_hidden/banned = upsert avec motif/trace.
                 ensure_home_admin();
-                $kind = ($_POST['kind'] ?? '') === 'bg' ? 'bg' : 'sticker';
+                $kind = in_array($_POST['kind'] ?? '', ['bg', 'sticker', 'skin'], true) ? (string)$_POST['kind'] : 'sticker';
                 $res = basename((string)($_POST['resource'] ?? ''));
                 $status = (string)($_POST['status'] ?? '');
                 if ($res === '') { $ok = false; $msg = '❌ Ressource vide.'; break; }
@@ -900,7 +900,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'hm_asset_bulk': {
                 // H01 : applique un statut à TOUTES les ressources d'un filtre (type + recherche + statut courant).
                 ensure_home_admin();
-                $kind = in_array($_POST['kind'] ?? '', ['bg', 'sticker'], true) ? (string)$_POST['kind'] : 'sticker';
+                $kind = in_array($_POST['kind'] ?? '', ['bg', 'sticker', 'skin'], true) ? (string)$_POST['kind'] : 'sticker';
                 $target = (string)($_POST['target'] ?? '');
                 if (!in_array($target, ['available', 'shop_hidden', 'banned'], true)) { $ok = false; $msg = '❌ Cible invalide.'; break; }
                 $qb = trim((string)($_POST['q'] ?? ''));
@@ -1664,7 +1664,12 @@ function hm_uname(int $id): string {
     static $c = []; if (isset($c[$id])) return $c[$id];
     try { $s = db()->prepare('SELECT username FROM users WHERE id=?'); $s->execute([$id]); return $c[$id] = (string)$s->fetchColumn(); } catch (Throwable $e) { return $c[$id] = '#' . $id; }
 }
+/** Skins de widgets Home : clé => préfixe d'images (miroir de home_skins() côté site). */
+function hm_skin_defs(): array {
+    return ['habbohomes' => 'HabboHomes', 'metal' => 'Metal', 'hcmachine' => 'HCmachine', 'notepad' => 'Notepad', 'speechbubble' => 'Speechbubble', 'stickienote' => 'Stickienote'];
+}
 function hm_asset_files(string $kind): array {
+    if ($kind === 'skin') return array_keys(hm_skin_defs());
     $dir = dirname(__DIR__) . '/c_images/myhabbo/' . ($kind === 'bg' ? 'backgrounds2' : 'stickers');
     if (!is_dir($dir)) return [];
     $out = [];
@@ -1895,6 +1900,7 @@ function hm_view_search(): void {
     }
 }
 function hm_asset_url_adm(string $kind, string $f): string {
+    if ($kind === 'skin') { $pre = hm_skin_defs()[$f] ?? ''; return $pre === '' ? '' : '/web-gallery/images/skins/Skin_' . rawurlencode($pre) . '_topL.png'; }
     return '/c_images/myhabbo/' . ($kind === 'bg' ? 'backgrounds2' : 'stickers') . '/' . rawurlencode($f);
 }
 function hm_status_badge(string $status): string {
@@ -1907,8 +1913,12 @@ function hm_asset_actions(string $kind, string $f, string $status): string {
     $hid = '<input type="hidden" name="action" value="hm_asset_status"><input type="hidden" name="kind" value="' . $kind . '"><input type="hidden" name="resource" value="' . h($f) . '">';
     $out = '';
     if ($status !== 'available')   $out .= '<form method="post" class="js" data-reload style="display:inline-block;margin:0 2px 2px 0">' . csrf_field() . $hid . '<input type="hidden" name="status" value="available"><button class="sm-btn sq">✅ Dispo</button></form>';
-    if ($status !== 'shop_hidden') $out .= '<form method="post" class="js" data-reload style="display:inline-block;margin:0 2px 2px 0">' . csrf_field() . $hid . '<input type="hidden" name="status" value="shop_hidden"><button class="sm-btn sq">🏪 Hors boutique</button></form>';
-    if ($status !== 'banned')      $out .= '<details style="display:inline-block;margin:0 2px 2px 0"><summary class="sm-btn sq danger" style="list-style:none;display:inline-block">⛔ Bannir</summary><form method="post" class="js" data-reload style="margin-top:4px">' . csrf_field() . $hid . '<input type="hidden" name="status" value="banned"><input name="reason" placeholder="motif (modération)" maxlength="255" style="width:150px;display:block;margin-bottom:3px"><button class="sm-btn sq danger">Confirmer</button></form></details>';
+    // Les skins sont un set fixe du thème : pas de « hors boutique » (notion boutique sans objet), juste on/off.
+    if ($kind !== 'skin' && $status !== 'shop_hidden') $out .= '<form method="post" class="js" data-reload style="display:inline-block;margin:0 2px 2px 0">' . csrf_field() . $hid . '<input type="hidden" name="status" value="shop_hidden"><button class="sm-btn sq">🏪 Hors boutique</button></form>';
+    if ($status !== 'banned') {
+        $lbl = $kind === 'skin' ? '⛔ Désactiver' : '⛔ Bannir';
+        $out .= '<details style="display:inline-block;margin:0 2px 2px 0"><summary class="sm-btn sq danger" style="list-style:none;display:inline-block">' . $lbl . '</summary><form method="post" class="js" data-reload style="margin-top:4px">' . csrf_field() . $hid . '<input type="hidden" name="status" value="banned"><input name="reason" placeholder="motif (optionnel)" maxlength="255" style="width:150px;display:block;margin-bottom:3px"><button class="sm-btn sq danger">Confirmer</button></form></details>';
+    }
     return $out;
 }
 function hm_asset_card(string $kind, string $f, string $status, array $meta = []): string {
@@ -1923,7 +1933,7 @@ function hm_asset_card(string $kind, string $f, string $status, array $meta = []
         . '<div style="margin-top:4px">' . hm_asset_actions($kind, $f, $status) . '</div></div>';
 }
 function hm_view_catalog(): void {
-    $kind = in_array($_GET['kind'] ?? '', ['bg', 'sticker'], true) ? (string)$_GET['kind'] : 'sticker';
+    $kind = in_array($_GET['kind'] ?? '', ['bg', 'sticker', 'skin'], true) ? (string)$_GET['kind'] : 'sticker';
     $q = trim((string)($_GET['q'] ?? ''));
     $filter = in_array($_GET['st'] ?? '', ['available', 'shop_hidden', 'banned'], true) ? (string)$_GET['st'] : 'all';
     $ppOpts = [24, 48, 96, 200];
@@ -1960,7 +1970,7 @@ function hm_view_catalog(): void {
 
     // Filtres (GET) — on repart page 1
     echo '<form method="get" style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap"><input type="hidden" name="p" value="sitemgr"><input type="hidden" name="sec" value="ressources"><input type="hidden" name="pg" value="1">'
-       . '<label>Type<select name="kind"><option value="sticker"' . ($kind === 'sticker' ? ' selected' : '') . '>Stickers</option><option value="bg"' . ($kind === 'bg' ? ' selected' : '') . '>Fonds</option></select></label>'
+       . '<label>Type<select name="kind"><option value="sticker"' . ($kind === 'sticker' ? ' selected' : '') . '>Stickers</option><option value="bg"' . ($kind === 'bg' ? ' selected' : '') . '>Fonds</option><option value="skin"' . ($kind === 'skin' ? ' selected' : '') . '>Skins (cadres)</option></select></label>'
        . '<label>Statut<select name="st">'
        . '<option value="all"' . ($filter === 'all' ? ' selected' : '') . '>Tous</option>'
        . '<option value="available"' . ($filter === 'available' ? ' selected' : '') . '>✅ Disponibles</option>'
