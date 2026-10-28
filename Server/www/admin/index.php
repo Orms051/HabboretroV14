@@ -1114,9 +1114,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ];
                 $changes = furni_diff($cur, $new);
                 if (!$changes) { $msg = 'ℹ️ Aucun changement détecté.'; break; }
-                db()->prepare('UPDATE items_definitions SET name=?,description=?,length=?,width=?,top_height=?,behaviour=?,interactor=?,colour=?,max_status=?,is_tradable=?,is_recyclable=? WHERE id=?')
-                    ->execute([$new['name'], $new['description'], $new['length'], $new['width'], $new['top_height'], $new['behaviour'], $new['interactor'], $new['colour'], $new['max_status'], $new['is_tradable'], $new['is_recyclable'], $fid]);
-                furni_log_change($fid, $changes, (string)($_POST['reason'] ?? ''));
+                // M02 : enregistrement ATOMIQUE anti-concurrence. L'UPDATE n'affecte la ligne que si TOUS
+                // les champs sont restés ceux chargés par l'éditeur (WHERE id + anciennes valeurs). Si un
+                // autre enregistrement est passé entre-temps -> 0 ligne touchée -> conflit, rien d'écrasé.
+                // UPDATE + historique dans la MÊME transaction (le hash lu plus haut reste un pré-contrôle UX).
+                try {
+                    db()->beginTransaction();
+                    $stp = db()->prepare('UPDATE items_definitions SET name=?,description=?,length=?,width=?,top_height=?,behaviour=?,interactor=?,colour=?,max_status=?,is_tradable=?,is_recyclable=? WHERE id=? AND name<=>? AND description<=>? AND length<=>? AND width<=>? AND top_height<=>? AND behaviour<=>? AND interactor<=>? AND colour<=>? AND max_status<=>? AND is_tradable<=>? AND is_recyclable<=>?');
+                    $stp->execute([
+                        $new['name'], $new['description'], $new['length'], $new['width'], $new['top_height'], $new['behaviour'], $new['interactor'], $new['colour'], $new['max_status'], $new['is_tradable'], $new['is_recyclable'],
+                        $fid,
+                        $cur['name'], $cur['description'], $cur['length'], $cur['width'], $cur['top_height'], $cur['behaviour'], $cur['interactor'], $cur['colour'], $cur['max_status'], $cur['is_tradable'], $cur['is_recyclable'],
+                    ]);
+                    if ($stp->rowCount() === 0) { db()->rollBack(); $ok = false; $msg = '⚠️ Conflit : la fiche a été modifiée entre-temps (autre onglet ou staff). Rien n\'a été enregistré — rouvre-la pour repartir des valeurs à jour.'; break; }
+                    furni_log_change($fid, $changes, (string)($_POST['reason'] ?? ''));
+                    db()->commit();
+                } catch (Throwable $e) { if (db()->inTransaction()) db()->rollBack(); $ok = false; $msg = '❌ Échec de l\'enregistrement du meuble.'; break; }
                 $msg = '💾 Meuble enregistré (' . count($changes) . ' champ' . (count($changes) > 1 ? 's' : '') . ' modifié' . (count($changes) > 1 ? 's' : '') . '). ⚙️ Redémarre l\'émulateur pour voir le changement en jeu.'; break;
             }
             case 'furni_def_restore': { /* Restaure les valeurs d'une entrée d'historique */
