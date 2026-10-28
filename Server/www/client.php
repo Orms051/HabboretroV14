@@ -44,6 +44,10 @@ if (is_file($__mf)) {
 }
 
 $httpHost = $_SERVER['HTTP_HOST'] ?? 'localhost';   // ex. "localhost" ou "25.x.x.x"
+// SEC05 : HTTP_HOST est contrôlable par le client et réinjecté tel quel dans les
+// attributs <param ...> ci-dessous -> on le restreint à un hôte valide pour empêcher
+// une injection via l'en-tête Host. Repli sur localhost si invalide.
+if (!preg_match('/^[A-Za-z0-9.\-:]+$/', $httpHost)) $httpHost = 'localhost';
 $host = preg_replace('/:\d+$/', '', $httpHost);      // hôte sans port (socket jeu)
 $base = 'http://' . $httpHost;                        // base HTTP des assets
 $sso  = isset($_GET['sso']) ? preg_replace('/[^a-f0-9]/i', '', (string)$_GET['sso']) : '';

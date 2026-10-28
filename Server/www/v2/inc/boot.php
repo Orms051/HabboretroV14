@@ -5,7 +5,10 @@
  * Même base `v14`, mêmes comptes. Assets servis depuis /c_images et /web-gallery.
  */
 declare(strict_types=1);
-session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax', 'secure' => (($_SERVER['HTTPS'] ?? '') !== '')]);
+// SEC05 : le cookie de session ne doit être Secure qu'en HTTPS réel. L'ancien test
+// « HTTPS non vide » marquait aussi Secure quand $_SERVER['HTTPS'] vaut la chaîne 'off'
+// (certains serveurs) -> cookie rejeté en HTTP, session cassée. Même logique que site_url().
+session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax', 'secure' => (($_SERVER['HTTPS'] ?? '') !== '' && ($_SERVER['HTTPS'] ?? '') !== 'off')]);
 session_start();
 mb_internal_encoding('UTF-8');
 
@@ -26,7 +29,10 @@ const GAME_URL = '/client.php';   // loader Shockwave (racine, inchangé)
 if (!defined('SITE_BASE_PATH')) define('SITE_BASE_PATH', '/');
 function site_url(string $path = ''): string {
     $https = (($_SERVER['HTTPS'] ?? '') !== '' && ($_SERVER['HTTPS'] ?? '') !== 'off');
+    // SEC05 : HTTP_HOST est contrôlable par le client ; on le restreint à un hôte valide
+    // (lettres/chiffres/.-: + port) pour empêcher une injection via l'en-tête Host. Repli localhost.
     $host  = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
+    if (!preg_match('/^[A-Za-z0-9.\-:]+$/', $host)) $host = 'localhost';
     return ($https ? 'https' : 'http') . '://' . $host . SITE_BASE_PATH . ltrim($path, '/');
 }
 /* Version des assets (cache-busting CSS/JS sans vidage manuel du cache navigateur). */
