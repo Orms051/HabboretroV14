@@ -1177,6 +1177,10 @@ if ($p === 'home_save') {
     if ((int)($home['edit_locked'] ?? 0) === 1) { echo json_encode(['ok' => false, 'err' => 'locked']); exit; }
     $data = json_decode((string)($_POST['payload'] ?? ''), true);
     if (!is_array($data)) { echo json_encode(['ok' => false, 'err' => 'data']); exit; }
+    // H02 : révision chargée par l'éditeur (null = ancien onglet sans rev -> pas de contrôle, rétro-compat).
+    $clientRev = array_key_exists('rev', $data) ? (int)$data['rev'] : null;
+    $curRev = (int)($home['rev'] ?? 0);
+    if ($clientRev !== null && $clientRev < $curRev) { echo json_encode(['ok' => false, 'err' => 'stale', 'rev' => $curRev]); exit; }
     $bg = (string)($data['background'] ?? '');
     if ($bg !== '' && !home_asset_ok('bg', $bg)) $bg = '';
     else $bg = $bg === '' ? '' : basename($bg);
@@ -1199,12 +1203,20 @@ if ($p === 'home_save') {
     }
     try {
         db()->beginTransaction();
+        // H02 : garde anti-écrasement ATOMIQUE. Avec rev, on n'écrit que si la rev en base est
+        // toujours celle chargée par l'éditeur ; sinon (autre onglet / modération) -> stale, rollback.
+        if ($clientRev === null) {
+            db()->prepare('INSERT INTO home_pages (user_id,background,published,rev) VALUES (?,?,1,1) ON DUPLICATE KEY UPDATE background=VALUES(background),published=1,rev=rev+1')->execute([$oid, $bg]);
+        } else {
+            $stp = db()->prepare('UPDATE home_pages SET background=?, published=1, rev=rev+1 WHERE user_id=? AND rev=?');
+            $stp->execute([$bg, $oid, $clientRev]);
+            if ($stp->rowCount() === 0) { db()->rollBack(); echo json_encode(['ok' => false, 'err' => 'stale', 'rev' => $curRev]); exit; }
+        }
         db()->prepare('DELETE FROM home_items WHERE user_id=?')->execute([$oid]);
         $st = db()->prepare('INSERT INTO home_items (user_id,type,resource,x,y,z,content,style) VALUES (?,?,?,?,?,?,?,?)');
         foreach ($rows as $r) $st->execute([$oid, $r[0], $r[1], $r[2], $r[3], $r[4], $r[5], $r[6]]);
-        db()->prepare('INSERT INTO home_pages (user_id,background,published) VALUES (?,?,1) ON DUPLICATE KEY UPDATE background=VALUES(background),published=1')->execute([$oid, $bg]);
         db()->commit();
-        echo json_encode(['ok' => true]);
+        echo json_encode(['ok' => true, 'rev' => ($clientRev === null ? $curRev + 1 : $clientRev + 1)]);
     } catch (Throwable $e) { if (db()->inTransaction()) db()->rollBack(); echo json_encode(['ok' => false, 'err' => 'db']); }
     exit;
 }
@@ -1263,6 +1275,7 @@ if ($p === 'home_edit') {
     <script>
     var HE = {
       owner: <?= json_encode((string)$owner['username']) ?>,
+      rev: <?= (int)($home['rev'] ?? 0) ?>,
       bg: <?= json_encode((string)$home['background']) ?>,
       items: <?= json_encode($jsItems) ?>,
       widgets: <?= json_encode($wmap) ?>,
@@ -1340,9 +1353,10 @@ if ($p === 'home_edit') {
       if(list.length>HE.palShown)more.innerHTML='<a href="#" onclick="HE.palShown+=48;heRenderPal();return false">Voir plus ('+(list.length-HE.palShown)+')</a>';
     }
     function heSave(){
-      var fd=new FormData();fd.append('csrf',HE.csrf);fd.append('payload',JSON.stringify({background:HE.bg,items:HE.items}));
+      var fd=new FormData();fd.append('csrf',HE.csrf);fd.append('payload',JSON.stringify({background:HE.bg,items:HE.items,rev:HE.rev}));
       fetch('?p=home_save',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(j){
-        if(j.ok){HE.dirty=false;document.getElementById('hedit-dirty').style.display='none';alert('✅ Ta Home est enregistrée et publiée !');}
+        if(j.ok){HE.rev=j.rev;HE.dirty=false;document.getElementById('hedit-dirty').style.display='none';alert('✅ Ta Home est enregistrée et publiée !');}
+        else if(j.err==='stale'){if(confirm('⚠️ Ta Home a été modifiée ailleurs (autre onglet ou modération).\nRecharge pour repartir de la version à jour ?\n(Annuler = garder ton écran, mais tu ne pourras pas enregistrer par-dessus.)'))location.reload();}
         else alert('Erreur : '+(j.err||'inconnue')+(j.err==='locked'?' (édition bloquée par la modération)':''));
       }).catch(function(){alert('Erreur réseau.');});return false;
     }

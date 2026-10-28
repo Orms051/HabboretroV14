@@ -870,7 +870,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ensure_home_admin();
                 $iid = (int)($_POST['item_id'] ?? 0);
                 $reason = mb_substr(trim((string)($_POST['reason'] ?? '')), 0, 255);
+                // H02 : récupérer le propriétaire AVANT suppression, pour périmer son onglet d'édition
+                // (sinon un enregistrement depuis un onglet ancien réintroduirait l'élément retiré).
+                $ownerUid = 0; try { $qo = db()->prepare('SELECT user_id FROM home_items WHERE id=?'); $qo->execute([$iid]); $ownerUid = (int)$qo->fetchColumn(); } catch (Throwable $e) {}
                 db()->prepare('DELETE FROM home_items WHERE id=?')->execute([$iid]);
+                if ($ownerUid > 0) { try { db()->prepare('UPDATE home_pages SET rev=rev+1 WHERE user_id=?')->execute([$ownerUid]); } catch (Throwable $e) {} }
                 admin_log('hm_item_del', 'item#' . $iid . ($reason ? ' · ' . $reason : ''));
                 $msg = '🗑️ Élément retiré de la Home.'; break;
             }
@@ -1554,7 +1558,8 @@ function ensure_site_nav_admin(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS site_nav_items (id INT AUTO_INCREMENT PRIMARY KEY, tab_key VARCHAR(20) NOT NULL, label VARCHAR(80) NOT NULL DEFAULT '', route VARCHAR(255) NOT NULL DEFAULT '', target VARCHAR(20) NOT NULL DEFAULT '', ord SMALLINT NOT NULL DEFAULT 0, visible TINYINT NOT NULL DEFAULT 1, archived TINYINT NOT NULL DEFAULT 0, INDEX(tab_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
 function ensure_home_admin(): void {
-    db()->exec("CREATE TABLE IF NOT EXISTS home_pages (user_id INT NOT NULL PRIMARY KEY, background VARCHAR(255) NOT NULL DEFAULT '', published TINYINT NOT NULL DEFAULT 1, hidden TINYINT NOT NULL DEFAULT 0, edit_locked TINYINT NOT NULL DEFAULT 0, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("CREATE TABLE IF NOT EXISTS home_pages (user_id INT NOT NULL PRIMARY KEY, background VARCHAR(255) NOT NULL DEFAULT '', published TINYINT NOT NULL DEFAULT 1, hidden TINYINT NOT NULL DEFAULT 0, edit_locked TINYINT NOT NULL DEFAULT 0, rev INT NOT NULL DEFAULT 0, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try { if (!col_exists('home_pages', 'rev')) db()->exec("ALTER TABLE home_pages ADD COLUMN rev INT NOT NULL DEFAULT 0"); } catch (Throwable $e) {} // H02 : anti-écrasement
     db()->exec("CREATE TABLE IF NOT EXISTS home_items (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, type VARCHAR(24) NOT NULL, resource VARCHAR(160) NOT NULL DEFAULT '', x SMALLINT NOT NULL DEFAULT 0, y SMALLINT NOT NULL DEFAULT 0, z SMALLINT NOT NULL DEFAULT 0, style VARCHAR(40) NOT NULL DEFAULT '', content TEXT NULL, INDEX(user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     db()->exec("CREATE TABLE IF NOT EXISTS home_guestbook (id INT AUTO_INCREMENT PRIMARY KEY, owner_id INT NOT NULL, author_id INT NOT NULL, author_name VARCHAR(64) NOT NULL DEFAULT '', message VARCHAR(255) NOT NULL DEFAULT '', hidden TINYINT NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(owner_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     db()->exec("CREATE TABLE IF NOT EXISTS home_assets_disabled (kind VARCHAR(8) NOT NULL, resource VARCHAR(160) NOT NULL, status VARCHAR(12) NOT NULL DEFAULT 'shop_hidden', reason VARCHAR(255) NOT NULL DEFAULT '', updated_by VARCHAR(64) NOT NULL DEFAULT '', updated_at DATETIME NULL DEFAULT NULL, PRIMARY KEY (kind,resource)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");

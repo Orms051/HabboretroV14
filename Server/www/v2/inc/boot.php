@@ -184,9 +184,13 @@ function ensure_home(): void {
         edit_locked TINYINT NOT NULL DEFAULT 0,
         hidden_until DATETIME NULL,
         locked_until DATETIME NULL,
+        rev INT NOT NULL DEFAULT 0,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     try { if (!(int)db()->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='home_pages' AND COLUMN_NAME='hidden_until'")->fetchColumn()) db()->exec("ALTER TABLE home_pages ADD COLUMN hidden_until DATETIME NULL, ADD COLUMN locked_until DATETIME NULL"); } catch (Throwable $e) {}
+    // H02 : révision de page (anti-écrasement). Un enregistrement incrémente rev ; un onglet
+    // ancien (rev < rev courant) est refusé pour ne pas écraser une modif plus récente / une modération.
+    try { if (!(int)db()->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='home_pages' AND COLUMN_NAME='rev'")->fetchColumn()) db()->exec("ALTER TABLE home_pages ADD COLUMN rev INT NOT NULL DEFAULT 0"); } catch (Throwable $e) {}
     db()->exec("CREATE TABLE IF NOT EXISTS home_items (
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT NOT NULL,
