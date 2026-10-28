@@ -946,17 +946,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $date = trim((string)($_POST['created_at'] ?? ''));
                 $dt = preg_match('/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2})?/', $date) ? str_replace('T', ' ', $date) : date('Y-m-d H:i:s');
                 if (strlen($dt) === 10) $dt .= ' 12:00:00';
+                // W04 : publication PROGRAMMÉE. pub_at vide = immédiat (NULL) ; sinon l'actu (même publiée)
+                // n'apparaît au public qu'à partir de cette date (voir news_items + page ?p=actu).
+                $pa = trim((string)($_POST['pub_at'] ?? ''));
+                $pubAt = preg_match('/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2})?/', $pa) ? str_replace('T', ' ', $pa) : null;
+                if ($pubAt !== null && strlen($pubAt) === 10) $pubAt .= ' 00:00:00';
                 $who = (string)($_SESSION['admin']['username'] ?? '?');
                 if ($id > 0) {
-                    db()->prepare('UPDATE site_news SET title=?, summary=?, body=?, image=?, category=?, status=?, created_at=? WHERE id=?')
-                        ->execute([$title, $summary, $body, $image, $cat, $status, $dt, $id]);
+                    db()->prepare('UPDATE site_news SET title=?, summary=?, body=?, image=?, category=?, status=?, created_at=?, pub_at=? WHERE id=?')
+                        ->execute([$title, $summary, $body, $image, $cat, $status, $dt, $pubAt, $id]);
                     $msg = '📰 Actualité mise à jour.';
                 } else {
-                    db()->prepare('INSERT INTO site_news (title,summary,body,image,category,color,author,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-                        ->execute([$title, $summary, $body, $image, $cat, 'blue', $who, $status, $dt]);
+                    db()->prepare('INSERT INTO site_news (title,summary,body,image,category,color,author,status,created_at,pub_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+                        ->execute([$title, $summary, $body, $image, $cat, 'blue', $who, $status, $dt, $pubAt]);
                     $id = (int)db()->lastInsertId();
                     $msg = $status === 'published' ? '✅ Actualité publiée. Elle apparaît dans « Quoi de neuf ? ».' : '📝 Actualité enregistrée en brouillon.';
                 }
+                if ($pubAt !== null && strtotime($pubAt) > time()) $msg = '🕒 Actualité programmée pour le ' . substr($pubAt, 0, 16) . ' (invisible avant).';
                 admin_log('site_news_save', '#' . $id . ' ' . $title);
                 break;
             }
@@ -2887,7 +2893,9 @@ function sitemgr_news(): void {
         echo '</div><div id="nwed" contenteditable="true" oninput="nwSync()" style="min-height:150px;border:1px solid var(--line2);border-radius:0 0 6px 6px;padding:12px;background:#fff;color:#222;font:12px/1.5 Verdana,Arial,sans-serif">' . (string)$n['body'] . '</div>';
         // image + date
         echo '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px"><label style="flex:1;min-width:220px">Image (illustration)<input name="image" id="nwimg" value="' . h((string)$n['image']) . '" placeholder="/web-gallery/v2/pages_img/…"></label>'
-           . '<label style="min-width:180px">Date<input type="datetime-local" name="created_at" value="' . h((string)$n['created_at']) . '"></label></div>';
+           . '<label style="min-width:180px">Date<input type="datetime-local" name="created_at" value="' . h((string)$n['created_at']) . '"></label>'
+           . '<label style="min-width:180px">Programmer <span class="sub">(vide = immédiat)</span><input type="datetime-local" name="pub_at" value="' . h(!empty($n['pub_at']) ? str_replace(' ', 'T', substr((string)$n['pub_at'], 0, 16)) : '') . '"></label></div>'
+           . '<div class="sub" style="margin-top:4px">💡 « Programmer » : si tu mets une date future, l\'actu (même publiée) reste invisible au public jusqu\'à cette date.</div>';
         echo '<div id="nwimgprev" style="margin-top:6px">' . ((string)$n['image'] !== '' ? '<img src="' . h((string)$n['image']) . '" style="max-height:60px;border:1px solid var(--line2);border-radius:5px">' : '') . '</div>';
         echo '<div style="margin-top:6px"><button type="button" class="sm-btn" onclick="document.getElementById(\'nwmedia\').style.display=(document.getElementById(\'nwmedia\').style.display===\'none\'?\'block\':\'none\')">🖼️ Choisir une image</button></div>';
         echo '<div id="nwmedia" style="display:none;margin-top:8px;padding:8px;border:1px solid var(--line2);border-radius:6px;max-height:200px;overflow:auto"><div style="display:flex;flex-wrap:wrap;gap:6px">';

@@ -76,9 +76,10 @@ function news_items(int $n = 6): array {
     // requête sans filtre de statut (qui exposerait les brouillons si une colonne récente
     // manque). Si la colonne status n'existe pas (ancien schéma), on renvoie [] plutôt que
     // de tout publier -> la compatibilité passe par une migration contrôlée, pas par un repli.
+    // W04 : + publication programmée — une actu publiée mais datée dans le futur (pub_at) reste invisible.
     foreach ([
-        "SELECT id,title,summary,body,image,created_at FROM site_news WHERE status='published' ORDER BY created_at DESC, id DESC LIMIT ?",
-        "SELECT id,title,body,created_at FROM site_news WHERE status='published' ORDER BY created_at DESC, id DESC LIMIT ?",
+        "SELECT id,title,summary,body,image,created_at FROM site_news WHERE status='published' AND (pub_at IS NULL OR pub_at <= NOW()) ORDER BY created_at DESC, id DESC LIMIT ?",
+        "SELECT id,title,body,created_at FROM site_news WHERE status='published' AND (pub_at IS NULL OR pub_at <= NOW()) ORDER BY created_at DESC, id DESC LIMIT ?",
     ] as $sql) {
         try { $st = db()->prepare($sql); $st->bindValue(1, $n, PDO::PARAM_INT); $st->execute(); return $st->fetchAll(); }
         catch (Throwable $e) {}
@@ -997,8 +998,10 @@ if ($p === 'actu') {
     $id = (int)($_GET['id'] ?? 0);
     $n = news_one($id);
     $preview = isset($_GET['preview']) && is_staff();
-    $published = $n && (($n['status'] ?? 'published') === 'published' || $preview);
-    if (!$n || !$published) http_response_code(404); // W04 : vrai 404 pour une actu absente/non publiée (pas un 200)
+    // W04 : une actu programmée (pub_at futur) n'est pas visible au public, mais l'aperçu staff passe.
+    $scheduled = $n && !empty($n['pub_at']) && strtotime((string)$n['pub_at']) > time();
+    $published = $n && ((($n['status'] ?? 'published') === 'published' && !$scheduled) || $preview);
+    if (!$n || !$published) http_response_code(404); // W04 : vrai 404 pour une actu absente/non publiée/programmée
     render_head('events', null);
     if (!$n || !$published) {
         box_open('Actualité introuvable', 'o');
