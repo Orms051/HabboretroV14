@@ -322,8 +322,12 @@ function home_asset_status_map(string $kind): array {
 function home_asset_status(string $kind, string $file): string {
     return home_asset_status_map($kind)[basename($file)] ?? 'available';
 }
-/** Présente physiquement dans le catalogue (anti-chemin arbitraire) — indépendant du statut. */
+/** Clés des skins de widgets Home (set fixe du thème ; miroir de home_skins()). */
+function home_skin_keys(): array { return ['habbohomes', 'metal', 'hcmachine', 'notepad', 'speechbubble', 'stickienote']; }
+/** Présente dans le catalogue (anti-chemin arbitraire) — indépendant du statut.
+ *  kind 'skin' : la ressource est une clé de skin (pas un fichier). */
 function home_asset_present(string $kind, string $file): bool {
+    if ($kind === 'skin') return in_array($file, home_skin_keys(), true);
     $file = basename($file);
     if ($file === '' || !preg_match('/\.(gif|png|jpg|jpeg)$/i', $file)) return false;
     return is_file(home_asset_dir($kind) . '/' . $file);
@@ -331,9 +335,14 @@ function home_asset_present(string $kind, string $file): bool {
 /** Liste des ressources proposables à l'AJOUT (palette de l'éditeur) = présentes ET 'available'.
  *  $withAll=true (ex. admin) renvoie toutes les présentes, quel que soit le statut. */
 function home_asset_list(string $kind, bool $withAll = false): array {
+    $flagged = $withAll ? [] : home_asset_status_map($kind);
+    if ($kind === 'skin') {
+        $out = [];
+        foreach (home_skin_keys() as $k) { if (isset($flagged[$k])) continue; $out[] = $k; }
+        return $out;
+    }
     $dir = home_asset_dir($kind);
     if (!is_dir($dir)) return [];
-    $flagged = $withAll ? [] : home_asset_status_map($kind);
     $out = [];
     foreach (scandir($dir) as $f) {
         if ($f === '.' || $f === '..') continue;

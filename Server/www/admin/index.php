@@ -897,6 +897,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 admin_log('hm_asset_status', $kind . '/' . $res . ' → ' . $status . ($status === 'banned' && $reason !== '' ? ' · ' . $reason : ''));
                 break;
             }
+            case 'hm_asset_bulk': {
+                // H01 : applique un statut à TOUTES les ressources d'un filtre (type + recherche + statut courant).
+                ensure_home_admin();
+                $kind = in_array($_POST['kind'] ?? '', ['bg', 'sticker'], true) ? (string)$_POST['kind'] : 'sticker';
+                $target = (string)($_POST['target'] ?? '');
+                if (!in_array($target, ['available', 'shop_hidden', 'banned'], true)) { $ok = false; $msg = '❌ Cible invalide.'; break; }
+                $qb = trim((string)($_POST['q'] ?? ''));
+                $fst = in_array($_POST['fst'] ?? '', ['available', 'shop_hidden', 'banned'], true) ? (string)$_POST['fst'] : 'all';
+                $reason = mb_substr(trim((string)($_POST['reason'] ?? '')), 0, 255);
+                $map = hm_asset_statusmap($kind);
+                $sel = array_values(array_filter(hm_asset_files($kind), function ($f) use ($qb, $fst, $map) {
+                    if ($qb !== '' && stripos($f, $qb) === false) return false;
+                    $st = isset($map[$f]) ? $map[$f]['status'] : 'available';
+                    return $fst === 'all' ? true : $st === $fst;
+                }));
+                $who = (string)($_SESSION['admin']['username'] ?? ''); $n = 0;
+                try {
+                    db()->beginTransaction();
+                    if ($target === 'available') {
+                        $del = db()->prepare('DELETE FROM home_assets_disabled WHERE kind=? AND resource=?');
+                        foreach ($sel as $f) { $del->execute([$kind, $f]); $n++; }
+                    } else {
+                        $up = db()->prepare('INSERT INTO home_assets_disabled (kind,resource,status,reason,updated_by,updated_at) VALUES (?,?,?,?,?,NOW()) ON DUPLICATE KEY UPDATE status=VALUES(status), reason=VALUES(reason), updated_by=VALUES(updated_by), updated_at=VALUES(updated_at)');
+                        foreach ($sel as $f) { $up->execute([$kind, $f, $target, $target === 'banned' ? $reason : '', $who]); $n++; }
+                    }
+                    db()->commit();
+                } catch (Throwable $e) { if (db()->inTransaction()) db()->rollBack(); $ok = false; $msg = '❌ Échec de l\'action groupée.'; break; }
+                admin_log('hm_asset_bulk', $kind . ' ×' . $n . ' → ' . $target . ($qb !== '' ? ' (q=' . $qb . ')' : '') . ($fst !== 'all' ? ' (st=' . $fst . ')' : ''));
+                $lbl = $target === 'available' ? 'Disponible' : ($target === 'shop_hidden' ? 'Hors boutique' : 'Bannie');
+                $msg = '✅ ' . $n . ' ressource(s) → ' . $lbl . '.';
+                break;
+            }
             case 'site_news_save': {
                 ensure_site_news_admin();
                 $id = (int)($_POST['id'] ?? 0);
@@ -1891,58 +1923,82 @@ function hm_asset_card(string $kind, string $f, string $status, array $meta = []
         . '<div style="margin-top:4px">' . hm_asset_actions($kind, $f, $status) . '</div></div>';
 }
 function hm_view_catalog(): void {
-    $kind = ($_GET['kind'] ?? '') === 'bg' ? 'bg' : 'sticker';
+    $kind = in_array($_GET['kind'] ?? '', ['bg', 'sticker'], true) ? (string)$_GET['kind'] : 'sticker';
     $q = trim((string)($_GET['q'] ?? ''));
     $filter = in_array($_GET['st'] ?? '', ['available', 'shop_hidden', 'banned'], true) ? (string)$_GET['st'] : 'all';
+    $ppOpts = [24, 48, 96, 200];
+    $pp = (int)($_GET['pp'] ?? 48); if (!in_array($pp, $ppOpts, true)) $pp = 48;
+    $pg = max(1, (int)($_GET['pg'] ?? 1));
+
     $map = hm_asset_statusmap($kind);
     $files = hm_asset_files($kind);
     $total = count($files);
     $nBan = 0; $nShop = 0; foreach ($map as $v) { if ($v['status'] === 'banned') $nBan++; else $nShop++; }
     $nAvail = max(0, $total - $nShop - $nBan);
 
+    // Filtrage (statut + recherche) sur TOUT le catalogue, puis pagination.
+    $res = array_values(array_filter($files, function ($f) use ($q, $filter, $map) {
+        if ($q !== '' && stripos($f, $q) === false) return false;
+        $st = isset($map[$f]) ? $map[$f]['status'] : 'available';
+        return $filter === 'all' ? true : $st === $filter;
+    }));
+    $resCount = count($res);
+    $pages = max(1, (int)ceil($resCount / $pp));
+    if ($pg > $pages) $pg = $pages;
+    $slice = array_slice($res, ($pg - 1) * $pp, $pp);
+    $qs = function (array $over = []) use ($kind, $q, $filter, $pp, $pg) {
+        return '?' . http_build_query(array_merge(['p' => 'sitemgr', 'sec' => 'ressources', 'kind' => $kind, 'st' => $filter, 'q' => $q, 'pp' => $pp, 'pg' => $pg], $over));
+    };
+
     echo '<div class="card">';
-    echo '<div class="sub" style="margin-bottom:8px;line-height:1.6">Chaque ressource (sticker ou fond) a <b>3 états</b> :<br>'
-       . '✅ <b>Disponible</b> — proposée à l\'ajout dans l\'éditeur + affichée.<br>'
-       . '🏪 <b>Hors boutique</b> — plus proposée à l\'ajout, mais <b>toujours affichée</b> chez les joueurs qui l\'ont déjà (ne casse pas leur Home).<br>'
-       . '⛔ <b>Bannie</b> — retirée de l\'affichage <b>partout</b> (modération), avec motif tracé.</div>';
+    echo '<div class="sub" style="margin-bottom:8px;line-height:1.6">Chaque ressource a <b>3 états</b> : ✅ <b>Disponible</b> (proposée + affichée) · 🏪 <b>Hors boutique</b> (plus proposée mais <b>toujours affichée</b> chez ceux qui l\'ont déjà) · ⛔ <b>Bannie</b> (retirée partout, modération).</div>';
     echo '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
        . '<span class="pill">Total <b>' . $total . '</b></span>'
        . '<span class="pill" style="background:#d1e7dd;border-color:#9fcdb5">✅ ' . $nAvail . '</span>'
        . '<span class="pill" style="background:#fff3cd;border-color:#e6d28a">🏪 ' . $nShop . '</span>'
        . '<span class="pill" style="background:#f8d7da;border-color:#e4a0a8">⛔ ' . $nBan . '</span></div>';
 
-    echo '<form method="get" style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap"><input type="hidden" name="p" value="sitemgr"><input type="hidden" name="sec" value="ressources">'
+    // Filtres (GET) — on repart page 1
+    echo '<form method="get" style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap"><input type="hidden" name="p" value="sitemgr"><input type="hidden" name="sec" value="ressources"><input type="hidden" name="pg" value="1">'
        . '<label>Type<select name="kind"><option value="sticker"' . ($kind === 'sticker' ? ' selected' : '') . '>Stickers</option><option value="bg"' . ($kind === 'bg' ? ' selected' : '') . '>Fonds</option></select></label>'
        . '<label>Statut<select name="st">'
        . '<option value="all"' . ($filter === 'all' ? ' selected' : '') . '>Tous</option>'
        . '<option value="available"' . ($filter === 'available' ? ' selected' : '') . '>✅ Disponibles</option>'
        . '<option value="shop_hidden"' . ($filter === 'shop_hidden' ? ' selected' : '') . '>🏪 Hors boutique</option>'
        . '<option value="banned"' . ($filter === 'banned' ? ' selected' : '') . '>⛔ Bannies</option></select></label>'
-       . '<label style="flex:1">Rechercher<input name="q" value="' . h($q) . '" placeholder="nom du fichier…"></label><button class="sm-btn primary">Filtrer</button></form>';
+       . '<label>Par page<select name="pp">' . implode('', array_map(fn($o) => '<option value="' . $o . '"' . ($pp === $o ? ' selected' : '') . '>' . $o . '</option>', $ppOpts)) . '</select></label>'
+       . '<label style="flex:1">Rechercher<input name="q" value="' . h($q) . '" placeholder="nom du fichier…"></label><button class="sm-btn primary">Filtrer</button>';
+    if ($q !== '' || $filter !== 'all' || $pp !== 48) echo ' <a class="sm-btn" href="?p=sitemgr&sec=ressources">↺ Réinitialiser</a>';
+    echo '</form>';
 
-    // Vue par défaut : les ressources qui ont un statut (ce sont celles à gérer).
-    if ($filter === 'all' && $q === '') {
-        if ($map) {
-            echo '<div style="margin-top:12px"><b class="sub">Ressources avec un statut (' . count($map) . ')</b><div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">';
-            foreach ($map as $f => $v) { if (in_array($f, $files, true)) echo hm_asset_card($kind, $f, $v['status'], $v); }
-            echo '</div></div><div class="sub" style="margin-top:8px">Pour gérer une ressource <b>disponible</b>, recherche son nom ci-dessus.</div>';
-        } else {
-            echo '<div class="sub" style="margin-top:12px">Toutes les ressources sont disponibles. Recherche un nom de fichier pour en retirer de la boutique ou en bannir une.</div>';
-        }
-        echo '</div>';
-        return;
+    // Actions groupées sur TOUS les résultats du filtre courant (pas seulement la page affichée)
+    if ($resCount > 0) {
+        $hid = csrf_field() . '<input type="hidden" name="action" value="hm_asset_bulk"><input type="hidden" name="kind" value="' . $kind . '"><input type="hidden" name="q" value="' . h($q) . '"><input type="hidden" name="fst" value="' . $filter . '">';
+        echo '<div style="margin-top:10px;padding:8px;border:1px dashed var(--line2);border-radius:6px">'
+           . '<b class="sub">Action groupée sur les ' . $resCount . ' résultat(s) filtrés :</b> '
+           . '<form method="post" class="js" data-reload style="display:inline-block;margin-left:6px">' . $hid . '<input type="hidden" name="target" value="available"><button class="sm-btn" onclick="return confirm(\'Mettre ' . $resCount . ' ressource(s) en DISPONIBLE ?\')">✅ Tout Disponible</button></form> '
+           . '<form method="post" class="js" data-reload style="display:inline-block;margin-left:4px">' . $hid . '<input type="hidden" name="target" value="shop_hidden"><button class="sm-btn" onclick="return confirm(\'Mettre ' . $resCount . ' ressource(s) HORS BOUTIQUE ?\')">🏪 Tout Hors boutique</button></form>'
+           . '<div class="sub" style="font-size:9px;margin-top:4px;color:#888">Astuce : recherche un mot-clé (ex. « xmas », « tokiohotel ») puis « Tout Hors boutique » pour écarter une série d\'un coup.</div></div>';
     }
 
-    // Vue filtrée / recherche.
-    $res = array_values(array_filter($files, function ($f) use ($q, $filter, $map) {
-        if ($q !== '' && stripos($f, $q) === false) return false;
-        $st = isset($map[$f]) ? $map[$f]['status'] : 'available';
-        return $filter === 'all' ? true : $st === $filter;
-    }));
-    echo '<div style="margin-top:12px"><b class="sub">' . count($res) . ' ressource(s)</b><div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">';
-    foreach (array_slice($res, 0, 80) as $f) { $st = isset($map[$f]) ? $map[$f]['status'] : 'available'; echo hm_asset_card($kind, $f, $st, $map[$f] ?? []); }
-    if (count($res) > 80) echo '<div class="sub">… affine la recherche (80 affichés sur ' . count($res) . ').</div>';
-    echo '</div></div></div>';
+    // Grille paginée
+    echo '<div style="margin-top:12px"><b class="sub">' . $resCount . ' ressource(s)' . ($pages > 1 ? ' — page ' . $pg . '/' . $pages : '') . '</b><div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">';
+    foreach ($slice as $f) { $st = isset($map[$f]) ? $map[$f]['status'] : 'available'; echo hm_asset_card($kind, $f, $st, $map[$f] ?? []); }
+    if (!$slice) echo '<div class="sub">Aucune ressource pour ce filtre.</div>';
+    echo '</div>';
+
+    // Pagination
+    if ($pages > 1) {
+        echo '<div style="margin-top:12px;display:flex;gap:4px;flex-wrap:wrap;align-items:center">';
+        if ($pg > 1) echo '<a class="sm-btn" href="' . h($qs(['pg' => $pg - 1])) . '">‹ Précédent</a>';
+        $from = max(1, $pg - 3); $to = min($pages, $pg + 3);
+        if ($from > 1) echo '<a class="sm-btn sq" href="' . h($qs(['pg' => 1])) . '">1</a>' . ($from > 2 ? '<span class="sub"> … </span>' : '');
+        for ($i = $from; $i <= $to; $i++) echo '<a class="sm-btn sq' . ($i === $pg ? ' primary' : '') . '" href="' . h($qs(['pg' => $i])) . '">' . $i . '</a>';
+        if ($to < $pages) echo ($to < $pages - 1 ? '<span class="sub"> … </span>' : '') . '<a class="sm-btn sq" href="' . h($qs(['pg' => $pages])) . '">' . $pages . '</a>';
+        if ($pg < $pages) echo '<a class="sm-btn" href="' . h($qs(['pg' => $pg + 1])) . '">Suivant ›</a>';
+        echo '</div>';
+    }
+    echo '</div></div>';
 }
 function page_sitemgr(): void {
     ensure_site_pages_admin(); ensure_site_nav_admin(); ensure_carousel_admin();
@@ -2994,7 +3050,7 @@ function action_tab(string $a): string {
         'carousel_save' => 'sitemgr', 'site_setting' => 'sitemgr', 'sitepage_save' => 'sitemgr', 'sitepage_block_save' => 'sitemgr', 'sitepage_arrange' => 'sitemgr',
         'nav_tab_save' => 'sitemgr', 'nav_item_save' => 'sitemgr', 'nav_move' => 'sitemgr', 'nav_flag' => 'sitemgr', 'media_upload' => 'sitemgr', 'media_delete' => 'sitemgr', 'site_bg_apply' => 'sitemgr', 'site_bg_reset' => 'sitemgr', 'site_bg_upload' => 'sitemgr',
         'page_pin' => 'sitemgr', 'site_page_create' => 'sitemgr', 'site_news_save' => 'news', 'site_news_delete' => 'news',
-        'hm_report_status' => 'homemod', 'hm_home_hide' => 'homemod', 'hm_home_lock' => 'homemod', 'hm_gb_hide' => 'homemod', 'hm_item_del' => 'homemod', 'hm_asset_status' => 'homemod',
+        'hm_report_status' => 'homemod', 'hm_home_hide' => 'homemod', 'hm_home_lock' => 'homemod', 'hm_gb_hide' => 'homemod', 'hm_item_del' => 'homemod', 'hm_asset_status' => 'homemod', 'hm_asset_bulk' => 'homemod',
         // Joueurs
         'user_update' => 'users', 'user_details' => 'users', 'user_rank' => 'users', 'credits_all' => 'users',
         'user_password' => 'users', 'user_create' => 'users', 'user_credits' => 'users', 'user_hc' => 'users',
