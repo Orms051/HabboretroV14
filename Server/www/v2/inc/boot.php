@@ -51,6 +51,9 @@ function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES,
 $__cv = dirname(__DIR__, 2) . '/inc/conversations.php'; if (is_file($__cv)) require_once $__cv; // modèle conversation partagé (messagerie)
 function redirect(string $to) { header('Location: ' . $to); exit; }
 function me(): ?array { return $_SESSION['site_user'] ?? null; }
+/** URL du bouton « Entre dans l'Hôtel » : SSO (connexion jeu automatique) si déjà connecté au site,
+ *  sinon le client en login manuel. Le SSO ne touche que sso_ticket (jamais tenue/mission). */
+function enter_hotel_url(): string { return me() ? '?p=play' : GAME_URL; }
 function csrf(): string { if (empty($_SESSION['scsrf'])) $_SESSION['scsrf'] = bin2hex(random_bytes(16)); return $_SESSION['scsrf']; }
 function csrf_ok(): bool { $t = (string)($_POST['csrf'] ?? ''); return $t !== '' && !empty($_SESSION['scsrf']) && hash_equals((string)$_SESSION['scsrf'], $t); }
 function hash_pw(string $pw): string { return password_hash($pw, PASSWORD_ARGON2ID, ['memory_cost' => 65536, 'time_cost' => 2, 'threads' => 1]); }

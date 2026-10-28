@@ -24,6 +24,19 @@ $err = null;
 
 /* ---------- Actions ---------- */
 if ($p === 'logout') { unset($_SESSION['site_user'], $_SESSION['admin']); session_regenerate_id(true); redirect('?p=home'); }
+/* ---- Entrer dans l'Hôtel en étant déjà connecté (SSO) : génère un ticket À USAGE UNIQUE
+   que le jeu consomme (loginTicket côté Kepler, en LECTURE seule). On ne touche QUE sso_ticket —
+   jamais figure/motto/crédits — pour ne pas rejouer l'ancien bug « la tenue/mission ne se sauvegarde plus ».
+   Non connecté -> page de connexion ; échec DB -> client en login manuel (dégradé propre). ---- */
+if ($p === 'play') {
+    $u = me();
+    if (!$u) redirect('?p=login&next=play');
+    try {
+        $ticket = bin2hex(random_bytes(16));
+        db()->prepare('UPDATE users SET sso_ticket=? WHERE id=?')->execute([$ticket, (int)$u['id']]);
+        redirect('/client.php?sso=' . $ticket);
+    } catch (Throwable $e) { redirect('/client.php'); }
+}
 if ($p === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $wait = login_lock_remaining();
     if ($wait > 0) { $err = 'Trop de tentatives de connexion. Réessaie dans ' . (int)ceil($wait / 60) . ' min.'; }
@@ -407,7 +420,7 @@ if ($p === 'home') {
         <?php box_open('Bienvenue à Habbo', 'o'); ?>
           <img src="/web-gallery/v2/images/myhabbo_frank.gif" alt="" width="47" height="85" style="float:left;margin:0 8px 4px 0">
           <p class="muted" style="margin-bottom:8px"><?= h(setting_get('site.home_bienvenue', "Habbo est une communauté virtuelle où tu rencontres tes amis, participes à des jeux et décores ton propre appart. L'entrée est gratuite !")) ?></p>
-          <?= clink('Entre maintenant !', '/client.php', '_blank') ?>
+          <?= clink('Entre maintenant !', enter_hotel_url(), '_blank') ?>
         <?php box_close(); ?>
         <?php box_open('La sécurité sur Habbo', 'o'); ?>
           <p class="muted"><?= h(setting_get('site.home_securite', "Ne partage jamais ton mot de passe, même avec quelqu'un se présentant comme membre du staff.")) ?> <a href="?p=help">Conseils »</a></p>
@@ -416,7 +429,7 @@ if ($p === 'home') {
       </div>
 
       <div class="hcol hcol-c">
-        <?php box_open('Trax', 'g'); ?><p class="muted"><?= h(setting_get('site.home_trax', "Le son de Habbo ! Compose tes propres mixes avec la Trax Machine directement en jeu.")) ?></p><div style="margin-top:6px"><?= clink('Écouter en jeu', '/client.php', '_blank') ?> <?= tlink('En savoir plus »', '?p=trax') ?></div><?php box_close(); ?>
+        <?php box_open('Trax', 'g'); ?><p class="muted"><?= h(setting_get('site.home_trax', "Le son de Habbo ! Compose tes propres mixes avec la Trax Machine directement en jeu.")) ?></p><div style="margin-top:6px"><?= clink('Écouter en jeu', enter_hotel_url(), '_blank') ?> <?= tlink('En savoir plus »', '?p=trax') ?></div><?php box_close(); ?>
         <?php box_open('Habbo Club', 'g'); ?><div style="text-align:center;margin-bottom:5px"><img src="/web-gallery/v2/images/habboclub/hc_banner.png" alt="Habbo Club" width="174" height="150" style="max-width:100%"></div><p class="muted"><?= h(setting_get('site.home_club', "Mobis exclusifs, cadeaux et badge doré avec le Habbo Club !")) ?></p><div style="margin-top:6px"><?= clink('Rejoindre', '?p=club') ?></div><?php box_close(); ?>
         <?php box_open('Battle Ball', 'g'); ?><div style="text-align:center;margin-bottom:5px"><img src="/web-gallery/v2/images/games/battleball.png" alt="Battle Ball" width="450" height="99" style="max-width:100%;height:auto"></div><p class="muted" style="margin-bottom:5px">Le jeu d'équipe le plus fun de l'hôtel ! Les meilleurs Battle Ballers du moment :</p><?= lb_table(board_top('battleball_points', 5)) ?><div style="margin-top:6px"><?= tlink('En savoir plus »', '?p=battleball') ?></div><?php box_close(); ?>
         <?php box_open('L\'Infobus', 'g'); ?><p class="muted"><?= h($infobus) ?></p><?php box_close(); ?>
@@ -462,7 +475,7 @@ if ($p === 'register') {
     echo '<div class="layout"><div class="maincol"><div class="mc2">';
     echo '<div class="mcol">';
     box_open('Crée ton Habbo — c\'est gratuit !', 'g');
-    if ($u) echo '<p class="muted">Tu es déjà connecté en tant que <b>' . h($u['username']) . '</b>.</p><div style="margin-top:6px">' . nbtn('Entre dans l\'Hôtel', '/client.php', '_blank') . '</div>';
+    if ($u) echo '<p class="muted">Tu es déjà connecté en tant que <b>' . h($u['username']) . '</b>.</p><div style="margin-top:6px">' . nbtn('Entre dans l\'Hôtel', enter_hotel_url(), '_blank') . '</div>';
     else {
         if ($reg_err) echo '<div class="flash err">' . h($reg_err) . '</div>';
         echo '<form method="post" action="?p=register"><input type="hidden" name="csrf" value="' . h(csrf()) . '">';
@@ -493,7 +506,7 @@ if ($p === 'register') {
     echo '<div style="padding:4px 0;border-bottom:1px dotted #eee"><b>La Réception</b><div class="muted">Les Habbo X t\'accueillent et te présentent l\'hôtel.</div></div>';
     echo '<div style="padding:4px 0;border-bottom:1px dotted #eee"><b>Le Habbo Lido</b><div class="muted">La piscine plein air, chauffée 24h/24.</div></div>';
     echo '<div style="padding:4px 0"><b>Battle Ball</b><div class="muted">Défends tes couleurs dans l\'arène !</div></div>';
-    echo '<div style="margin-top:7px">' . nbtn('Entrer dans l\'Hôtel', '/client.php', '_blank') . '</div>';
+    echo '<div style="margin-top:7px">' . nbtn('Entrer dans l\'Hôtel', enter_hotel_url(), '_blank') . '</div>';
     box_close();
     box_open('Habbo Club', 'p'); echo '<p class="muted">Adhère au Habbo Club et profite d\'avantages exclusifs !</p><div style="margin-top:6px">' . nbtn('En savoir plus', '?p=club') . '</div>'; box_close();
     echo '</div></div>';
@@ -508,7 +521,7 @@ if ($p === 'login') {
     echo '<div class="mcol">';
     box_open('Connecte-toi à ton Habbo', 'b');
     if ($u) {
-        echo '<p class="muted">Tu es déjà connecté en tant que <b>' . h($u['username']) . '</b>.</p><div style="margin-top:6px">' . nbtn('Entre dans l\'Hôtel', '/client.php', '_blank') . '</div>';
+        echo '<p class="muted">Tu es déjà connecté en tant que <b>' . h($u['username']) . '</b>.</p><div style="margin-top:6px">' . nbtn('Entre dans l\'Hôtel', enter_hotel_url(), '_blank') . '</div>';
     } else {
         if ($err) echo '<div class="flash err">' . h($err) . '</div>';
         echo '<form method="post" action="?p=login"><input type="hidden" name="csrf" value="' . h(csrf()) . '">';
@@ -979,7 +992,7 @@ if ($p === 'me') {
     echo '<div style="flex:0 0 auto">' . avatar_tag((string)$u['username'], ['size' => 'b', 'alt' => 'Mon avatar']) . '</div>';
     echo '<div style="flex:1">';
     if ($me) echo '<p class="muted">Mission : <b>' . h((string)$me['motto']) . '</b><br>Crédits : <b>' . number_format((int)$me['credits'], 0, ',', ' ') . '</b> · Club : ' . ((int)$me['club_expiration'] > time() ? 'actif' : 'non membre') . '</p>';
-    echo '<div style="margin-top:8px">' . nbtn('Entre dans l\'Hôtel', '/client.php', '_blank') . nbtn('Ma Home publique', '?p=home/' . rawurlencode((string)$u['username'])) . '</div>';
+    echo '<div style="margin-top:8px">' . nbtn('Entre dans l\'Hôtel', enter_hotel_url(), '_blank') . nbtn('Ma Home publique', '?p=home/' . rawurlencode((string)$u['username'])) . '</div>';
     echo '</div></div>';
     box_close();
     render_foot(); exit;

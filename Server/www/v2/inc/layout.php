@@ -208,7 +208,7 @@ function tabmenu_html(?string $err): string {
       <div class="tabmenu-inner-content mh-conn">
         <?= $frank ?>
         <div class="mh-dest">
-          <a href="/client.php" target="_blank" rel="noopener">Entrer dans l'hôtel</a>
+          <a href="<?= h(enter_hotel_url()) ?>" target="_blank" rel="noopener">Entrer dans l'hôtel</a>
           <a href="?p=home/<?= h(rawurlencode((string)$u['username'])) ?>">Voir ma Habbo Home</a>
           <a href="?p=messages">Mes messages<?php $nm = function_exists('unread_msgs') ? unread_msgs((int)$u['id']) : 0; if ($nm > 0): ?> <span title="<?= (int)$nm ?> non lu<?= $nm > 1 ? 's' : '' ?>" style="display:inline-block;min-width:16px;height:16px;line-height:16px;padding:0 4px;margin-left:3px;background:#e5820c;color:#fff;font-size:10px;font-weight:bold;text-align:center;border-radius:8px;vertical-align:middle"><?= (int)$nm ?></span><?php endif; ?></a>
           <a href="?p=me">Modifier mes paramètres</a>
@@ -472,7 +472,7 @@ a.new-button:hover b{background-position:-3px -25px;text-decoration:none}
       <td id="topbar-status" class="<?= $u ? 'loggedin' : '' ?>"><?= $u ? 'Connecté : ' . h($u['username']) . ' · <a href="?p=logout" style="color:#fff">Déconnexion</a>' : 'Non connecté' ?></td>
     </tr></table>
     <div id="habbologo"><a href="?p=home" title="Accueil"></a></div>
-    <div id="enter-hotel"><a href="/client.php" target="_blank" rel="noopener" title="Entre dans l'Hôtel"></a></div>
+    <div id="enter-hotel"><a href="<?= h(enter_hotel_url()) ?>" target="_blank" rel="noopener" title="Entre dans l'Hôtel"></a></div>
     <?= tabmenu_html($err) ?>
   </div>
 
