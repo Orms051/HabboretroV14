@@ -72,11 +72,13 @@ function setting_get(string $key, string $default = ''): string {
     catch (Throwable $e) { return $default; }
 }
 function news_items(int $n = 6): array {
-    // Colonnes récentes (summary/status/image) ajoutées par l'admin ; repli si absentes.
+    // W04 : TOUS les replis gardent WHERE status='published'. On ne retombe JAMAIS sur une
+    // requête sans filtre de statut (qui exposerait les brouillons si une colonne récente
+    // manque). Si la colonne status n'existe pas (ancien schéma), on renvoie [] plutôt que
+    // de tout publier -> la compatibilité passe par une migration contrôlée, pas par un repli.
     foreach ([
         "SELECT id,title,summary,body,image,created_at FROM site_news WHERE status='published' ORDER BY created_at DESC, id DESC LIMIT ?",
-        'SELECT id,title,body,created_at FROM site_news ORDER BY created_at DESC, id DESC LIMIT ?',
-        'SELECT title,body,created_at FROM site_news ORDER BY created_at DESC, id DESC LIMIT ?',
+        "SELECT id,title,body,created_at FROM site_news WHERE status='published' ORDER BY created_at DESC, id DESC LIMIT ?",
     ] as $sql) {
         try { $st = db()->prepare($sql); $st->bindValue(1, $n, PDO::PARAM_INT); $st->execute(); return $st->fetchAll(); }
         catch (Throwable $e) {}
@@ -989,6 +991,7 @@ if ($p === 'actu') {
     $n = news_one($id);
     $preview = isset($_GET['preview']) && is_staff();
     $published = $n && (($n['status'] ?? 'published') === 'published' || $preview);
+    if (!$n || !$published) http_response_code(404); // W04 : vrai 404 pour une actu absente/non publiée (pas un 200)
     render_head('events', null);
     if (!$n || !$published) {
         box_open('Actualité introuvable', 'o');
