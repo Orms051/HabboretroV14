@@ -245,6 +245,43 @@ function ensure_home(): void {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     // Colonne snapshot ajoutée après coup (copie du contenu au moment du signalement)
     try { if (!(int)db()->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='home_reports' AND COLUMN_NAME='snapshot'")->fetchColumn()) db()->exec("ALTER TABLE home_reports ADD COLUMN snapshot VARCHAR(400) NOT NULL DEFAULT ''"); } catch (Throwable $e) {}
+    // H02 (2/2) : historique de versions d'une Home (snapshot de l'état avant chaque écrasement).
+    db()->exec("CREATE TABLE IF NOT EXISTS home_snapshots (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        rev INT NOT NULL DEFAULT 0,
+        background VARCHAR(255) NOT NULL DEFAULT '',
+        items_json MEDIUMTEXT NULL,
+        author VARCHAR(64) NOT NULL DEFAULT '',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX(user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+/** H02 : enregistre l'ÉTAT ACTUEL de la Home comme version restaurable, puis élague (15 max/joueur).
+ *  À appeler AVANT d'écraser (dans la transaction de sauvegarde/restauration). Best-effort. */
+function home_snapshot_take(int $uid, string $author = 'joueur'): void {
+    if ($uid <= 0) return;
+    try {
+        $hp = db()->prepare('SELECT background,rev FROM home_pages WHERE user_id=?'); $hp->execute([$uid]); $row = $hp->fetch();
+        if (!$row) return; // pas de Home existante -> rien à historiser
+        $it = db()->prepare('SELECT type,resource,x,y,z,content,style FROM home_items WHERE user_id=? ORDER BY z,id'); $it->execute([$uid]);
+        $items = $it->fetchAll();
+        db()->prepare('INSERT INTO home_snapshots (user_id,rev,background,items_json,author) VALUES (?,?,?,?,?)')
+            ->execute([$uid, (int)$row['rev'], (string)$row['background'], json_encode($items, JSON_UNESCAPED_UNICODE), mb_substr($author, 0, 64)]);
+        // Élagage : ne garder que les 15 versions les plus récentes.
+        db()->exec('DELETE s FROM home_snapshots s JOIN (SELECT id FROM home_snapshots WHERE user_id=' . (int)$uid . ' ORDER BY id DESC LIMIT 15,1000000) old ON s.id=old.id');
+    } catch (Throwable $e) {}
+}
+/** Liste des versions (récentes d'abord) : id, rev, nb d'éléments, auteur, date. */
+function home_snapshots_list(int $uid, int $limit = 15): array {
+    ensure_home();
+    try {
+        $st = db()->prepare('SELECT id,rev,background,items_json,author,created_at FROM home_snapshots WHERE user_id=? ORDER BY id DESC LIMIT ?');
+        $st->bindValue(1, $uid, PDO::PARAM_INT); $st->bindValue(2, $limit, PDO::PARAM_INT); $st->execute();
+        $out = [];
+        foreach ($st->fetchAll() as $r) { $items = json_decode((string)$r['items_json'], true); $out[] = ['id' => (int)$r['id'], 'rev' => (int)$r['rev'], 'count' => is_array($items) ? count($items) : 0, 'author' => (string)$r['author'], 'created_at' => (string)$r['created_at']]; }
+        return $out;
+    } catch (Throwable $e) { return []; }
 }
 function home_guestbook_count(int $uid): int {
     ensure_home();

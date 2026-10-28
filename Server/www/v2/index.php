@@ -1203,6 +1203,7 @@ if ($p === 'home_save') {
     }
     try {
         db()->beginTransaction();
+        home_snapshot_take($oid, 'avant enregistrement'); // H02 : garde une version restaurable de l'état précédent
         // H02 : garde anti-écrasement ATOMIQUE. Avec rev, on n'écrit que si la rev en base est
         // toujours celle chargée par l'éditeur ; sinon (autre onglet / modération) -> stale, rollback.
         if ($clientRev === null) {
@@ -1217,6 +1218,49 @@ if ($p === 'home_save') {
         foreach ($rows as $r) $st->execute([$oid, $r[0], $r[1], $r[2], $r[3], $r[4], $r[5], $r[6]]);
         db()->commit();
         echo json_encode(['ok' => true, 'rev' => ($clientRev === null ? $curRev + 1 : $clientRev + 1)]);
+    } catch (Throwable $e) { if (db()->inTransaction()) db()->rollBack(); echo json_encode(['ok' => false, 'err' => 'db']); }
+    exit;
+}
+
+/* ---- H02 : restaurer une version précédente de MA Home ---- */
+if ($p === 'home_restore') {
+    header('Content-Type: application/json');
+    $u = me();
+    if (!$u) { echo json_encode(['ok' => false, 'err' => 'auth']); exit; }
+    if (!csrf_ok()) { echo json_encode(['ok' => false, 'err' => 'csrf']); exit; }
+    $oid = (int)$u['id'];
+    $home = home_for_user($oid);
+    if ((int)($home['edit_locked'] ?? 0) === 1) { echo json_encode(['ok' => false, 'err' => 'locked']); exit; }
+    $sid = (int)($_POST['snapshot_id'] ?? 0);
+    try { $qs = db()->prepare('SELECT background,items_json FROM home_snapshots WHERE id=? AND user_id=?'); $qs->execute([$sid, $oid]); $snap = $qs->fetch(); }
+    catch (Throwable $e) { $snap = null; }
+    if (!$snap) { echo json_encode(['ok' => false, 'err' => 'notfound']); exit; }
+    $items = json_decode((string)$snap['items_json'], true); if (!is_array($items)) $items = [];
+    // Re-validation des assets (une ressource de la version peut avoir été bannie depuis) — mêmes règles que home_save.
+    $bg = (string)$snap['background']; $bg = ($bg !== '' && home_asset_ok('bg', $bg)) ? basename($bg) : '';
+    $allowed = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'sticker'];
+    $skins = home_skins();
+    $rows = [];
+    foreach ($items as $it) {
+        $type = (string)($it['type'] ?? '');
+        if (!in_array($type, $allowed, true)) continue;
+        $res = '';
+        if ($type === 'sticker') { $res = basename((string)($it['resource'] ?? '')); if (!home_asset_ok('sticker', $res)) continue; }
+        $x = max(0, min(920, (int)($it['x'] ?? 0))); $y = max(0, min(1360, (int)($it['y'] ?? 0))); $z = max(0, min(999, (int)($it['z'] ?? 1)));
+        $style = (string)($it['style'] ?? ''); if ($type === 'sticker' || !isset($skins[$style]) || !home_asset_ok('skin', $style)) $style = '';
+        $content = $type === 'widget_notes' ? mb_substr(trim(strip_tags((string)($it['content'] ?? ''))), 0, 600) : null;
+        $rows[] = [$type, $res, $x, $y, $z, $content, $style];
+        if (count($rows) >= 80) break;
+    }
+    try {
+        db()->beginTransaction();
+        home_snapshot_take($oid, 'avant restauration'); // la restauration est elle-même annulable
+        db()->prepare('DELETE FROM home_items WHERE user_id=?')->execute([$oid]);
+        $st = db()->prepare('INSERT INTO home_items (user_id,type,resource,x,y,z,content,style) VALUES (?,?,?,?,?,?,?,?)');
+        foreach ($rows as $r) $st->execute([$oid, $r[0], $r[1], $r[2], $r[3], $r[4], $r[5], $r[6]]);
+        db()->prepare('UPDATE home_pages SET background=?, published=1, rev=rev+1 WHERE user_id=?')->execute([$bg, $oid]);
+        db()->commit();
+        echo json_encode(['ok' => true]);
     } catch (Throwable $e) { if (db()->inTransaction()) db()->rollBack(); echo json_encode(['ok' => false, 'err' => 'db']); }
     exit;
 }
@@ -1238,6 +1282,7 @@ if ($p === 'home_edit') {
     $labels = ['widget_profile' => 'Profil', 'widget_friends' => 'Mes amis', 'widget_badges' => 'Mes badges', 'widget_rooms' => 'Mes apparts', 'widget_guestbook' => 'Livre d\'or', 'widget_notes' => 'Pense-bête'];
     $jsItems = [];
     foreach ($items as $it) $jsItems[] = ['type' => $it['type'], 'resource' => (string)$it['resource'], 'x' => (int)$it['x'], 'y' => (int)$it['y'], 'z' => (int)$it['z'], 'content' => (string)($it['content'] ?? ''), 'style' => (string)($it['style'] ?? '')];
+    $snapshots = home_snapshots_list($oid); // H02 : versions restaurables
     $bgList = home_asset_list('bg');
     $stList = home_asset_list('sticker');
     render_head('community', null, [
@@ -1258,6 +1303,7 @@ if ($p === 'home_edit') {
       <a class="new-button" href="#" onclick="return hePalette('bg')"><b>Fond</b><i></i></a>
       <a class="new-button" href="#" onclick="return hePalette('sticker')"><b>Stickers</b><i></i></a>
       <a class="new-button" href="#" onclick="return hePalette('widget')"><b>Widgets</b><i></i></a>
+      <a class="new-button" href="#" onclick="return heVersions()"><b>🕑 Versions</b><i></i></a>
       <a class="new-button" href="#" onclick="return heSave()"><b>💾 Enregistrer</b><i></i></a>
       <a class="new-button" href="#" onclick="return heCancel()"><b>Annuler</b><i></i></a>
       <a class="new-button" href="?p=home/<?= h(rawurlencode((string)$owner['username'])) ?>"><b>Voir ↗</b><i></i></a>
@@ -1270,6 +1316,13 @@ if ($p === 'home_edit') {
       <input id="hepal-q" type="text" placeholder="Rechercher…" oninput="heRenderPal()" style="width:100%;border:1px solid #9ab;padding:4px 6px;margin-bottom:6px;display:none">
       <div id="hepal-body"></div>
       <div id="hepal-more" style="text-align:center;margin-top:6px"></div>
+    </div>
+
+    <!-- Panneau Versions (H02) -->
+    <div id="hever" style="display:none;position:fixed;left:50%;top:90px;transform:translateX(-50%);width:460px;max-width:92vw;max-height:72vh;overflow:auto;background:#fff;border:2px solid #06252b;border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,.4);z-index:9999;padding:10px">
+      <div style="display:flex;align-items:center;margin-bottom:6px"><b style="flex:1">🕑 Versions précédentes</b><a href="#" onclick="document.getElementById('hever').style.display='none';return false" style="font-weight:bold">✕</a></div>
+      <div style="font-size:10px;color:#789;margin-bottom:8px">Chaque enregistrement crée une version. Restaurer remplace ta Home actuelle par cette version (et l'état actuel est lui-même sauvegardé, donc annulable).</div>
+      <div id="hever-body"></div>
     </div>
 
     <script>
@@ -1285,6 +1338,7 @@ if ($p === 'home_edit') {
       skins: <?= json_encode(home_asset_list('skin')) ?>,
       skinCls: <?= json_encode(array_map('home_skin_class', array_combine(array_keys(home_skins()), array_keys(home_skins())))) ?>,
       csrf: <?= json_encode(csrf()) ?>,
+      snapshots: <?= json_encode($snapshots) ?>,
       dirty: false, palKind: '', palShown: 48
     };
     function heBgUrl(f){return '/c_images/myhabbo/backgrounds2/'+encodeURIComponent(f);}
@@ -1358,6 +1412,21 @@ if ($p === 'home_edit') {
         if(j.ok){HE.rev=j.rev;HE.dirty=false;document.getElementById('hedit-dirty').style.display='none';alert('✅ Ta Home est enregistrée et publiée !');}
         else if(j.err==='stale'){if(confirm('⚠️ Ta Home a été modifiée ailleurs (autre onglet ou modération).\nRecharge pour repartir de la version à jour ?\n(Annuler = garder ton écran, mais tu ne pourras pas enregistrer par-dessus.)'))location.reload();}
         else alert('Erreur : '+(j.err||'inconnue')+(j.err==='locked'?' (édition bloquée par la modération)':''));
+      }).catch(function(){alert('Erreur réseau.');});return false;
+    }
+    function heVersions(){
+      var b=document.getElementById('hever-body');
+      if(!HE.snapshots||!HE.snapshots.length){b.innerHTML='<div style="color:#789;font-size:11px">Aucune version enregistrée pour l\'instant. Elles apparaîtront après tes prochains enregistrements.</div>';}
+      else{var h='';HE.snapshots.forEach(function(s){h+='<div style="display:flex;align-items:center;gap:8px;border-bottom:1px dotted #ccd;padding:6px 0"><div style="flex:1"><b style="font-size:11px">'+(s.created_at||'').replace('T',' ').substring(0,16)+'</b><div style="font-size:9px;color:#789">'+s.count+' élément(s) · '+(s.author||'')+'</div></div><a class="new-button" href="#" onclick="return heRestore('+s.id+')"><b>Restaurer</b><i></i></a></div>';});b.innerHTML=h;}
+      document.getElementById('hepal').style.display='none';document.getElementById('hever').style.display='block';return false;
+    }
+    function heRestore(id){
+      if(!confirm('Restaurer cette version ? Ta Home actuelle sera remplacée (mais sauvegardée, donc tu pourras revenir en arrière).'))return false;
+      var fd=new FormData();fd.append('csrf',HE.csrf);fd.append('snapshot_id',id);
+      fetch('?p=home_restore',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(j){
+        if(j.ok){HE.dirty=false;alert('✅ Version restaurée.');location.reload();}
+        else if(j.err==='locked')alert('Édition bloquée par la modération.');
+        else alert('Erreur : '+(j.err||'inconnue'));
       }).catch(function(){alert('Erreur réseau.');});return false;
     }
     function heCancel(){if(HE.dirty&&!confirm('Annuler toutes les modifications non enregistrées ?'))return false;location.reload();return false;}

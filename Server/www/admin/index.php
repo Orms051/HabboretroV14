@@ -1573,6 +1573,7 @@ function ensure_home_admin(): void {
     try { if (!col_exists('home_reports', 'decision')) db()->exec("ALTER TABLE home_reports ADD COLUMN decision VARCHAR(400) NOT NULL DEFAULT ''"); } catch (Throwable $e) {}
     try { if (!col_exists('home_reports', 'handled_at')) db()->exec("ALTER TABLE home_reports ADD COLUMN handled_at DATETIME NULL"); } catch (Throwable $e) {}
     try { if (!col_exists('home_reports', 'snapshot')) db()->exec("ALTER TABLE home_reports ADD COLUMN snapshot VARCHAR(400) NOT NULL DEFAULT ''"); } catch (Throwable $e) {}
+    db()->exec("CREATE TABLE IF NOT EXISTS home_snapshots (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, rev INT NOT NULL DEFAULT 0, background VARCHAR(255) NOT NULL DEFAULT '', items_json MEDIUMTEXT NULL, author VARCHAR(64) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); // H02
     try { if (!col_exists('home_pages', 'hidden_until')) db()->exec("ALTER TABLE home_pages ADD COLUMN hidden_until DATETIME NULL, ADD COLUMN locked_until DATETIME NULL"); } catch (Throwable $e) {}
 }
 function sitemgr_sections(): array {
