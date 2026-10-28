@@ -226,7 +226,9 @@ function conv_messages(int $convId, bool $includeInternal = true): array
     ensure_conversations();
     try {
         // Côté joueur (includeInternal=false) : on masque aussi les messages qu'il a retirés de sa vue.
-        $sql = 'SELECT * FROM conversation_messages WHERE conv_id=?' . ($includeInternal ? '' : ' AND is_internal=0 AND hidden_player=0') . ' ORDER BY id ASC';
+        // C04 : tri chronologique réel (created_at, puis id en départage) — un message importé/fusionné
+        // peut porter une date ancienne ; trier par id seul le placerait à tort en fin de fil.
+        $sql = 'SELECT * FROM conversation_messages WHERE conv_id=?' . ($includeInternal ? '' : ' AND is_internal=0 AND hidden_player=0') . ' ORDER BY created_at ASC, id ASC';
         $st = db()->prepare($sql); $st->execute([$convId]);
         return $st->fetchAll();
     } catch (Throwable $e) {
@@ -255,9 +257,11 @@ function conv_broadcast(array $playerIds, string $subject, string $body, string 
 }
 
 /**
- * Fusion de deux conversations du MÊME joueur : déplace les messages de $source
- * vers $target (en préservant l'ordre chronologique), puis supprime la source.
- * Refus si joueurs différents, ids identiques, ou player_id=0 (legacy sans joueur).
+ * Fusion de deux conversations du MÊME joueur : déplace les messages ET l'historique
+ * (conv_events) de $source vers $target, puis supprime la source — le tout dans une
+ * TRANSACTION (C04) pour éviter un état partiel ou une conversation orpheline si une
+ * étape échoue. L'ordre chronologique est assuré à l'affichage par conv_messages
+ * (tri created_at, id). Refus si joueurs différents, ids identiques, ou player_id=0.
  * Retourne true si la fusion a eu lieu.
  */
 function conv_merge(int $target, int $source): bool
@@ -272,11 +276,15 @@ function conv_merge(int $target, int $source): bool
         $byId = []; foreach ($rows as $r) $byId[(int)$r['id']] = (int)$r['player_id'];
         if (!isset($byId[$target], $byId[$source])) return false;
         if ($byId[$target] === 0 || $byId[$source] === 0 || $byId[$target] !== $byId[$source]) return false;
+        db()->beginTransaction();
         db()->prepare('UPDATE conversation_messages SET conv_id=? WHERE conv_id=?')->execute([$target, $source]);
+        db()->prepare('UPDATE conv_events SET conv_id=? WHERE conv_id=?')->execute([$target, $source]); // historique conservé
         db()->prepare('UPDATE conversations SET updated_at=NOW() WHERE id=?')->execute([$target]);
         db()->prepare('DELETE FROM conversations WHERE id=?')->execute([$source]);
+        db()->commit();
         return true;
     } catch (Throwable $e) {
+        if (db()->inTransaction()) db()->rollBack();
         return false;
     }
 }
