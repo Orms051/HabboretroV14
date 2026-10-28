@@ -257,7 +257,12 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             if ($viewer && !$isOwner && $ctx === 'view') {
                 $isFriend = false; try { $fq = db()->prepare('SELECT COUNT(*) FROM messenger_friends WHERE (from_id=? AND to_id=?) OR (from_id=? AND to_id=?)'); $fq->execute([(int)$viewer['id'], $oid, $oid, (int)$viewer['id']]); $isFriend = (int)$fq->fetchColumn() > 0; } catch (Throwable $e) {}
                 if ($isFriend) $b .= '<div class="profile-friend" style="font-size:10px;color:#6ba62f">✔ Dans tes amis</div>';
-                else $b .= '<form class="profile-friend" method="post" action="?p=home_addfriend"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="fid" value="' . $oid . '"><button class="new-button" type="submit"><b>Ajouter en ami</b><i></i></button></form>';
+                else {
+                    // H03 : demande déjà en attente (de moi vers lui) ? -> état clair, pas de doublon.
+                    $pendReq = false; try { $pr = db()->prepare('SELECT COUNT(*) FROM messenger_requests WHERE to_id=? AND from_id=?'); $pr->execute([$oid, (int)$viewer['id']]); $pendReq = (int)$pr->fetchColumn() > 0; } catch (Throwable $e) {}
+                    if ($pendReq) $b .= '<div class="profile-friend" style="font-size:10px;color:#8a7">⏳ Demande d\'ami envoyée</div>';
+                    else $b .= '<form class="profile-friend" method="post" action="?p=home_addfriend"><input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="fid" value="' . $oid . '"><button class="new-button" type="submit"><b>Demander en ami</b><i></i></button></form>';
+                }
             }
             $b .= '<div class="profile-tags"><div class="pt-band">Aucun tag.</div></div>';
             return hw_box('Profil', $b, 210, 'b', $skin);
@@ -1158,12 +1163,24 @@ if ($p === 'home_addfriend') {
     $back = $oname !== '' ? '?p=home/' . rawurlencode($oname) : '?p=community';
     if (!$u) redirect($back . '&need=login');
     if (!csrf_ok() || $fid <= 0 || $fid === (int)$u['id']) redirect($back);
+    $me = (int)$u['id'];
     try {
+        // H03 : créer une VRAIE demande d'ami (comme le jeu), pas une amitié directe.
+        // 1) déjà amis ?
         $c = db()->prepare('SELECT COUNT(*) FROM messenger_friends WHERE (from_id=? AND to_id=?) OR (from_id=? AND to_id=?)');
-        $c->execute([(int)$u['id'], $fid, $fid, (int)$u['id']]);
-        if ((int)$c->fetchColumn() === 0) db()->prepare('INSERT INTO messenger_friends (from_id,to_id) VALUES (?,?)')->execute([(int)$u['id'], $fid]);
-    } catch (Throwable $e) {}
-    redirect($back . '&done=friend');
+        $c->execute([$me, $fid, $fid, $me]);
+        if ((int)$c->fetchColumn() > 0) redirect($back . '&done=already');
+        // 2) le destinataire accepte-t-il les demandes ? (préférence du joueur, comme en jeu)
+        $pref = db()->prepare('SELECT allow_friend_requests FROM users WHERE id=?'); $pref->execute([$fid]);
+        if ((int)$pref->fetchColumn() === 0) redirect($back . '&done=norequests');
+        // 3) demande déjà en attente (dans un sens ou l'autre) ?
+        $r = db()->prepare('SELECT COUNT(*) FROM messenger_requests WHERE (to_id=? AND from_id=?) OR (to_id=? AND from_id=?)');
+        $r->execute([$fid, $me, $me, $fid]);
+        if ((int)$r->fetchColumn() > 0) redirect($back . '&done=pending');
+        // 4) créer la demande (to_id = destinataire, from_id = moi) — il l'accepte en jeu.
+        db()->prepare('INSERT INTO messenger_requests (to_id, from_id) VALUES (?, ?)')->execute([$fid, $me]);
+        redirect($back . '&done=friendreq');
+    } catch (Throwable $e) { redirect($back); }
 }
 
 /* ---- Sauvegarde de MA Home (propriétaire via session, jamais via id de requête) ---- */
@@ -1460,7 +1477,7 @@ if (strpos($p, 'home/') === 0) {
     if ((int)($home['hidden'] ?? 0) === 1) echo '<div class="hist-note">🚫 <b>Cette Home est actuellement masquée par la modération.</b> ' . ($isOwner ? 'Elle n\'est pas visible par les autres joueurs.' : 'Visible uniquement par toi (staff) et son propriétaire.') . '</div>';
     if ($isOwner && (int)($home['edit_locked'] ?? 0) === 1) echo '<div class="hist-note">🔒 <b>L\'édition de ta Home est temporairement bloquée par la modération.</b></div>';
     // Message de confirmation
-    $flash = ['signed' => '✅ Merci, ton message a été ajouté au livre d\'or !', 'slow' => '⏳ Patiente un peu avant de re-signer ce livre d\'or.', 'reported' => '✅ Merci, ton signalement a été transmis à la modération.', 'gbdel' => '🗑️ Message supprimé.', 'needreason' => '⚠️ Choisis un motif pour envoyer le signalement.', 'friend' => '✅ Ajouté à tes amis !'];
+    $flash = ['signed' => '✅ Merci, ton message a été ajouté au livre d\'or !', 'slow' => '⏳ Patiente un peu avant de re-signer ce livre d\'or.', 'reported' => '✅ Merci, ton signalement a été transmis à la modération.', 'gbdel' => '🗑️ Message supprimé.', 'needreason' => '⚠️ Choisis un motif pour envoyer le signalement.', 'friend' => '✅ Ajouté à tes amis !', 'friendreq' => '✅ Demande d\'ami envoyée ! Elle apparaîtra dans sa console (il doit l\'accepter).', 'already' => 'ℹ️ Vous êtes déjà amis.', 'pending' => '⏳ Une demande est déjà en attente.', 'norequests' => 'ℹ️ Ce joueur n\'accepte pas les demandes d\'ami.'];
     $done = (string)($_GET['done'] ?? '');
     if (isset($flash[$done])) echo '<div class="hist-note" style="background:#e7f6ea;border-color:#9ed3ad;color:#1c5a2e">' . h($flash[$done]) . '</div>';
     if (($_GET['need'] ?? '') === 'login') echo '<div class="hist-note">🔑 Connecte-toi pour effectuer cette action. <a href="?p=register">Se connecter / s\'inscrire</a></div>';
