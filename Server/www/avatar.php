@@ -61,7 +61,7 @@ if ($user !== '') {
         if ($row = $st->fetch(PDO::FETCH_ASSOC)) { $figure = (string)$row['figure']; $sex = strtoupper((string)$row['sex']) === 'F' ? 'F' : 'M'; }
     } catch (Throwable $e) { /* tombe en secours */ }
 } else {
-    $figure = preg_replace('/\D/', '', (string)($_GET['figure'] ?? ''));
+    $figure = substr(preg_replace('/\D/', '', (string)($_GET['figure'] ?? '')), 0, 50); // SEC06 : cap (une figure fait ~25 chiffres)
     $sex = (strtoupper((string)($_GET['sex'] ?? 'M')) === 'F') ? 'F' : 'M';
 }
 
@@ -88,6 +88,29 @@ function avatar_fallback(int $head): void {
     exit;
 }
 
+/* ---------- SEC06 : anti-abus de GÉNÉRATION d'avatars ----------
+   Ne concerne QUE les générations (cache manquant) ; les avatars déjà en cache sont
+   servis AVANT, sans limite. Empêche qu'une IP génère des milliers de figures arbitraires
+   (charge Minerva + explosion du cache/disque). Fenêtre glissante simple par IP. */
+function ava_gen_allowed(string $ip, int $max = 120, int $window = 60): bool {
+    @mkdir(AVA_CACHE_DIR, 0775, true);
+    $f = AVA_CACHE_DIR . '/.rl_' . substr(sha1($ip), 0, 16);
+    $now = time(); $start = $now; $cnt = 0;
+    $raw = @file_get_contents($f);
+    if ($raw !== false) { $d = explode(':', trim($raw)); if (count($d) === 2) { $start = (int)$d[0]; $cnt = (int)$d[1]; } }
+    if ($now - $start >= $window) { $start = $now; $cnt = 0; } // nouvelle fenêtre
+    $cnt++;
+    @file_put_contents($f, $start . ':' . $cnt, LOCK_EX);
+    return $cnt <= $max;
+}
+/* Nettoyage best-effort du cache avatars s'il devient trop gros (appelé occasionnellement). */
+function ava_prune_cache(int $maxFiles = 9000, int $keep = 6000): void {
+    $files = @glob(AVA_CACHE_DIR . '/*.png');
+    if (!is_array($files) || count($files) <= $maxFiles) return;
+    usort($files, fn($a, $b) => @filemtime($a) <=> @filemtime($b)); // plus anciens d'abord
+    foreach (array_slice($files, 0, count($files) - $keep) as $old) @unlink($old);
+}
+
 if ($figure === '' || strlen(preg_replace('/\D/', '', $figure)) < 25) { avatar_fallback($head); }
 
 /* ---------- Cache ---------- */
@@ -111,6 +134,9 @@ function serve_png(string $file, string $etag): void {
 }
 
 if (is_file($cacheFile) && filesize($cacheFile) > 0) { serve_png($cacheFile, $key); }
+
+// SEC06 : au-delà du quota de génération par IP, on sert le secours (pas de régénération Minerva).
+if (!ava_gen_allowed((string)($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'))) { avatar_fallback($head); }
 
 /* ---------- Génération ---------- */
 $conv = fig_old_to_new($figure, $sex);
@@ -152,6 +178,7 @@ if ($valid) {
     if (@file_put_contents($tmp, $png, LOCK_EX) !== false) {
         if (!@rename($tmp, $cacheFile)) @unlink($tmp);
     }
+    if (mt_rand(1, 50) === 1) ava_prune_cache(); // SEC06 : élagage occasionnel du cache (borne le disque)
     // On sert le PNG depuis la mémoire (insensible aux courses d'écriture du cache).
     header('Content-Type: image/png');
     header('Cache-Control: public, max-age=0, must-revalidate');
