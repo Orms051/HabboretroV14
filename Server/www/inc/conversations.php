@@ -121,6 +121,22 @@ function conv_create(int $playerId, string $subject, string $category, string $s
     }
 }
 
+/** C05 : anti-spam SERVEUR. Vrai si le joueur a déjà envoyé un message il y a moins de
+ *  $cooldown secondes (création OU réponse) — à vérifier avant d'enregistrer. Le bouton
+ *  désactivé côté client ne suffit pas (contournable). */
+function conv_rate_limited(int $playerId, int $cooldown = 12): bool
+{
+    if ($playerId <= 0) return false;
+    ensure_conversations();
+    try {
+        // Ancienneté calculée côté SQL (TIMESTAMPDIFF) : robuste à tout décalage de fuseau PHP/MySQL.
+        $st = db()->prepare("SELECT TIMESTAMPDIFF(SECOND, MAX(m.created_at), NOW()) FROM conversation_messages m JOIN conversations c ON c.id=m.conv_id WHERE c.player_id=? AND m.sender='player'");
+        $st->execute([$playerId]);
+        $age = $st->fetchColumn();
+        return $age !== null && $age !== false && (int)$age < $cooldown; // pas de message -> NULL -> non limité
+    } catch (Throwable $e) { return false; }
+}
+
 /** Ajoute un message à une conversation ; met à jour le statut (sauf note interne). */
 function conv_add_message(int $convId, string $sender, string $senderName, string $body, int $isInternal = 0): bool
 {

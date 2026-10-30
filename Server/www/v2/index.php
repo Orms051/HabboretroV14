@@ -610,6 +610,7 @@ if ($p === 'conv_new') {
     $body = mb_substr(trim(strip_tags((string)($_POST['body'] ?? ''))), 0, 4000);
     if ($subject === '') $subject = 'Demande à l\'équipe';
     if ($body === '') redirect('?p=messages&done=empty');
+    if (function_exists('conv_rate_limited') && conv_rate_limited((int)$u['id'])) redirect('?p=messages&done=slow'); // C05 : anti-spam serveur
     $cid = function_exists('conv_create') ? conv_create((int)$u['id'], $subject, $cat, 'player', (string)$u['username'], $body) : 0;
     // Destinataire : un staff précis → pré-attribution (vérifié : doit être rang >= 5)
     $toStaff = trim((string)($_POST['to_staff'] ?? ''));
@@ -635,6 +636,7 @@ if ($p === 'conv_reply') {
     if (!$own) redirect('?p=messages');
     $body = mb_substr(trim(strip_tags((string)($_POST['body'] ?? ''))), 0, 4000);
     if ($body === '') redirect('?p=messages&c=' . $cid);
+    if (function_exists('conv_rate_limited') && conv_rate_limited((int)$u['id'])) redirect('?p=messages&c=' . $cid . '&done=slow'); // C05 : anti-spam serveur
     if (function_exists('conv_add_message')) conv_add_message($cid, 'player', (string)$u['username'], $body, 0);
     redirect('?p=messages&c=' . $cid . '&done=replied');
 }
@@ -678,7 +680,7 @@ if ($p === 'messages') {
     ensure_user_msgs();
     if (function_exists('ensure_conversations')) ensure_conversations();
     $done = (string)($_GET['done'] ?? '');
-    $flash = ['sent' => '✅ Ta demande a bien été envoyée à l\'équipe.', 'replied' => '✅ Ta réponse a été envoyée.', 'empty' => '⚠️ Ton message était vide.', 'err' => '⚠️ Oups, l\'envoi a échoué, réessaie.', 'moved' => '✅ Conversation déplacée.', 'purged' => '🗑 Conversation supprimée de ta boîte.', 'msghidden' => '✅ Message retiré de ta vue.'];
+    $flash = ['sent' => '✅ Ta demande a bien été envoyée à l\'équipe.', 'replied' => '✅ Ta réponse a été envoyée.', 'empty' => '⚠️ Ton message était vide.', 'err' => '⚠️ Oups, l\'envoi a échoué, réessaie.', 'moved' => '✅ Conversation déplacée.', 'purged' => '🗑 Conversation supprimée de ta boîte.', 'msghidden' => '✅ Message retiré de ta vue.', 'slow' => '⏳ Doucement ! Patiente quelques secondes avant d\'envoyer un autre message.'];
     $box = in_array(($_GET['box'] ?? ''), ['archived', 'trashed'], true) ? (string)$_GET['box'] : 'active';
     $flashHtml = isset($flash[$done]) ? '<div style="background:#e7f6ea;border:1px solid #9ed3ad;color:#1c5a2e;border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:11px">' . h($flash[$done]) . '</div>' : '';
     $cid = (int)($_GET['c'] ?? 0);
