@@ -3769,12 +3769,15 @@ function furni_fiche(int $id): void {
     /* Onglet Exemplaires (Lot 4) : inventaire (room_id=0) vs posés (room_id<>0) */
     echo '<div class="ftp" data-ftp="exemplaires" style="display:none">';
     $exTot = 0; $exInv = 0; $exPlaced = 0; $exRows = [];
+    $perEx = 50; $expg = max(1, (int)($_GET['expg'] ?? 1)); $exPages = 1;
     try {
         $exTot = (int)(function () use ($id) { $s = db()->prepare('SELECT COUNT(*) FROM items WHERE definition_id=?'); $s->execute([$id]); return $s->fetchColumn(); })();
         $s = db()->prepare('SELECT COUNT(*) FROM items WHERE definition_id=? AND room_id=0'); $s->execute([$id]); $exInv = (int)$s->fetchColumn();
         $exPlaced = $exTot - $exInv;
-        $s = db()->prepare('SELECT i.room_id, i.user_id, u.username, r.name AS roomname FROM items i LEFT JOIN users u ON u.id=i.user_id LEFT JOIN rooms r ON r.id=i.room_id WHERE i.definition_id=? ORDER BY i.room_id LIMIT 50');
-        $s->execute([$id]); $exRows = $s->fetchAll();
+        $exPages = max(1, (int)ceil($exTot / $perEx)); if ($expg > $exPages) $expg = $exPages;
+        // M04 : pagination réelle des exemplaires (LIMIT/OFFSET) au lieu des 50 premiers seulement.
+        $s = db()->prepare('SELECT i.room_id, i.user_id, u.username, r.name AS roomname FROM items i LEFT JOIN users u ON u.id=i.user_id LEFT JOIN rooms r ON r.id=i.room_id WHERE i.definition_id=? ORDER BY i.room_id, i.id LIMIT ? OFFSET ?');
+        $s->bindValue(1, $id, PDO::PARAM_INT); $s->bindValue(2, $perEx, PDO::PARAM_INT); $s->bindValue(3, ($expg - 1) * $perEx, PDO::PARAM_INT); $s->execute(); $exRows = $s->fetchAll();
     } catch (Throwable $e) {}
     echo '<div class="grid" style="margin-top:10px">';
     echo '<div class="stat blue"><div class="ic">📦</div><div><div class="num">' . $exTot . '</div><div class="lbl">Exemplaires au total</div></div></div>';
@@ -3789,7 +3792,15 @@ function furni_fiche(int $id): void {
             echo '<tr><td>' . h((string)($r['username'] ?? ('#' . (int)$r['user_id']))) . '</td><td>' . $loc . '</td></tr>';
         }
         echo '</table>';
-        if ($exTot > 50) echo '<p class="hint">Affiche les 50 premiers sur ' . $exTot . '.</p>';
+        if ($exPages > 1) {
+            echo '<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap;align-items:center"><span class="muted sm">Page ' . $expg . '/' . $exPages . ' — ' . $exTot . ' exemplaires</span> ';
+            $exLink = function (int $pg) use ($id) { return '?p=furni&amp;fiche=' . $id . '&amp;expg=' . $pg . '#exemplaires'; };
+            if ($expg > 1) echo '<a class="mini ghost" href="' . $exLink($expg - 1) . '">‹ Précédent</a>';
+            $ef = max(1, $expg - 2); $et = min($exPages, $expg + 2);
+            for ($i = $ef; $i <= $et; $i++) echo '<a class="mini' . ($i === $expg ? '' : ' ghost') . '" href="' . $exLink($i) . '">' . $i . '</a>';
+            if ($expg < $exPages) echo '<a class="mini ghost" href="' . $exLink($expg + 1) . '">Suivant ›</a>';
+            echo '</div>';
+        }
     }
     echo '<p class="hint">⚠️ Changer la <b>définition</b> affecte tous ces exemplaires. Déplacer/supprimer un <b>exemplaire précis</b> se fait depuis la salle/le joueur concerné — un changement de définition ne déplace jamais les objets existants.</p>';
     echo '</div>';
@@ -3849,6 +3860,8 @@ function furni_fiche(int $id): void {
     for(var p=0;p<panes.length;p++){ panes[p].style.display = panes[p].getAttribute('data-ftp')===k ? '' : 'none'; }
   }; }
   var first=document.querySelector('.ftab.on'); if(first) first.style.borderBottomColor='#6fb1ff';
+  // M04 : rouvrir l'onglet indiqué par le hash d'URL (ex. #exemplaires après une pagination).
+  var hsh=(location.hash||'').replace('#',''); if(hsh){ for(var t=0;t<tabs.length;t++){ if(tabs[t].getAttribute('data-ft')===hsh){ tabs[t].click(); break; } } }
 })();
 (function(){
   var f=document.getElementById('furniform'); if(!f) return;
