@@ -9,7 +9,10 @@ $port    = 5123
 Set-Content -Path $stopF -Value '1' -Encoding ascii
 
 # 2) Tuer le processus Minerva qui écoute sur 5123 (fait sortir le superviseur de l'attente).
-$conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+#    L'écouteur = RemotePort=0 (fiable). PAS « -State Listen » : ce champ revient parfois VIDE
+#    ici -> la liste était vide -> Minerva n'était jamais tuée -> « répond encore sur 5123 ».
+$conns = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue |
+         Where-Object { $_.RemotePort -eq 0 -and [int]$_.OwningProcess -gt 4 }
 foreach ($c in $conns) {
     try { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue } catch {}
 }
@@ -26,9 +29,15 @@ if (Test-Path $pidFile) {
     Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
 }
 
-Start-Sleep -Milliseconds 400
+# Laisser le temps à dotnet de libérer le port (il peut prendre >400 ms) : on vérifie en boucle.
+$sw = [Diagnostics.Stopwatch]::StartNew()
+do {
+    Start-Sleep -Milliseconds 300
+    $still = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue |
+             Where-Object { $_.RemotePort -eq 0 -and [int]$_.OwningProcess -gt 4 }
+} while ($still -and $sw.Elapsed.TotalSeconds -lt 6)
 Remove-Item $stopF -Force -ErrorAction SilentlyContinue
-if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
+if ($still) {
     Write-Host "Attention : le port $port repond encore."
 } else {
     Write-Host "Minerva arrete."

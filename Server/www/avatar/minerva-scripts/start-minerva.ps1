@@ -24,7 +24,7 @@ $env:DOTNET_ROOT = Join-Path $base 'dotnet'
 $env:ASPNETCORE_URLS = "http://localhost:$port"   # localhost = jamais exposé au réseau
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 
-function Port-Busy { param($p) [bool](Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue) }
+function Port-Busy { param($p) [bool](Get-NetTCPConnection -LocalPort $p -ErrorAction SilentlyContinue | Where-Object { $_.RemotePort -eq 0 -and [int]$_.OwningProcess -gt 4 }) }  # RemotePort=0 fiable (State parfois vide)
 function Log([string]$m){ try{ if((Test-Path $log) -and (Get-Item $log).Length -gt 5MB){ Move-Item $log "$log.old" -Force -ErrorAction SilentlyContinue }; ('[{0}] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) | Out-File -FilePath $log -Append -Encoding utf8 }catch{} }
 
 # --- Verrou atomique (anti-course) : empeche deux superviseurs simultanes meme
