@@ -102,6 +102,7 @@ function Resolve-ApacheDir {
     return $null
 }
 function Get-PackMysqld { Get-CimInstance Win32_Process -Filter "Name='mysqld.exe'" -EA SilentlyContinue | Where-Object { Under $_.ExecutablePath $Cfg.MariaDir } }
+function Get-PackMysqldPids { @(Get-PackMysqld | ForEach-Object { [int]$_.ProcessId }) }
 # Kepler du pack = java dont le marqueur -Dhabbo.pack pointe EXACTEMENT sur notre Server\www.
 function Get-PackKepler {
     $want = Norm $Cfg.Www
@@ -187,8 +188,13 @@ function Invoke-Mysql([string]$sql){
     & $exe -u $Cfg.DbUser -h 127.0.0.1 -P $Cfg.Ports.Db -N -B -e $sql 2>$null
 }
 function Test-DbPackOnPort {  # le 3306 est-il tenu par NOTRE mysqld ?
-    $o = Get-PortOwner $Cfg.Ports.Db
-    return ($o -and (Under $o.Path $Cfg.MariaDir))
+    # Identité par PID (comme Test-KeplerReady), pas par relecture du chemin du process
+    # qui écoute 3306 : sous un terminal sans droits admin, ce chemin revient parfois vide
+    # (CIM par PID) -> fausse alerte « pas sur le port 3306 » au stop + « Échec » au start.
+    # Le PID qui écoute vient de la table TCP (toujours dispo) et on le compare à NOS mysqld.
+    $c = Get-NetTCPConnection -LocalPort $Cfg.Ports.Db -State Listen -EA SilentlyContinue | Select-Object -First 1
+    if(-not $c){ return $false }
+    return ((Get-PackMysqldPids) -contains [int]$c.OwningProcess)
 }
 function Test-DbReady {
     if(-not (Test-DbPackOnPort)){ return $false }
@@ -204,7 +210,17 @@ function Test-KeplerReady {
     # Le PID qui ÉCOUTE le port du jeu doit être celui de NOTRE Kepler identifié.
     $c = Get-NetTCPConnection -LocalPort $Cfg.Ports.Game -State Listen -EA SilentlyContinue | Select-Object -First 1
     if(-not $c){ return $false }
-    return ((Get-PackKeplerPids) -contains [int]$c.OwningProcess)
+    $gamePid = [int]$c.OwningProcess
+    # 1) Identité forte quand la CommandLine est lisible : marqueur -Dhabbo.pack.
+    if((Get-PackKeplerPids) -contains $gamePid){ return $true }
+    # 2) Repli ROBUSTE (sans droits admin, la CommandLine CIM revient parfois vide ->
+    #    Kepler écoutait mais n'était pas « vu » -> START bloqué 2 min puis faux échec).
+    #    Signal sûr pour un simple test de disponibilité (jamais pour tuer) : le PID qui
+    #    tient 12321 est un java.exe qui tient AUSSI le RCON 12309 -> triplet unique = notre Kepler.
+    $proc = Get-Process -Id $gamePid -EA SilentlyContinue
+    if(-not $proc -or $proc.ProcessName -ne 'java'){ return $false }
+    $r = Get-NetTCPConnection -LocalPort $Cfg.Ports.Rcon -State Listen -EA SilentlyContinue | Select-Object -First 1
+    return ($r -and [int]$r.OwningProcess -eq $gamePid)
 }
 function Wait-KeplerReady([int]$t){ $sw=[Diagnostics.Stopwatch]::StartNew(); while($sw.Elapsed.TotalSeconds -lt $t){ if(Test-KeplerReady){return $true}; Start-Sleep -Milliseconds 800 }; return $false }
 function Test-MinervaReady {  # fonctionnel : rend une image PNG valide (un port ouvert ne suffit pas)
