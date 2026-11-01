@@ -82,7 +82,11 @@ function Lock-Pack {
 #  Détection vérifiable (chemin / marqueur) — jamais par nom seul
 # ============================================================================
 function Get-PortOwner([int]$port){
-    $c = Get-NetTCPConnection -LocalPort $port -State Listen -EA SilentlyContinue | Select-Object -First 1
+    # Un socket en ÉCOUTE a RemotePort=0 (champ FIABLE). On n'utilise PAS « -State Listen » :
+    # dans cet environnement, le champ State revient PARFOIS VIDE -> le port ouvert devenait
+    # « invisible » (fausses alertes « ne répond pas » au start, « arrêt non tenté » au stop).
+    $c = Get-NetTCPConnection -LocalPort $port -EA SilentlyContinue |
+         Where-Object { $_.RemotePort -eq 0 -and [int]$_.OwningProcess -gt 4 } | Select-Object -First 1
     if(-not $c){ return $null }
     $path = $null; try { $path = (Get-CimInstance Win32_Process -Filter "ProcessId=$($c.OwningProcess)" -EA SilentlyContinue).ExecutablePath } catch {}
     $nm = (Get-Process -Id $c.OwningProcess -EA SilentlyContinue).ProcessName
@@ -191,10 +195,13 @@ function Test-DbPackOnPort {  # le 3306 est-il tenu par NOTRE mysqld ?
     # Identité par PID (comme Test-KeplerReady), pas par relecture du chemin du process
     # qui écoute 3306 : sous un terminal sans droits admin, ce chemin revient parfois vide
     # (CIM par PID) -> fausse alerte « pas sur le port 3306 » au stop + « Échec » au start.
-    # Le PID qui écoute vient de la table TCP (toujours dispo) et on le compare à NOS mysqld.
-    $c = Get-NetTCPConnection -LocalPort $Cfg.Ports.Db -State Listen -EA SilentlyContinue | Select-Object -First 1
-    if(-not $c){ return $false }
-    return ((Get-PackMysqldPids) -contains [int]$c.OwningProcess)
+    # L'écouteur = RemotePort=0 (fiable), PAS « -State Listen » (State parfois vide ici).
+    $pids = Get-PackMysqldPids
+    if(-not $pids){ return $false }
+    $own = Get-NetTCPConnection -LocalPort $Cfg.Ports.Db -EA SilentlyContinue |
+           Where-Object { $_.RemotePort -eq 0 -and [int]$_.OwningProcess -gt 4 } |
+           Select-Object -Expand OwningProcess -First 1
+    return ($own -and ($pids -contains [int]$own))
 }
 function Test-DbReady {
     if(-not (Test-DbPackOnPort)){ return $false }
@@ -207,10 +214,12 @@ function Test-WebReady {
 }
 function Wait-WebReady([int]$t){ $sw=[Diagnostics.Stopwatch]::StartNew(); while($sw.Elapsed.TotalSeconds -lt $t){ if(Test-WebReady){return $true}; Start-Sleep -Milliseconds 1000 }; return $false }
 function Test-KeplerReady {
-    # Le PID qui ÉCOUTE le port du jeu doit être celui de NOTRE Kepler identifié.
-    $c = Get-NetTCPConnection -LocalPort $Cfg.Ports.Game -State Listen -EA SilentlyContinue | Select-Object -First 1
-    if(-not $c){ return $false }
-    $gamePid = [int]$c.OwningProcess
+    # L'écouteur = RemotePort=0 (fiable), PAS « -State Listen » (State parfois vide ici).
+    $own = Get-NetTCPConnection -LocalPort $Cfg.Ports.Game -EA SilentlyContinue |
+           Where-Object { $_.RemotePort -eq 0 -and [int]$_.OwningProcess -gt 4 } |
+           Select-Object -Expand OwningProcess -First 1
+    if(-not $own){ return $false }
+    $gamePid = [int]$own
     # 1) Identité forte quand la CommandLine est lisible : marqueur -Dhabbo.pack.
     if((Get-PackKeplerPids) -contains $gamePid){ return $true }
     # 2) Repli ROBUSTE (sans droits admin, la CommandLine CIM revient parfois vide ->
@@ -219,8 +228,10 @@ function Test-KeplerReady {
     #    tient 12321 est un java.exe qui tient AUSSI le RCON 12309 -> triplet unique = notre Kepler.
     $proc = Get-Process -Id $gamePid -EA SilentlyContinue
     if(-not $proc -or $proc.ProcessName -ne 'java'){ return $false }
-    $r = Get-NetTCPConnection -LocalPort $Cfg.Ports.Rcon -State Listen -EA SilentlyContinue | Select-Object -First 1
-    return ($r -and [int]$r.OwningProcess -eq $gamePid)
+    $rcon = Get-NetTCPConnection -LocalPort $Cfg.Ports.Rcon -EA SilentlyContinue |
+            Where-Object { $_.RemotePort -eq 0 -and [int]$_.OwningProcess -gt 4 } |
+            Select-Object -Expand OwningProcess -First 1
+    return ($rcon -and [int]$rcon -eq $gamePid)
 }
 function Wait-KeplerReady([int]$t){ $sw=[Diagnostics.Stopwatch]::StartNew(); while($sw.Elapsed.TotalSeconds -lt $t){ if(Test-KeplerReady){return $true}; Start-Sleep -Milliseconds 800 }; return $false }
 function Test-MinervaReady {  # fonctionnel : rend une image PNG valide (un port ouvert ne suffit pas)
@@ -465,8 +476,16 @@ function Stop-Pack {
                 while($sw.Elapsed.TotalSeconds -lt $Cfg.StopTimeoutDb){ if(-not (Get-PackMysqld)){ $gone=$true; break }; Start-Sleep -Milliseconds 700 }
                 if($gone){ Say 'OK' "Base arrêtée proprement." } else { Say 'FAIL' "MariaDB (pack) ne s'est pas arrêtée en $($Cfg.StopTimeoutDb)s (non forcée)."; $fail += 'MariaDB' }
             } else {
-                Say 'FAIL' "Notre MariaDB (pack) tourne mais pas sur le port $($Cfg.Ports.Db) : arrêt non tenté — composant du pack encore actif."
-                $fail += 'MariaDB'
+                # mysqld DU PACK vivant mais injoignable sur 3306 (socket morte / instance figée).
+                # mysqladmin ne peut pas l'atteindre -> on termine CE process précis (identité
+                # vérifiée : chemin sous MariaDir), Kepler est déjà arrêté donc plus personne
+                # n'utilise la base. InnoDB est crash-safe : le prochain START récupère seul.
+                Say 'WARN' "MariaDB (pack) vivante mais injoignable sur $($Cfg.Ports.Db) (instance figée) : arrêt ciblé du process…"
+                $killed = 0
+                foreach($mp in (Get-PackMysqldPids)){ try { Stop-Process -Id $mp -Force -ErrorAction Stop; $killed++ } catch {} }
+                Start-Sleep -Milliseconds 900
+                if(-not (Get-PackMysqld)){ Say 'OK' "MariaDB (pack) figée terminée ($killed process). Récupération auto au prochain démarrage." }
+                else { Say 'FAIL' "MariaDB (pack) figée : échec de l'arrêt ciblé."; $fail += 'MariaDB' }
             }
         } else { Say 'INFO' "Base MariaDB (pack) déjà arrêtée." }
 
