@@ -1169,45 +1169,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $doName = isset($_POST['apply_name']); $doDesc = isset($_POST['apply_desc']);
                 if (!$doName && !$doDesc) { $ok = false; $msg = '❌ Coche « appliquer le nom » et/ou « appliquer la description ».'; break; }
                 $report = [];
-                /* 1) définition interne */
-                if (isset($_POST['sc_def'])) {
-                    $chg = [];
-                    if ($doName && (string)$def['name'] !== $newName) $chg['name'] = ['old' => (string)$def['name'], 'new' => $newName];
-                    if ($doDesc && (string)$def['description'] !== $newDesc) $chg['description'] = ['old' => (string)$def['description'], 'new' => $newDesc];
-                    if ($chg) {
-                        $sets = []; $vals = [];
-                        if (isset($chg['name'])) { $sets[] = 'name=?'; $vals[] = $newName; }
-                        if (isset($chg['description'])) { $sets[] = 'description=?'; $vals[] = $newDesc; }
-                        $vals[] = $fid; db()->prepare('UPDATE items_definitions SET ' . implode(',', $sets) . ' WHERE id=?')->execute($vals);
-                        furni_log_change($fid, $chg, 'Synchronisation nom/description');
-                        $report[] = 'définition mise à jour';
+                /* 1+2) base en TRANSACTION (définition interne + offres catalogue) : tout ou rien.
+                   NB : ensure_furni_log() AVANT la transaction — un CREATE TABLE (DDL) à l'intérieur
+                   provoquerait un commit implicite sous MySQL/MariaDB et casserait l'atomicité. */
+                ensure_furni_log();
+                try {
+                    db()->beginTransaction();
+                    /* 1) définition interne */
+                    if (isset($_POST['sc_def'])) {
+                        $chg = [];
+                        if ($doName && (string)$def['name'] !== $newName) $chg['name'] = ['old' => (string)$def['name'], 'new' => $newName];
+                        if ($doDesc && (string)$def['description'] !== $newDesc) $chg['description'] = ['old' => (string)$def['description'], 'new' => $newDesc];
+                        if ($chg) {
+                            $sets = []; $vals = [];
+                            if (isset($chg['name'])) { $sets[] = 'name=?'; $vals[] = $newName; }
+                            if (isset($chg['description'])) { $sets[] = 'description=?'; $vals[] = $newDesc; }
+                            $vals[] = $fid; db()->prepare('UPDATE items_definitions SET ' . implode(',', $sets) . ' WHERE id=?')->execute($vals);
+                            furni_log_change($fid, $chg, 'Synchronisation nom/description');
+                            $report[] = 'définition mise à jour';
+                        }
                     }
-                }
-                /* 2) offres catalogue sélectionnées (validées comme appartenant à la définition) */
-                $offerIds = array_values(array_unique(array_map('intval', (array)($_POST['sc_offer'] ?? []))));
-                if ($offerIds) {
-                    $in = implode(',', array_fill(0, count($offerIds), '?'));
-                    $chk = db()->prepare("SELECT id FROM catalogue_items WHERE definition_id=? AND id IN ($in)");
-                    $chk->execute(array_merge([$fid], $offerIds));
-                    $valid = array_map('intval', array_column($chk->fetchAll(), 'id'));
-                    $cnt = 0;
-                    foreach ($valid as $oid) {
-                        $sets = []; $vals = [];
-                        if ($doName) { $sets[] = 'name=?'; $vals[] = $newName; }
-                        if ($doDesc) { $sets[] = 'description=?'; $vals[] = $newDesc; }
-                        if ($sets) { $vals[] = $oid; db()->prepare('UPDATE catalogue_items SET ' . implode(',', $sets) . ' WHERE id=?')->execute($vals); $cnt++; }
+                    /* 2) offres catalogue sélectionnées (validées comme appartenant à la définition) */
+                    $offerIds = array_values(array_unique(array_map('intval', (array)($_POST['sc_offer'] ?? []))));
+                    if ($offerIds) {
+                        $in = implode(',', array_fill(0, count($offerIds), '?'));
+                        $chk = db()->prepare("SELECT id FROM catalogue_items WHERE definition_id=? AND id IN ($in)");
+                        $chk->execute(array_merge([$fid], $offerIds));
+                        $valid = array_map('intval', array_column($chk->fetchAll(), 'id'));
+                        $cnt = 0;
+                        foreach ($valid as $oid) {
+                            $sets = []; $vals = [];
+                            if ($doName) { $sets[] = 'name=?'; $vals[] = $newName; }
+                            if ($doDesc) { $sets[] = 'description=?'; $vals[] = $newDesc; }
+                            if ($sets) { $vals[] = $oid; db()->prepare('UPDATE catalogue_items SET ' . implode(',', $sets) . ' WHERE id=?')->execute($vals); $cnt++; }
+                        }
+                        if ($cnt) $report[] = $cnt . ' offre(s) catalogue';
                     }
-                    if ($cnt) $report[] = $cnt . ' offre(s) catalogue';
+                    db()->commit();
+                } catch (Throwable $e) {
+                    if (db()->inTransaction()) db()->rollBack();
+                    $ok = false; $report[] = 'base ÉCHEC — modifications annulées (' . $e->getMessage() . ')';
                 }
-                /* 3) texte client (CP1252), sauvegarde + vérif, statut honnête */
+                /* 3) texte client (CP1252) : UN SEUL passage ATOMIQUE pour nom+desc (temp+rename, 1 sauvegarde). */
                 if (isset($_POST['sc_text'])) {
                     $keys = furni_text_keys((string)$def['sprite']);
                     if ($keys === null) { $report[] = '⚠️ texte client NON modifié (poster/sprite spécial — clé à gérer à la main)'; $ok = false; }
                     else {
-                        $path = client_texts_path(); $parts = []; $bak = '';
-                        if ($doName) { $r = client_text_set($path, $keys['name'], $newName); if (!$r['ok']) { $parts[] = 'nom ÉCHEC (' . $r['status'] . ')'; $ok = false; } else { $parts[] = 'nom ' . $r['status'] . ($r['verified'] ? ' ✓' : ' ⚠non vérifié') . (($r['dupes'] ?? 0) > 1 ? ' ⚠' . $r['dupes'] . ' doublons' : ''); $bak = $r['backup'] ?? ''; if (!$r['verified']) $ok = false; } }
-                        if ($doDesc) { $r = client_text_set($path, $keys['desc'], $newDesc); if (!$r['ok']) { $parts[] = 'desc ÉCHEC (' . $r['status'] . ')'; $ok = false; } else { $parts[] = 'desc ' . $r['status'] . ($r['verified'] ? ' ✓' : ' ⚠non vérifié') . (($r['dupes'] ?? 0) > 1 ? ' ⚠' . $r['dupes'] . ' doublons' : ''); $bak = $r['backup'] ?? ''; if (!$r['verified']) $ok = false; } }
-                        $report[] = 'texte client (' . implode(', ', $parts) . ')' . ($bak !== '' ? ' [sauvegarde ' . $bak . ']' : '');
+                        $kv = [];
+                        if ($doName) $kv[$keys['name']] = $newName;
+                        if ($doDesc) $kv[$keys['desc']] = $newDesc;
+                        $r = client_text_write(client_texts_path(), $kv);
+                        if (!($r['ok'] ?? false)) { $report[] = 'texte client ÉCHEC (' . ($r['status'] ?? '?') . ')'; $ok = false; }
+                        else {
+                            $parts = [];
+                            foreach ($kv as $k => $_v) {
+                                $lbl = ($k === $keys['name']) ? 'nom' : 'desc';
+                                $dup = (int)($r['dupes'][$k] ?? 0);
+                                $parts[] = $lbl . ' ' . ($r['results'][$k] ?? 'écrit') . ($dup > 1 ? ' ⚠' . $dup . ' doublons' : '');
+                            }
+                            if (!($r['verified'] ?? false)) { $parts[] = '⚠ non vérifié'; $ok = false; }
+                            $bak = $r['backup'] ?? '';
+                            $report[] = 'texte client (' . implode(', ', $parts) . ')' . ($bak !== '' ? ' [sauvegarde ' . $bak . ']' : '');
+                        }
                     }
                 }
                 if (!$report) { $msg = 'ℹ️ Rien à appliquer (aucune portée cochée, ou valeurs inchangées).'; }
@@ -3511,25 +3534,64 @@ function client_text_get(string $path, string $key, ?int &$dupes = null): ?strin
     }
     return $val === null ? null : mb_convert_encoding($val, 'UTF-8', 'Windows-1252');
 }
-/* Écrit une clé (UTF-8 -> CP1252), sauvegarde avant, vérifie après. Rapport honnête. CRLF préservé. */
-function client_text_set(string $path, string $key, string $valueUtf8): array {
+/* M03 : écrit N clés (UTF-8 -> CP1252) en UN SEUL passage ATOMIQUE. CRLF préservé.
+   - Écriture via fichier temporaire + rename : le fichier live n'est JAMAIS laissé
+     tronqué si PHP est interrompu en plein milieu (il casserait tout le client sinon).
+   - UNE seule sauvegarde roulante « .bak » (état d'avant), sûre car le live est toujours complet.
+   - Vérifie chaque clé relue après écriture. Rapport honnête.
+   $kv : ['furni_x_name' => 'Nom UTF-8', 'furni_x_desc' => 'Desc UTF-8'].
+   Retour : ok, status, results[clé=>'mis à jour'|'ajouté'], verified(bool), dupes[clé=>n], backup. */
+function client_text_write(string $path, array $kv): array {
+    $kv = array_filter($kv, fn($k) => $k !== '', ARRAY_FILTER_USE_KEY);
+    if (!$kv) return ['ok' => true, 'status' => 'rien', 'results' => [], 'verified' => true, 'dupes' => [], 'backup' => ''];
     $raw = @file_get_contents($path);
     if ($raw === false) return ['ok' => false, 'status' => 'fichier illisible'];
-    $bak = $path . '.' . date('Ymd_His') . '.bak';
-    if (@file_put_contents($bak, $raw) === false) return ['ok' => false, 'status' => 'sauvegarde impossible'];
-    $cp = mb_convert_encoding($valueUtf8, 'Windows-1252', 'UTF-8');
+
+    $cp = []; foreach ($kv as $k => $v) $cp[$k] = mb_convert_encoding((string)$v, 'Windows-1252', 'UTF-8');
     $lines = explode("\n", $raw);
-    $found = false; $dupes = 0;
+    $dupes = array_fill_keys(array_keys($kv), 0);
+    $found = array_fill_keys(array_keys($kv), false);
     foreach ($lines as $i => $ln) {
         $hasCr = (substr($ln, -1) === "\r"); $bare = $hasCr ? substr($ln, 0, -1) : $ln;
-        if (strncmp($bare, $key . '=', strlen($key) + 1) === 0) { $dupes++; if (!$found) { $lines[$i] = $key . '=' . $cp . ($hasCr ? "\r" : ''); $found = true; } }
+        foreach ($kv as $k => $_v) {
+            $pfx = $k . '=';
+            if (strncmp($bare, $pfx, strlen($pfx)) === 0) {
+                $dupes[$k]++;
+                if (!$found[$k]) { $lines[$i] = $pfx . $cp[$k] . ($hasCr ? "\r" : ''); $found[$k] = true; }
+            }
+        }
     }
-    if (!$found) $out = rtrim($raw, "\r\n") . "\r\n" . $key . '=' . $cp . "\r\n";
-    else $out = implode("\n", $lines);
-    if (@file_put_contents($path, $out, LOCK_EX) === false) return ['ok' => false, 'status' => 'écriture échouée', 'backup' => basename($bak)];
-    $check = @file_get_contents($path);
-    $verified = $check !== false && strpos($check, "\n" . $key . '=' . $cp) !== false || ($check !== false && strncmp($check, $key . '=' . $cp, strlen($key . '=' . $cp)) === 0);
-    return ['ok' => true, 'status' => $found ? 'mis à jour' : 'ajouté', 'verified' => (bool)$verified, 'dupes' => $dupes, 'backup' => basename($bak)];
+    $out = implode("\n", $lines);
+    $append = ''; $results = [];
+    foreach ($kv as $k => $_v) { if ($found[$k]) { $results[$k] = 'mis à jour'; } else { $append .= $k . '=' . $cp[$k] . "\r\n"; $results[$k] = 'ajouté'; } }
+    if ($append !== '') $out = rtrim($out, "\r\n") . "\r\n" . $append;
+
+    // Sauvegarde roulante unique de l'état AVANT modif.
+    $bak = $path . '.bak';
+    if (@file_put_contents($bak, $raw, LOCK_EX) === false) return ['ok' => false, 'status' => 'sauvegarde impossible'];
+
+    // Écriture atomique : temp + rename (les lecteurs voient toujours un fichier complet).
+    $tmp = $path . '.' . getmypid() . '.' . mt_rand(1000, 9999) . '.tmp';
+    if (@file_put_contents($tmp, $out, LOCK_EX) === false) { @unlink($tmp); return ['ok' => false, 'status' => 'écriture temporaire échouée', 'backup' => basename($bak)]; }
+    // rename() atomique (même volume). Sous Windows il échoue si la cible existe -> repli unlink+rename (fenêtre infime, dev).
+    if (!@rename($tmp, $path)) {
+        if (!(@unlink($path) && @rename($tmp, $path))) { @unlink($tmp); return ['ok' => false, 'status' => 'remplacement atomique échoué', 'backup' => basename($bak)]; }
+    }
+
+    // Vérification : chaque clé relue == valeur écrite.
+    $verified = true; $check = @file_get_contents($path);
+    if ($check === false) { $verified = false; }
+    else foreach ($cp as $k => $v) {
+        $needle = $k . '=' . $v;
+        if (strpos($check, "\n" . $needle) === false && strncmp($check, $needle, strlen($needle)) !== 0) { $verified = false; break; }
+    }
+    return ['ok' => true, 'status' => 'écrit', 'results' => $results, 'verified' => $verified, 'dupes' => $dupes, 'backup' => basename($bak)];
+}
+/* Compat : une seule clé (délègue à l'écriture atomique multi-clés). */
+function client_text_set(string $path, string $key, string $valueUtf8): array {
+    $r = client_text_write($path, [$key => $valueUtf8]);
+    if (!($r['ok'] ?? false)) return $r;
+    return ['ok' => true, 'status' => $r['results'][$key] ?? ($r['status'] ?? ''), 'verified' => (bool)($r['verified'] ?? false), 'dupes' => (int)($r['dupes'][$key] ?? 0), 'backup' => $r['backup'] ?? ''];
 }
 
 function page_furni(): void {
