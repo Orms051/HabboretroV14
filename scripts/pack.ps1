@@ -46,6 +46,7 @@ $Cfg = @{
     WebMarker   = "l'H"
     StartTimeoutDb=45; StartTimeoutWeb=15; StartTimeoutGame=120; StartTimeoutMinerva=25
     StopTimeoutKepler=25; StopTimeoutDb=25
+    StopApache=$true   # $true = le STOP coupe aussi Apache (Laragon) ; $false = le laisse en marche
 }
 
 # ============================================================================
@@ -489,8 +490,32 @@ function Stop-Pack {
             }
         } else { Say 'INFO' "Base MariaDB (pack) déjà arrêtée." }
 
-        # 4) Apache : partagé Laragon -> préservé.
-        if(Get-PortOwner $Cfg.Ports.Web){ Say 'INFO' "Apache laissé en marche (service partagé Laragon)." }
+        # 4) Apache : partagé Laragon. Coupé seulement si $Cfg.StopApache = $true (réglage en tête).
+        #    On ne coupe QUE l'httpd du dossier Laragon attendu (identité par chemin), jamais un autre.
+        $wo = Get-PortOwner $Cfg.Ports.Web
+        if(-not $wo){ Say 'INFO' "Apache déjà arrêté." }
+        elseif(-not $Cfg.StopApache){ Say 'INFO' "Apache laissé en marche (service partagé Laragon)." }
+        else {
+            $apacheDir = Resolve-ApacheDir
+            if($apacheDir -and (Under $wo.Path $apacheDir)){
+                Say 'STOP' "Serveur web (Apache Laragon) : arrêt…"
+                $httpd = Join-Path $apacheDir 'bin\httpd.exe'
+                if(Test-Path $httpd){ & $httpd -k stop *> $null }
+                $sw=[Diagnostics.Stopwatch]::StartNew(); $gone=$false
+                while($sw.Elapsed.TotalSeconds -lt 8){ if(-not (Get-PortOwner $Cfg.Ports.Web)){ $gone=$true; break }; Start-Sleep -Milliseconds 500 }
+                if(-not $gone){
+                    # Repli : terminer les httpd.exe sous le dossier Apache (parent + enfants).
+                    Get-CimInstance Win32_Process -Filter "Name='httpd.exe'" -EA SilentlyContinue |
+                        Where-Object { Under $_.ExecutablePath $apacheDir } |
+                        ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -EA Stop } catch {} }
+                    Start-Sleep -Milliseconds 600
+                    $gone = -not (Get-PortOwner $Cfg.Ports.Web)
+                }
+                if($gone){ Say 'OK' "Apache (Laragon) arrêté." } else { Say 'FAIL' "Apache ne s'est pas arrêté."; $fail += 'Apache' }
+            } else {
+                Say 'INFO' "Port $($Cfg.Ports.Web) tenu par un Apache hors du dossier Laragon attendu : laissé en marche."
+            }
+        }
 
         Write-Host ''
         if($fail.Count -eq 0){
