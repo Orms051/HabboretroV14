@@ -8,8 +8,8 @@
  * Lecture seule : ne modifie jamais la figure, la mission ni la connexion.
  *
  * Paramètres (tous validés / mis en liste blanche) :
- *   user=<pseudo>            → figure+sexe lus en base
- *   figure=<25 chiffres>&sex=M|F → rendu direct (aperçu admin)
+ *   user=<pseudo>            → figure+sexe lus en base (PUBLIC)
+ *   figure=<25 chiffres>&sex=M|F → rendu direct (aperçu admin — RÉSERVÉ AU STAFF, SEC06)
  *   size=s|b   direction=2|4   head=0|1
  *
  * Cache : cache/avatars/<hash>.png — clé = figure+sexe+size+direction+head+version
@@ -37,6 +37,35 @@ define('MINERVA_BASE', getenv('V14_MINERVA_URL') ?: 'http://localhost:5123');
 const AVA_CACHE_DIR = __DIR__ . '/cache/avatars';
 const AVA_TIMEOUT   = 4;   // secondes max pour Minerva
 
+/* ---------- SEC06 : figure arbitraire réservée au staff ----------
+   Le rendu d'une figure QUELCONQUE (?figure=...) est un outil d'aperçu admin : laissé
+   ouvert, il permet à n'importe qui de faire générer des milliers de figures arbitraires
+   (charge Minerva + explosion du cache disque). On le réserve donc au staff connecté.
+   Le chemin public ?user=<pseudo> n'appelle JAMAIS cette fonction (aucun coût de session). */
+function ava_is_staff(): bool {
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        // Mêmes paramètres de cookie que le site/admin → on relit la session partagée (lecture seule).
+        @session_set_cookie_params([
+            'lifetime' => 0, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax',
+            'secure' => (($_SERVER['HTTPS'] ?? '') !== '' && ($_SERVER['HTTPS'] ?? '') !== 'off'),
+        ]);
+        @session_start();
+    }
+    $id = (int)($_SESSION['admin']['id'] ?? 0);
+    if ($id <= 0) $id = (int)($_SESSION['site_user']['id'] ?? 0);
+    // Relâcher tout de suite le verrou de session : rien d'autre à lire, et la suite (DB + Minerva)
+    // peut être lente — on n'y bloque pas les autres requêtes du même navigateur.
+    @session_write_close();
+    if ($id <= 0) return false;
+    // SEC03 : revalider le rang EN BASE (un rang mémorisé en session est périmé après rétrogradation).
+    try {
+        $pdo = new PDO('mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . DB_NAME . ';charset=utf8mb4', DB_USER, DB_PASS, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $st = $pdo->prepare('SELECT `rank` FROM users WHERE id=? LIMIT 1');
+        $st->execute([$id]);
+        return (int)$st->fetchColumn() >= 5;
+    } catch (Throwable $e) { return false; }
+}
+
 /* ---------- Paramètres ---------- */
 $ALLOWED_SIZE = ['s' => 's', 'b' => 'b'];
 $ALLOWED_DIR  = [2, 4];
@@ -60,7 +89,9 @@ if ($user !== '') {
         $st->execute([$user]);
         if ($row = $st->fetch(PDO::FETCH_ASSOC)) { $figure = (string)$row['figure']; $sex = strtoupper((string)$row['sex']) === 'F' ? 'F' : 'M'; }
     } catch (Throwable $e) { /* tombe en secours */ }
-} else {
+} elseif (isset($_GET['figure'])) {
+    // SEC06 : rendu d'une figure arbitraire → staff uniquement. Sinon secours discret.
+    if (!ava_is_staff()) { header('X-Avatar: forbidden'); avatar_fallback($head); }
     $figure = substr(preg_replace('/\D/', '', (string)($_GET['figure'] ?? '')), 0, 50); // SEC06 : cap (une figure fait ~25 chiffres)
     $sex = (strtoupper((string)($_GET['sex'] ?? 'M')) === 'F') ? 'F' : 'M';
 }
@@ -109,6 +140,10 @@ function ava_prune_cache(int $maxFiles = 9000, int $keep = 6000): void {
     if (!is_array($files) || count($files) <= $maxFiles) return;
     usort($files, fn($a, $b) => @filemtime($a) <=> @filemtime($b)); // plus anciens d'abord
     foreach (array_slice($files, 0, count($files) - $keep) as $old) @unlink($old);
+    // SEC06 : purger aussi les fichiers verrou (.lk_) devenus inutiles (transitoires, 0 octet).
+    // Un verrou encore tenu garde un descripteur ouvert → l'@unlink échoue sans bruit (Windows).
+    $old = time() - 3600;
+    foreach ((@glob(AVA_CACHE_DIR . '/.lk_*') ?: []) as $lk) if (@filemtime($lk) < $old) @unlink($lk);
 }
 
 if ($figure === '' || strlen(preg_replace('/\D/', '', $figure)) < 25) { avatar_fallback($head); }
@@ -137,6 +172,17 @@ if (is_file($cacheFile) && filesize($cacheFile) > 0) { serve_png($cacheFile, $ke
 
 // SEC06 : au-delà du quota de génération par IP, on sert le secours (pas de régénération Minerva).
 if (!ava_gen_allowed((string)($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'))) { avatar_fallback($head); }
+
+/* ---------- SEC06 : verrou par CLÉ ----------
+   Une seule génération Minerva simultanée par figure. Sans ça, une rafale sur la MÊME figure
+   non cachée lance N appels Minerva en parallèle (effet troupeau). Les requêtes concurrentes
+   attendent (brièvement, borné par le timeout Minerva), puis servent le cache qui vient d'être
+   écrit. Verrou relâché automatiquement à la fin du script (fermeture du descripteur). */
+$lh = @fopen(AVA_CACHE_DIR . '/.lk_' . $key, 'c');
+if ($lh && @flock($lh, LOCK_EX)) {
+    // Un autre process a pu générer cette figure pendant l'attente du verrou : servir si dispo.
+    if (is_file($cacheFile) && filesize($cacheFile) > 0) { serve_png($cacheFile, $key); }
+}
 
 /* ---------- Génération ---------- */
 $conv = fig_old_to_new($figure, $sex);

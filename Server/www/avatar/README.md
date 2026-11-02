@@ -12,7 +12,7 @@ n'est envoyée à un tiers. **Aucun secret** n'est nécessaire ni stocké ici.
 | `tools/minerva-bin/win-x64/` | Binaire **Minerva** (par Quackster — auteur de Kepler/Avatara). Télécharge depuis https://github.com/Quackster/Minerva (release `latest`, `Minerva-win-x64.zip`). SHA-256 de la version utilisée : `894f08da66d6d6ba6b7d7ad2e4a961d2972a21d27f5455f7ac972dc2e098bdf3`. |
 | `tools/minerva-bin/win-x64/figuredata/` | Ressources **Shockwave 2009** (fournies dans la release) : `figuredata.xml`, `compiled/*.swf` (`hh_human_50_hair/body/hats…`), `converter/old+newfiguredata.json`. C'est l'ère V14. |
 | `tools/minerva-bin/dotnet/` | Runtime **ASP.NET Core 8** installé en local (voir ci-dessous). |
-| `Server/www/avatar.php` | Endpoint public : `?user=<pseudo>` ou `?figure=<25 chiffres>&sex=M|F`, `size=s|b`, `direction=2|4`, `head=0|1`. Cache + secours. |
+| `Server/www/avatar.php` | `?user=<pseudo>` (PUBLIC) ou `?figure=<25 chiffres>&sex=M|F` (**aperçu admin — staff uniquement, SEC06**), `size=s|b`, `direction=2|4`, `head=0|1`. Cache + secours + verrou par clé. |
 | `Server/www/avatar/figure_lib.php` | Convertit la figure 25 chiffres → format Avatara **avec NOS couleurs** (lues dans `dcr/14.1_b8/figuredata.txt`). |
 | `Server/www/cache/avatars/` | PNG mis en cache (gitignoré). |
 
