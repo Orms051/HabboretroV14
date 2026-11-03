@@ -1359,6 +1359,7 @@ if ($p === 'home_save') {
         $z = max(0, min(999, (int)($it['z'] ?? 1)));
         $style = (string)($it['style'] ?? '');
         if ($type === 'sticker' || !isset($skins[$style]) || !home_asset_ok('skin', $style)) $style = ''; // skin invalide ou désactivé -> défaut
+        if (home_skin_is_hc($style) && !is_hc($oid)) $style = ''; // skin HC réservé aux membres Club
         $content = $type === 'widget_notes' ? mb_substr(trim(strip_tags((string)($it['content'] ?? ''))), 0, 600) : null;
         $rows[] = [$type, $res, $x, $y, $z, $content, $style];
         if (count($rows) >= 80) break;
@@ -1410,6 +1411,7 @@ if ($p === 'home_restore') {
         if ($type === 'sticker') { $res = basename((string)($it['resource'] ?? '')); if (!home_asset_ok('sticker', $res)) continue; }
         $x = max(0, min(928 - home_widget_width($type, $res), (int)($it['x'] ?? 0))); $y = max(0, min(1360, (int)($it['y'] ?? 0))); $z = max(0, min(999, (int)($it['z'] ?? 1)));
         $style = (string)($it['style'] ?? ''); if ($type === 'sticker' || !isset($skins[$style]) || !home_asset_ok('skin', $style)) $style = '';
+        if (home_skin_is_hc($style) && !is_hc($oid)) $style = ''; // skin HC réservé aux membres Club
         $content = $type === 'widget_notes' ? mb_substr(trim(strip_tags((string)($it['content'] ?? ''))), 0, 600) : null;
         $rows[] = [$type, $res, $x, $y, $z, $content, $style];
         if (count($rows) >= 80) break;
@@ -1497,7 +1499,8 @@ if ($p === 'home_edit') {
       labels: <?= json_encode($labels) ?>,
       bgList: <?= json_encode($bgList) ?>,
       stList: <?= json_encode($stList) ?>,
-      skins: <?= json_encode(home_asset_list('skin')) ?>,
+      skins: <?= json_encode(array_values(array_filter(home_asset_list('skin'), fn($k) => is_hc($oid) || !home_skin_is_hc($k)))) ?>,
+      hc: <?= is_hc($oid) ? 'true' : 'false' ?>,
       skinCls: <?= json_encode(array_map('home_skin_class', array_combine(array_keys(home_skins()), array_keys(home_skins())))) ?>,
       csrf: <?= json_encode(csrf()) ?>,
       snapshots: <?= json_encode($snapshots) ?>,

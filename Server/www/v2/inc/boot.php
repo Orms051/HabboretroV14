@@ -421,6 +421,18 @@ function home_asset_status(string $kind, string $file): string {
 }
 /** Clés des skins de widgets Home (set fixe du thème ; miroir de home_skins()). */
 function home_skin_keys(): array { return ['habbohomes', 'metal', 'hcmachine', 'notepad', 'speechbubble', 'stickienote']; }
+/** Skins HC (premium) : réservés aux membres Habbo Club à l'APPLICATION (l'affichage reste permis
+ *  pour tous, comme un item HC qui reste visible même après expiration). */
+function home_skin_is_hc(string $key): bool { return in_array($key, ['hcmachine'], true); }
+/** Le joueur est-il membre Habbo Club (abonnement en cours) ? club_expiration = timestamp de fin. */
+function is_hc(?int $uid = null): bool {
+    if ($uid === null) { $u = me(); $uid = $u ? (int)$u['id'] : 0; }
+    if ($uid <= 0) return false;
+    static $cache = [];
+    if (array_key_exists($uid, $cache)) return $cache[$uid];
+    try { $st = db()->prepare('SELECT club_expiration FROM users WHERE id=?'); $st->execute([$uid]); return $cache[$uid] = ((int)$st->fetchColumn() > time()); }
+    catch (Throwable $e) { return $cache[$uid] = false; }
+}
 /** Présente dans le catalogue (anti-chemin arbitraire) — indépendant du statut.
  *  kind 'skin' : la ressource est une clé de skin (pas un fichier). */
 function home_asset_present(string $kind, string $file): bool {
