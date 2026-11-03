@@ -706,7 +706,7 @@ if ($p === 'messages') {
             $who = (string)($m['sender_name'] ?: ($staff ? 'Équipe' : (string)$u['username']));
             $av = (!$staff) ? avatar_tag((string)$u['username'], ['head' => true]) : ($who !== 'Équipe' ? avatar_tag($who, ['head' => true]) : '<span style="font-size:22px">👮</span>');
             echo '<div style="display:flex;gap:8px;' . ($staff ? 'flex-direction:row-reverse;' : '') . 'margin-bottom:6px">'
-               . '<span style="flex:0 0 auto;width:44px;height:44px;background:#f3eecf;border:1px solid #d8cfa6;border-radius:4px;overflow:hidden;display:grid;place-items:center">' . $av . '</span>'
+               . '<span style="flex:0 0 auto;width:44px;height:44px;border-radius:4px;overflow:hidden;display:grid;place-items:center">' . $av . '</span>'
                . '<div style="flex:1;border:1px solid ' . ($staff ? '#9fc6e8' : '#d9d2b8') . ';border-radius:4px;padding:8px;background:' . ($staff ? '#eef6fd' : '#fffef7') . '">'
                . '<div style="font-size:10px;color:#8a97a3;margin-bottom:3px"><b style="color:#5b5b5b">' . ($staff ? '👮 ' : '🙂 ') . h($who) . '</b>'
                . ' · ' . h(date('d/m/Y H:i', strtotime((string)$m['created_at']))) . '</div>'
@@ -883,7 +883,7 @@ if ($p === 'community') {
     if ($q !== '') {
         echo '<div style="display:flex;flex-wrap:wrap;margin-top:10px">';
         if (!$found) echo '<p class="muted">Aucun Habbo trouvé pour « ' . h($q) . ' ».</p>';
-        else foreach ($found as $r) echo '<a href="?p=home/' . h(rawurlencode((string)$r['username'])) . '" style="width:60px;text-align:center;margin:0 6px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:48px;height:48px;background:#f3eecf;border:1px solid #d8cfa6;margin:0 auto 2px;overflow:hidden">' . avatar_tag((string)$r['username'], ['head' => true]) . '</span>' . h(mb_strimwidth((string)$r['username'], 0, 9, '…')) . '</a>';
+        else foreach ($found as $r) echo '<a href="?p=home/' . h(rawurlencode((string)$r['username'])) . '" style="width:60px;text-align:center;margin:0 6px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:48px;height:48px;margin:0 auto 2px;overflow:hidden">' . avatar_tag((string)$r['username'], ['head' => true]) . '</span>' . h(mb_strimwidth((string)$r['username'], 0, 9, '…')) . '</a>';
         echo '</div>';
     }
     box_close();
@@ -894,11 +894,11 @@ if ($p === 'community') {
     echo '</div><div class="sidecol">';
     box_open('L\'équipe', 'p');
     if (!$staff) echo '<p class="muted">Aucun membre du staff.</p>';
-    else { echo '<div style="display:flex;flex-wrap:wrap">'; foreach ($staff as $s) echo '<a href="?p=home/' . h(rawurlencode((string)$s['username'])) . '" title="' . h((string)$s['username']) . '" style="width:56px;text-align:center;margin:0 4px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:44px;height:44px;background:#f3eecf;border:1px solid #d8cfa6;margin:0 auto 2px;overflow:hidden">' . avatar_tag((string)$s['username'], ['head' => true]) . '</span>' . h(mb_strimwidth((string)$s['username'], 0, 8, '…')) . '</a>'; echo '</div>'; echo '<div style="margin-top:4px"><a href="?p=team" style="font-size:10px;color:#2f6f9f">👥 Voir toute l\'équipe & contacter »</a></div>'; }
+    else { echo '<div style="display:flex;flex-wrap:wrap">'; foreach ($staff as $s) echo '<a href="?p=home/' . h(rawurlencode((string)$s['username'])) . '" title="' . h((string)$s['username']) . '" style="width:56px;text-align:center;margin:0 4px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:44px;height:44px;margin:0 auto 2px;overflow:hidden">' . avatar_tag((string)$s['username'], ['head' => true]) . '</span>' . h(mb_strimwidth((string)$s['username'], 0, 8, '…')) . '</a>'; echo '</div>'; echo '<div style="margin-top:4px"><a href="?p=team" style="font-size:10px;color:#2f6f9f">👥 Voir toute l\'équipe & contacter »</a></div>'; }
     box_close();
     box_open('Habbo Homes', 'p');
     echo '<p class="muted" style="margin-bottom:7px">Découvre les pages perso des Habbos !</p><div style="display:flex;flex-wrap:wrap">';
-    foreach (recent_players(6) as $r) echo '<a href="?p=home/' . h(rawurlencode((string)$r['username'])) . '" title="' . h((string)$r['username']) . '" style="width:50px;text-align:center;margin:0 4px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:44px;height:44px;background:#f3eecf;border:1px solid #d8cfa6;margin:0 auto 2px;overflow:hidden">' . avatar_tag((string)$r['username'], ['head' => true]) . '</span>' . h(mb_strimwidth((string)$r['username'], 0, 8, '…')) . '</a>';
+    foreach (recent_players(6) as $r) echo '<a href="?p=home/' . h(rawurlencode((string)$r['username'])) . '" title="' . h((string)$r['username']) . '" style="width:50px;text-align:center;margin:0 4px 8px 0;font-size:9px;color:#30384a"><span style="display:block;width:44px;height:44px;margin:0 auto 2px;overflow:hidden">' . avatar_tag((string)$r['username'], ['head' => true]) . '</span>' . h(mb_strimwidth((string)$r['username'], 0, 8, '…')) . '</a>';
     echo '</div>';
     box_close();
     echo '</div></div>';
@@ -1505,7 +1505,7 @@ if (strpos($p, 'home/') === 0) {
     if (($_GET['need'] ?? '') === 'login') echo '<div class="hist-note">🔑 Connecte-toi pour effectuer cette action. <a href="?p=register">Se connecter / s\'inscrire</a></div>';
     // En-tête propriétaire + actions
     echo '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">';
-    echo '<div style="width:34px;height:40px;background:#f3eecf;border:1px solid #d8cfa6;border-radius:3px;overflow:hidden;display:flex;align-items:flex-start;justify-content:center">' . avatar_tag((string)$owner['username'], ['head' => true, 'alt' => (string)$owner['username']]) . '</div>';
+    echo '<div style="width:34px;height:40px;border-radius:3px;overflow:hidden;display:flex;align-items:flex-start;justify-content:center">' . avatar_tag((string)$owner['username'], ['head' => true, 'alt' => (string)$owner['username']]) . '</div>';
     echo '<div style="flex:1"><b style="font-size:13px">La Habbo Home de ' . h((string)$owner['username']) . '</b><div class="muted" style="font-size:10px">' . h((string)$owner['motto']) . '</div></div>';
     $url = h(site_url('?p=home/' . rawurlencode((string)$owner['username'])));
     echo '<input readonly value="' . $url . '" onclick="this.select()" style="width:230px;border:1px solid #b9c7cf;padding:3px 5px;font-size:10px" title="Copier le lien de cette Home">';
