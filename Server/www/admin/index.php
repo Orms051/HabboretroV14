@@ -418,6 +418,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 admin_log('conv_ack_set', $txt === '' ? '(désactivé)' : 'maj');
                 $msg = $txt === '' ? '✅ Accusé de réception désactivé.' : '✅ Accusé de réception enregistré.'; break;
             }
+            case 'conv_templates_save': {
+                // C05 : modèles de réponse éditables (un par ligne). Vide = repli sur les modèles par défaut.
+                $lines = array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string)($_POST['body'] ?? ''))), fn($l) => $l !== '');
+                $lines = array_slice(array_map(fn($l) => mb_substr($l, 0, 1000), $lines), 0, 40); // garde-fous : 40 modèles, 1000 car.
+                $txt = implode("\n", $lines);
+                try { db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute(['conv.templates', $txt]); } catch (Throwable $e) {}
+                admin_log('conv_templates_save', count($lines) . ' modèle(s)');
+                $msg = $txt === '' ? '✅ Modèles réinitialisés (valeurs par défaut).' : '✅ ' . count($lines) . ' modèle(s) de réponse enregistré(s).'; break;
+            }
             case 'conv_broadcast': {
                 ensure_conversations();
                 $subject = mb_substr(trim((string)($_POST['subject'] ?? '')), 0, 150);
@@ -3148,7 +3157,7 @@ function action_tab(string $a): string {
         'cmsg_handle' => 'messages', 'cmsg_delete' => 'messages', 'umsg_send' => 'users',
         'smsg_post' => 'messages', 'smsg_delete' => 'messages',
         'conv_reply' => 'messages', 'conv_status' => 'messages', 'conv_new' => 'messages', 'conv_reprise' => 'messages',
-        'conv_assign' => 'messages', 'conv_note' => 'messages', 'conv_category' => 'messages', 'conv_ack_set' => 'messages',
+        'conv_assign' => 'messages', 'conv_note' => 'messages', 'conv_category' => 'messages', 'conv_ack_set' => 'messages', 'conv_templates_save' => 'messages',
         'conv_broadcast' => 'messages', 'conv_merge' => 'messages', 'conv_staff_box' => 'messages', 'conv_hide' => 'messages',
         // Jeux : codes & recycleur
         'voucher_add' => 'vouchers', 'voucher_delete' => 'vouchers',
@@ -4784,6 +4793,29 @@ function page_ranks(): void {
 function conv_cats(): array { return ['question' => '❓ Question', 'bug' => '🐞 Bug', 'signalement' => '🚩 Signalement', 'compte' => '👤 Compte', 'contact' => '✉️ Contact', 'staff' => '📣 Équipe', 'autre' => '• Autre']; }
 function conv_stat_labels(): array { return ['waiting_staff' => '🔴 À répondre', 'waiting_player' => '⏳ Attente joueur', 'resolved' => '✅ Résolu']; }
 
+/** C05 : modèles de réponse (réponses types) configurables par le staff.
+ *  Stockés dans settings['conv.templates'] (un modèle par ligne). Repli sur une
+ *  liste par défaut tant qu'aucun modèle n'a été personnalisé. */
+function conv_reply_templates(): array {
+    $def = [
+        'Bonjour, merci pour ton message ! ',
+        'Bonjour, merci de ton message. Peux-tu nous donner plus de détails (pseudo concerné, heure, salle) ?',
+        'C\'est corrigé de notre côté, n\'hésite pas si le souci revient. Bon jeu ! 😊',
+        'Ta demande a bien été transmise à l\'équipe concernée, on revient vers toi dès que possible.',
+        'Pour des raisons de sécurité, nous ne demandons jamais ton mot de passe. Ne le communique à personne.',
+        'Nous ne pouvons pas donner suite à cette demande. Merci de ta compréhension.',
+    ];
+    try {
+        $st = db()->prepare('SELECT value FROM settings WHERE setting=?'); $st->execute(['conv.templates']);
+        $raw = $st->fetchColumn();
+        if ($raw !== false && trim((string)$raw) !== '') {
+            $lines = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string)$raw)), fn($l) => $l !== ''));
+            if ($lines) return $lines;
+        }
+    } catch (Throwable $e) {}
+    return $def;
+}
+
 /** Barre d'outils de l'assistance (nouveau message, reprise, accusé, annonce). */
 function conv_tools_bar(string $me): void {
     $plName = ''; $plFilter = (int)($_GET['pl'] ?? 0);
@@ -4807,6 +4839,13 @@ function conv_tools_bar(string $me): void {
        . '<div class="sm muted" style="margin-bottom:3px">Accusé de réception automatique (vide = désactivé)</div>'
        . '<textarea name="body" rows="2" maxlength="1000" placeholder="Laisser vide pour désactiver" style="width:100%">' . h($ackVal) . '</textarea>'
        . '<button class="mini" style="margin-top:4px">💾 Enregistrer l\'accusé</button></form>';
+    // Modèles de réponse (C05) — éditables par le staff, un par ligne. Alimentent « Insérer une réponse type ».
+    $tplVal = implode("\n", conv_reply_templates());
+    echo '<form method="post" class="js" data-reload><input type="hidden" name="action" value="conv_templates_save">' . csrf_field()
+       . '<div class="sm muted" style="margin-bottom:3px">Modèles de réponse (un par ligne)</div>'
+       . '<textarea name="body" rows="5" maxlength="8000" style="width:100%">' . h($tplVal) . '</textarea>'
+       . '<button class="mini" style="margin-top:4px">💾 Enregistrer les modèles</button>'
+       . '<p class="muted sm" style="margin:4px 0 0">Proposés dans « 💬 Insérer une réponse type ». Vider = revenir aux modèles par défaut.</p></form>';
     // Annonce collective → raccourci vers le hub « Alertes & annonces » (logique unique)
     echo '<div><div class="sm muted" style="margin-bottom:3px">Annonce collective</div>'
        . '<a class="mini ghost" href="?p=alerts&sec=announce">📨 Ouvrir dans « Alertes &amp; annonces »</a>'
@@ -4914,15 +4953,8 @@ function conv_detail_panel(array $conv, int $cid, string $me, array $CATS, array
     }
     echo '</div>';
 
-    // Réponse + réponses types
-    $CANNED = [
-        'Bonjour, merci pour ton message ! ',
-        'Bonjour, merci de ton message. Peux-tu nous donner plus de détails (pseudo concerné, heure, salle) ?',
-        'C\'est corrigé de notre côté, n\'hésite pas si le souci revient. Bon jeu ! 😊',
-        'Ta demande a bien été transmise à l\'équipe concernée, on revient vers toi dès que possible.',
-        'Pour des raisons de sécurité, nous ne demandons jamais ton mot de passe. Ne le communique à personne.',
-        'Nous ne pouvons pas donner suite à cette demande. Merci de ta compréhension.',
-    ];
+    // Réponse + réponses types (C05 : modèles configurables — voir conv_reply_templates / Outils d'assistance)
+    $CANNED = conv_reply_templates();
     $rid = 'cvbody' . $cid;
     echo '<form method="post" class="js" data-reload style="margin-top:10px"><input type="hidden" name="action" value="conv_reply">' . csrf_field()
        . '<input type="hidden" name="cid" value="' . $cid . '">'
@@ -5014,7 +5046,12 @@ function conv_assistance_view(string $scope = 'assistance'): void {
     elseif ($filter === 'unassigned') { $conds[] = "c.assigned_to=''"; }
     if ($catFilter !== '') { $conds[] = 'c.category=?'; $args[] = $catFilter; }
     if ($plFilter > 0) { $conds[] = 'c.player_id=?'; $args[] = $plFilter; }
-    if ($q !== '') { $conds[] = '(c.subject LIKE ? OR u.username LIKE ?)'; $args[] = '%' . $q . '%'; $args[] = '%' . $q . '%'; }
+    if ($q !== '') {
+        // C05 : recherche aussi dans le CORPS des messages (pas seulement sujet + pseudo).
+        $like = '%' . $q . '%';
+        $conds[] = '(c.subject LIKE ? OR u.username LIKE ? OR EXISTS (SELECT 1 FROM conversation_messages mq WHERE mq.conv_id=c.id AND mq.is_internal=0 AND mq.body LIKE ?))';
+        $args[] = $like; $args[] = $like; $args[] = $like;
+    }
     $where = $conds ? ('WHERE ' . implode(' AND ', $conds)) : '';
 
     // Pagination
@@ -5042,7 +5079,7 @@ function conv_assistance_view(string $scope = 'assistance'): void {
 
     // Recherche + filtres
     echo '<form method="get" class="row" style="gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px"><input type="hidden" name="p" value="messages"><input type="hidden" name="vue" value="' . $scope . '">' . ($plFilter > 0 ? '<input type="hidden" name="pl" value="' . $plFilter . '">' : '')
-       . '<input name="q" value="' . h($q) . '" placeholder="Rechercher sujet ou joueur…" style="flex:1;min-width:150px">'
+       . '<input name="q" value="' . h($q) . '" placeholder="Rechercher sujet, joueur ou message…" style="flex:1;min-width:150px">'
        . '<select name="f"><option value="all"' . ($filter === 'all' ? ' selected' : '') . '>Toutes</option><option value="unassigned"' . ($filter === 'unassigned' ? ' selected' : '') . '>Non attribuées</option><option value="mine"' . ($filter === 'mine' ? ' selected' : '') . '>Les miennes</option></select>'
        . '<select name="cat"><option value="">Catégorie…</option>';
     foreach ($CATS as $ck => $cl) echo '<option value="' . h($ck) . '"' . ($catFilter === $ck ? ' selected' : '') . '>' . h($cl) . '</option>';
