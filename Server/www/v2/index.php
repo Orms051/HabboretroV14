@@ -1360,7 +1360,7 @@ if ($p === 'home_edit') {
       <a class="new-button" href="#" onclick="return heCancel()"><b>Annuler</b><i></i></a>
       <a class="new-button" href="?p=home/<?= h(rawurlencode((string)$owner['username'])) ?>"><b>Voir ↗</b><i></i></a>
     </div>
-    <div id="hedit-canvas" style="position:relative;width:928px;margin-left:-6px;margin-right:-6px;height:<?= $ech ?>px;border:1px solid #06252b;background:#c9dbe6;overflow:hidden;user-select:none"></div>
+    <div id="hedit-canvas" style="position:relative;width:928px;max-width:100%;height:<?= $ech ?>px;border:1px solid #06252b;background:#c9dbe6;overflow:hidden;user-select:none"></div>
 
     <!-- Palette -->
     <div id="hepal" style="display:none;position:fixed;left:50%;top:90px;transform:translateX(-50%);width:420px;max-width:92vw;max-height:72vh;overflow:auto;background:#fff;border:2px solid #06252b;border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,.4);z-index:9999;padding:10px">
@@ -1545,7 +1545,7 @@ if (strpos($p, 'home/') === 0) {
     foreach ($items as $it) $ch = max($ch, (int)$it['y'] + 200);
     if ($hasBg) { $sz = @getimagesize(home_asset_dir('bg') . '/' . basename((string)$home['background'])); if ($sz && $sz[1] > 0) $ch = max($ch, (int)$sz[1]); }
     $ch = min($ch, 1360);
-    echo '<div class="homecanvas" style="position:relative;width:928px;margin-left:-6px;margin-right:-6px;height:' . $ch . 'px;border:1px solid #06252b;background:#c9dbe6' . $bgCss . ';overflow:hidden">';
+    echo '<div class="homecanvas" style="position:relative;width:928px;max-width:100%;height:' . $ch . 'px;border:1px solid #06252b;background:#c9dbe6' . $bgCss . ';overflow:hidden">';
     foreach ($items as $it) {
         $ww = home_widget_width((string)$it['type'], (string)($it['resource'] ?? ''));
         $x = max(0, min(928 - $ww, (int)$it['x'])); $y = max(0, (int)$it['y']); $z = (int)$it['z'];
