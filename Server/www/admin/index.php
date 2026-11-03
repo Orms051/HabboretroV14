@@ -1105,6 +1105,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ((string)($_POST['orig_hash'] ?? '') !== furni_def_hash($cur)) { $ok = false; $msg = '⚠️ Cette fiche a été modifiée entre-temps (autre onglet ou autre staff). Rien n\'a été enregistré : rouvre la fiche pour repartir des valeurs à jour.'; break; }
                 $name = substr(trim((string)($_POST['name'] ?? '')), 0, 255);
                 if ($name === '') { $ok = false; $msg = '❌ Le nom ne peut pas être vide.'; break; }
+                // M04 : valider le FORMAT des champs libres (sinon une valeur saisie à la main peut
+                // casser le parsing côté Kepler). Formats calés sur les valeurs réelles en base.
+                $interactor = (trim((string)($_POST['interactor'] ?? '')) === '') ? 'default' : trim((string)$_POST['interactor']);
+                if (!preg_match('/^[a-z0-9_]{1,150}$/', $interactor)) { $ok = false; $msg = '❌ Interacteur invalide : seulement minuscules, chiffres et « _ » (ex. default, chair, vending_machine, teleport).'; break; }
+                $colour = substr(trim((string)($_POST['colour'] ?? '')), 0, 100);
+                if ($colour !== '' && !preg_match('/^(?:#[0-9A-Fa-f]{6}|\d{1,3})(?:,(?:#[0-9A-Fa-f]{6}|\d{1,3}))*$/', $colour)) { $ok = false; $msg = '❌ Couleur invalide : nombres ou codes hex #RRGGBB séparés par des virgules (ex. 0,0,0 ou #FFFFFF,#ABD0D2).'; break; }
+                $maxStatus = trim((string)($_POST['max_status'] ?? ''));
+                if ($maxStatus !== '' && !preg_match('/^-?\d{1,10}$/', $maxStatus)) { $ok = false; $msg = '❌ max_status invalide : un entier (ex. 0, 1, 2).'; break; }
                 $new = [
                     'name' => $name,
                     'description' => substr(trim((string)($_POST['description'] ?? '')), 0, 255),
@@ -1112,9 +1120,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'width' => max(0, (int)($_POST['width'] ?? 0)),
                     'top_height' => max(0.0, (float)str_replace(',', '.', (string)($_POST['top_height'] ?? '0'))),
                     'behaviour' => furni_behaviour_rebuild((string)$cur['behaviour'], (array)($_POST['beh'] ?? [])),
-                    'interactor' => (trim((string)($_POST['interactor'] ?? '')) === '' ? 'default' : substr(trim((string)$_POST['interactor']), 0, 150)),
-                    'colour' => substr(trim((string)($_POST['colour'] ?? '')), 0, 100),
-                    'max_status' => substr(trim((string)($_POST['max_status'] ?? '')), 0, 11),
+                    'interactor' => $interactor,
+                    'colour' => $colour,
+                    'max_status' => $maxStatus,
                     'is_tradable' => isset($_POST['is_tradable']) ? 1 : 0,
                     'is_recyclable' => isset($_POST['is_recyclable']) ? 1 : 0,
                 ];
@@ -3773,7 +3781,7 @@ function furni_fiche(int $id): void {
     echo '<div id="behsummary" data-help=\'' . h(json_encode($help, JSON_UNESCAPED_UNICODE)) . '\' style="margin-top:8px;padding:8px 10px;background:rgba(90,130,170,.10);border-radius:8px;font-size:12px"></div>';
     echo '<p class="hint">⚠️ Cocher <b>Téléporteur</b>, <b>Jukebox</b>, <b>Trax</b>… ne suffit <b>pas</b> à rendre un meuble fonctionnel : il faut aussi le bon sprite côté client. À <b>tester en jeu</b>.</p>';
     echo '<div class="row" style="margin-top:4px"><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_tradable"' . ($d['is_tradable'] ? ' checked' : '') . '> Échangeable</label><label style="flex-direction:row;align-items:center"><input type="checkbox" name="is_recyclable"' . ($d['is_recyclable'] ? ' checked' : '') . '> Recyclable</label></div>';
-    echo '<details style="margin-top:8px"><summary class="sm muted">⚙️ Paramètres techniques avancés</summary><div class="row" style="margin-top:6px"><label>Interacteur<input name="interactor" value="' . h((string)$d['interactor']) . '" style="width:170px"></label><label>Couleur (RVB)<input name="colour" value="' . h((string)$d['colour']) . '" style="width:130px"></label><label>max_status<input name="max_status" value="' . h((string)$d['max_status']) . '" style="width:90px"></label></div><p class="hint">Champs techniques : ne change que si tu sais ce que tu fais.</p></details>';
+    echo '<details style="margin-top:8px"><summary class="sm muted">⚙️ Paramètres techniques avancés</summary><div class="row" style="margin-top:6px"><label>Interacteur<input name="interactor" value="' . h((string)$d['interactor']) . '" pattern="[a-z0-9_]{1,150}" title="Minuscules, chiffres et « _ » (ex. default, chair, vending_machine, teleport)" placeholder="default" style="width:170px"></label><label>Couleur (nombres ou #RRGGBB)<input name="colour" value="' . h((string)$d['colour']) . '" pattern="(#[0-9A-Fa-f]{6}|\d{1,3})(,(#[0-9A-Fa-f]{6}|\d{1,3}))*" title="Nombres ou codes hex #RRGGBB séparés par des virgules (ex. 0,0,0 ou #FFFFFF,#ABD0D2)" placeholder="0,0,0" style="width:170px"></label><label>max_status<input name="max_status" value="' . h((string)$d['max_status']) . '" pattern="-?\d{1,10}" title="Un entier (ex. 0, 1, 2)" placeholder="2" style="width:90px"></label></div><p class="hint">Champs techniques : ne change que si tu sais ce que tu fais. Formats validés à l\'enregistrement.</p></details>';
     echo '<label style="margin-top:8px">Motif de la modification (facultatif)<input name="reason" maxlength="255" placeholder="ex. correction de la hauteur d\'assise"></label>';
     echo '<div style="margin-top:10px;padding:8px 10px;background:rgba(224,160,32,.12);border-radius:6px;font-size:12px">⚠️ <b>Impact</b> : définition partagée par <b>' . $nbEx . '</b> exemplaire(s) (posés + inventaire) et <b>' . count($offers) . '</b> offre(s) catalogue. Les changements s\'appliquent à <b>tous</b>.</div>';
     echo '<div id="furnidiffbox" style="display:none;margin-top:10px;padding:8px 10px;border:1px solid rgba(90,130,170,.4);border-radius:8px;font-size:12px"></div>';
