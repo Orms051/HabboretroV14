@@ -315,6 +315,35 @@ function home_rating_summary(int $ownerId, int $voterId = 0): array {
         return ['count' => (int)$r['c'], 'avg' => round((float)$r['a'], 1), 'mine' => $mine];
     } catch (Throwable $e) { return ['count' => 0, 'avg' => 0.0, 'mine' => 0]; }
 }
+/** Traxplayer : morceaux Trax (SoundMachine) d'un joueur. */
+function home_trax_songs(int $uid, int $limit = 5): array {
+    try {
+        $st = db()->prepare('SELECT id,title,length,data,burnt FROM soundmachine_songs WHERE user_id=? ORDER BY id DESC LIMIT ?');
+        $st->bindValue(1, $uid, PDO::PARAM_INT); $st->bindValue(2, $limit, PDO::PARAM_INT); $st->execute();
+        return $st->fetchAll();
+    } catch (Throwable $e) { return []; }
+}
+/** Décode le format Trax « 1:sample,durée;…:2:…:3:…:4:… » → pistes + stats (notes, pulsations). */
+function home_trax_decode(string $data): array {
+    $tracks = [[], [], [], []]; $notes = 0; $pulses = 0; $used = 0;
+    if (preg_match_all('/([1-4]):([^:]*)/', $data, $m, PREG_SET_ORDER)) {
+        foreach ($m as $mm) {
+            $ti = (int)$mm[1] - 1; if ($ti < 0 || $ti > 3) continue;
+            $sum = 0; $hasNote = false;
+            foreach (explode(';', $mm[2]) as $ev) {
+                if ($ev === '') continue;
+                $pair = array_pad(explode(',', $ev), 2, '0');
+                $s = (int)$pair[0]; $d = max(0, (int)$pair[1]);
+                $tracks[$ti][] = [$s, $d];
+                if ($s > 0) { $notes++; $hasNote = true; }
+                $sum += $d;
+            }
+            if ($hasNote) $used++;
+            $pulses = max($pulses, $sum);
+        }
+    }
+    return ['tracks' => $tracks, 'notes' => $notes, 'pulses' => $pulses, 'usedTracks' => $used];
+}
 /** Composition de départ (widgets par défaut) pour un compte sans Home. Ne touche pas aux Homes existantes. */
 function home_init_default(int $uid): void {
     $def = [

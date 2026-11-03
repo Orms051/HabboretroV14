@@ -236,6 +236,7 @@ function home_widget_width(string $type, string $resource = ''): int {
         case 'widget_badges':    return 300;
         case 'widget_rooms':     return 300;
         case 'widget_guestbook': return 330;
+        case 'widget_trax':      return 530;
         case 'widget_notes':     return 240;
         case 'sticker':
             $f = basename($resource);
@@ -243,6 +244,41 @@ function home_widget_width(string $type, string $resource = ''): int {
             return 100;
         default: return 200;
     }
+}
+/* Lecteur Trax (Web Audio) — son de synthèse provisoire tant qu'on n'a pas les samples
+   d'origine du Sound Machine. Parse le format « 1:sample,durée;…:2:… » et joue 4 pistes. */
+function home_trax_js(): string {
+    static $done = false; if ($done) return ''; $done = true;
+    return '<script>(function(){
+      if(window.__traxInit) return; window.__traxInit=true;
+      var AC=null, playing=null, curBtn=null, stopT=null;
+      var scale=[0,261.6,293.7,329.6,392.0,440.0,523.3,587.3,659.3,784.0,880.0];
+      var waves=["square","triangle","sawtooth","sine"];
+      function parse(d){var tr=[[],[],[],[]];var m=(d||"").match(/([1-4]):([^:]*)/g)||[];
+        m.forEach(function(seg){var i=parseInt(seg[0],10)-1;if(i<0||i>3)return;
+          seg.slice(2).split(";").forEach(function(ev){if(!ev)return;var p=ev.split(",");tr[i].push([parseInt(p[0],10)||0,parseInt(p[1],10)||0]);});});
+        return tr;}
+      function stop(){if(stopT){clearTimeout(stopT);stopT=null;}
+        if(playing){playing.forEach(function(o){try{o.stop();}catch(e){}});playing=null;}
+        document.querySelectorAll(".trax-play").forEach(function(b){b.textContent="▶";});curBtn=null;}
+      window.traxPlay=function(btn){
+        if(playing){var same=(btn===curBtn);stop();if(same)return;}
+        try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();}catch(e){return;}
+        var tr=parse(btn.getAttribute("data-trax")); var pulse=0.16; playing=[]; curBtn=btn; btn.textContent="⏸";
+        var t0=AC.currentTime+0.06, maxEnd=t0;
+        tr.forEach(function(track,ti){var t=t0;
+          track.forEach(function(ev){var s=ev[0],d=ev[1];var dur=d*pulse;
+            if(s>0&&scale[s]){var osc=AC.createOscillator(),g=AC.createGain();
+              osc.type=waves[ti%4];osc.frequency.value=scale[s]*(ti===0?0.5:1);
+              g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.16,t+0.01);
+              g.gain.exponentialRampToValueAtTime(0.0001,t+Math.max(0.05,dur*0.9));
+              osc.connect(g);g.connect(AC.destination);osc.start(t);osc.stop(t+dur);playing.push(osc);}
+            t+=dur;});
+          if(t>maxEnd)maxEnd=t;});
+        stopT=setTimeout(stop,(maxEnd-AC.currentTime)*1000+120);
+      };
+      document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest(".trax-play");if(b){e.preventDefault();window.traxPlay(b);}});
+    })();</script>';
 }
 function home_report_form(string $type, int $tid): string {
     $reasons = ['Contenu choquant', 'Insultes / harcèlement', 'Spam / publicité', 'Usurpation d\'identité', 'Autre'];
@@ -387,6 +423,27 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             }
             $b .= '</div>';
             return hw_box('Ma note', $b, 210, 'o', $skin);
+        case 'widget_trax':
+            $songs = home_trax_songs($oid);
+            if (!$songs) {
+                $b = '<p class="muted" style="font-size:10px">Aucun morceau Trax enregistré.</p>';
+            } else {
+                $b = '<div class="trax-list">';
+                foreach ($songs as $sg) {
+                    $title = trim((string)$sg['title']); if ($title === '') $title = 'Morceau sans titre';
+                    $dec = home_trax_decode((string)$sg['data']);
+                    $len = (int)$sg['length'];
+                    $mmss = sprintf('%d:%02d', intdiv($len, 60), $len % 60);
+                    $b .= '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dotted #d0d8dd">'
+                       . '<button type="button" class="trax-play" data-trax="' . h((string)$sg['data']) . '" title="Écouter / arrêter" style="flex:0 0 auto;width:28px;height:28px;border:1px solid #2f6f9f;border-radius:50%;background:#eaf3fb;color:#2f6f9f;cursor:pointer;font-size:12px;line-height:1">▶</button>'
+                       . '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:bold;color:#2f4a63;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' . h($title) . '</div>'
+                       . '<div style="font-size:9px;color:#8a97a3">' . $dec['usedTracks'] . ' piste' . ($dec['usedTracks'] > 1 ? 's' : '') . ' · ' . $dec['notes'] . ' notes · ' . $mmss . ($sg['burnt'] ? ' · 💿 gravé' : '') . '</div></div>'
+                       . '</div>';
+                }
+                $b .= '</div><div style="font-size:9px;color:#8a97a3;margin-top:5px">🎵 Lecteur Trax — son de synthèse provisoire (samples d\'origine à venir).</div>';
+                $b .= home_trax_js();
+            }
+            return hw_box('Traxplayer', $b, 530, 'b', $skin);
         default:
             return hw_box('Widget', '<p class="muted" style="font-size:10px">Widget inconnu.</p>', 200, 'b', $skin);
     }
@@ -1275,7 +1332,7 @@ if ($p === 'home_save') {
     $bg = (string)($data['background'] ?? '');
     if ($bg !== '' && !home_asset_ok('bg', $bg)) $bg = '';
     else $bg = $bg === '' ? '' : basename($bg);
-    $allowed = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'widget_rating', 'sticker'];
+    $allowed = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'widget_rating', 'widget_trax', 'sticker'];
     $skins = home_skins();
     $rows = [];
     foreach ((array)($data['items'] ?? []) as $it) {
@@ -1329,7 +1386,7 @@ if ($p === 'home_restore') {
     $items = json_decode((string)$snap['items_json'], true); if (!is_array($items)) $items = [];
     // Re-validation des assets (une ressource de la version peut avoir été bannie depuis) — mêmes règles que home_save.
     $bg = (string)$snap['background']; $bg = ($bg !== '' && home_asset_ok('bg', $bg)) ? basename($bg) : '';
-    $allowed = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'widget_rating', 'sticker'];
+    $allowed = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'widget_rating', 'widget_trax', 'sticker'];
     $skins = home_skins();
     $rows = [];
     foreach ($items as $it) {
@@ -1367,10 +1424,10 @@ if ($p === 'home_edit') {
     $locked = (int)($home['edit_locked'] ?? 0) === 1;
     $items = home_items($oid);
     // Pré-rendu des widgets (vraies données du propriétaire) pour l'ajout en direct
-    $types = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'widget_rating'];
+    $types = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'widget_rating', 'widget_trax'];
     $wmap = [];
     foreach ($types as $t) $wmap[$t] = home_widget_html($t, $owner, $oid, '', $t === 'widget_notes' ? '{{NOTES}}' : '', 'edit');
-    $labels = ['widget_profile' => 'Profil', 'widget_friends' => 'Mes amis', 'widget_badges' => 'Mes badges', 'widget_rooms' => 'Mes apparts', 'widget_guestbook' => 'Livre d\'or', 'widget_notes' => 'Pense-bête', 'widget_rating' => 'Ma note'];
+    $labels = ['widget_profile' => 'Profil', 'widget_friends' => 'Mes amis', 'widget_badges' => 'Mes badges', 'widget_rooms' => 'Mes apparts', 'widget_guestbook' => 'Livre d\'or', 'widget_notes' => 'Pense-bête', 'widget_rating' => 'Ma note', 'widget_trax' => 'Traxplayer'];
     $jsItems = [];
     foreach ($items as $it) $jsItems[] = ['type' => $it['type'], 'resource' => (string)$it['resource'], 'x' => (int)$it['x'], 'y' => (int)$it['y'], 'z' => (int)$it['z'], 'content' => (string)($it['content'] ?? ''), 'style' => (string)($it['style'] ?? '')];
     $snapshots = home_snapshots_list($oid); // H02 : versions restaurables
