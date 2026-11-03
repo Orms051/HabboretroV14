@@ -236,7 +236,7 @@ function home_widget_width(string $type, string $resource = ''): int {
         case 'widget_badges':    return 300;
         case 'widget_rooms':     return 300;
         case 'widget_guestbook': return 330;
-        case 'widget_trax':      return 530;
+        case 'widget_trax':      return 243;
         case 'widget_notes':     return 240;
         case 'sticker':
             $f = basename($resource);
@@ -251,33 +251,44 @@ function home_trax_js(): string {
     static $done = false; if ($done) return ''; $done = true;
     return '<script>(function(){
       if(window.__traxInit) return; window.__traxInit=true;
-      var AC=null, playing=null, curBtn=null, stopT=null;
+      var AC=null, nodes=[], playing=false, stopT=null, tick=null, elapsed=0, total=0, vol=0.5;
       var scale=[0,261.6,293.7,329.6,392.0,440.0,523.3,587.3,659.3,784.0,880.0];
       var waves=["square","triangle","sawtooth","sine"];
+      function P(){return document.getElementById("trax-player");}
       function parse(d){var tr=[[],[],[],[]];var m=(d||"").match(/([1-4]):([^:]*)/g)||[];
         m.forEach(function(seg){var i=parseInt(seg[0],10)-1;if(i<0||i>3)return;
           seg.slice(2).split(";").forEach(function(ev){if(!ev)return;var p=ev.split(",");tr[i].push([parseInt(p[0],10)||0,parseInt(p[1],10)||0]);});});
         return tr;}
-      function stop(){if(stopT){clearTimeout(stopT);stopT=null;}
-        if(playing){playing.forEach(function(o){try{o.stop();}catch(e){}});playing=null;}
-        document.querySelectorAll(".trax-play").forEach(function(b){b.textContent="▶";});curBtn=null;}
-      window.traxPlay=function(btn){
-        if(playing){var same=(btn===curBtn);stop();if(same)return;}
+      function fmt(s){var m=Math.floor(s/60),x=s%60;return m+":"+(x<10?"0":"")+x;}
+      function setTime(){var p=P();if(!p)return;var t=p.querySelector(".time");if(t&&t.firstChild)t.firstChild.nodeValue=fmt(elapsed);}
+      function setVol(v){vol=v/100;var p=P();if(p){var f=p.querySelector(".volume-indicator-filled");if(f)f.style.width=((62/100)*v)+"px";}}
+      function stop(){playing=false;if(stopT){clearTimeout(stopT);stopT=null;}clearInterval(tick);
+        nodes.forEach(function(o){try{o.stop();}catch(e){}});nodes=[];elapsed=0;setTime();
+        var p=P();if(p){var b=p.querySelector(".play-btn");if(b)b.classList.remove("playing");var a=p.querySelector(".music-activity");if(a)a.classList.remove("playing");}}
+      function play(){
+        var p=P();if(!p)return; if(playing){stop();return;}
         try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();}catch(e){return;}
-        var tr=parse(btn.getAttribute("data-trax")); var pulse=0.16; playing=[]; curBtn=btn; btn.textContent="⏸";
+        var tr=parse(p.getAttribute("data-trax")); var pulse=0.16; nodes=[]; playing=true;
+        var b=p.querySelector(".play-btn");if(b)b.classList.add("playing");
+        var act=p.querySelector(".music-activity");if(act)act.classList.add("playing");
         var t0=AC.currentTime+0.06, maxEnd=t0;
         tr.forEach(function(track,ti){var t=t0;
           track.forEach(function(ev){var s=ev[0],d=ev[1];var dur=d*pulse;
             if(s>0&&scale[s]){var osc=AC.createOscillator(),g=AC.createGain();
               osc.type=waves[ti%4];osc.frequency.value=scale[s]*(ti===0?0.5:1);
-              g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.16,t+0.01);
+              g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(Math.max(0.001,0.22*vol),t+0.01);
               g.gain.exponentialRampToValueAtTime(0.0001,t+Math.max(0.05,dur*0.9));
-              osc.connect(g);g.connect(AC.destination);osc.start(t);osc.stop(t+dur);playing.push(osc);}
+              osc.connect(g);g.connect(AC.destination);osc.start(t);osc.stop(t+dur);nodes.push(osc);}
             t+=dur;});
           if(t>maxEnd)maxEnd=t;});
-        stopT=setTimeout(stop,(maxEnd-AC.currentTime)*1000+120);
-      };
-      document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest(".trax-play");if(b){e.preventDefault();window.traxPlay(b);}});
+        total=Math.max(1,Math.ceil(maxEnd-t0)); elapsed=0; setTime();
+        tick=setInterval(function(){elapsed++;setTime();if(elapsed>=total)stop();},1000);
+        stopT=setTimeout(stop,(maxEnd-AC.currentTime)*1000+150);
+      }
+      document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("#trax-player .play-btn");if(b){e.preventDefault();play();}});
+      document.addEventListener("input",function(e){if(e.target&&e.target.classList&&e.target.classList.contains("volume"))setVol(e.target.value);});
+      function boot(){setVol(50);}
+      if(document.readyState!=="loading")boot(); else document.addEventListener("DOMContentLoaded",boot);
     })();</script>';
 }
 function home_report_form(string $type, int $tid): string {
@@ -426,24 +437,27 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
         case 'widget_trax':
             $songs = home_trax_songs($oid);
             if (!$songs) {
-                $b = '<p class="muted" style="font-size:10px">Aucun morceau Trax enregistré.</p>';
-            } else {
-                $b = '<div class="trax-list">';
-                foreach ($songs as $sg) {
-                    $title = trim((string)$sg['title']); if ($title === '') $title = 'Morceau sans titre';
-                    $dec = home_trax_decode((string)$sg['data']);
-                    $len = (int)$sg['length'];
-                    $mmss = sprintf('%d:%02d', intdiv($len, 60), $len % 60);
-                    $b .= '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dotted #d0d8dd">'
-                       . '<button type="button" class="trax-play" data-trax="' . h((string)$sg['data']) . '" title="Écouter / arrêter" style="flex:0 0 auto;width:28px;height:28px;border:1px solid #2f6f9f;border-radius:50%;background:#eaf3fb;color:#2f6f9f;cursor:pointer;font-size:12px;line-height:1">▶</button>'
-                       . '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:bold;color:#2f4a63;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' . h($title) . '</div>'
-                       . '<div style="font-size:9px;color:#8a97a3">' . $dec['usedTracks'] . ' piste' . ($dec['usedTracks'] > 1 ? 's' : '') . ' · ' . $dec['notes'] . ' notes · ' . $mmss . ($sg['burnt'] ? ' · 💿 gravé' : '') . '</div></div>'
-                       . '</div>';
-                }
-                $b .= '</div><div style="font-size:9px;color:#8a97a3;margin-top:5px">🎵 Lecteur Trax — son de synthèse provisoire (samples d\'origine à venir).</div>';
-                $b .= home_trax_js();
+                return hw_box('Traxplayer', '<p class="muted" style="font-size:10px">Aucun morceau Trax enregistré.</p>', 243, 'b', $skin);
             }
-            return hw_box('Traxplayer', $b, 530, 'b', $skin);
+            $sg = $songs[0]; // le Traxplayer de la Home joue le morceau le plus récent du joueur
+            $title = trim((string)$sg['title']); if ($title === '') $title = 'Sans titre';
+            $len = (int)$sg['length'];
+            $mmss = sprintf('%d:%02d', intdiv($len, 60), $len % 60);
+            $b = '<link rel="stylesheet" href="/web-gallery/v2/styles/webbanditten/traxplayer.css">'
+               . '<div id="trax-player" data-trax="' . h((string)$sg['data']) . '">'
+               . '<div class="control"><button type="button" class="play-btn" title="Lecture / pause"></button></div>'
+               . '<div class="display"><div class="display-inner">'
+               . '<div class="title">' . h($title) . '</div>'
+               . '<div class="author">' . h((string)$owner['username']) . '</div>'
+               . '<div class="time">0:00<span class="length">(' . $mmss . ')</span></div>'
+               . '<div class="music-activity"></div>'
+               . '</div></div>'
+               . '<div class="volumecontainer"><div class="volume-indicator"><div class="volume-indicator-filled"><div class="volume-indicator-filled-bg"></div></div></div>'
+               . '<input type="range" class="volume" min="0" max="100" value="50"></div>'
+               . '</div>'
+               . '<div style="font-size:9px;color:#8a97a3;margin-top:3px;clear:both">son de synthèse provisoire</div>';
+            $b .= home_trax_js();
+            return hw_box('Traxplayer', $b, 243, 'b', $skin);
         default:
             return hw_box('Widget', '<p class="muted" style="font-size:10px">Widget inconnu.</p>', 200, 'b', $skin);
     }
