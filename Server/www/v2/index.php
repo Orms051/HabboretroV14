@@ -1476,17 +1476,21 @@ if ($p === 'home_edit') {
 if (strpos($p, 'home/') === 0) {
     $who = rawurldecode(substr($p, 5));
     $owner = user_by_name($who);
+    // W04 : fixer le statut HTTP AVANT tout rendu (render_head envoie les en-têtes) — même modèle que ?p=actu.
+    $oid = $owner ? (int)$owner['id'] : 0;
+    $home = $owner ? home_for_user($oid) : [];
+    $viewer = me();
+    $isOwner = $viewer && $oid > 0 && (int)$viewer['id'] === $oid;
+    $homeMasquee = $owner && (int)($home['hidden'] ?? 0) === 1 && !$isOwner && !is_staff();
+    if (!$owner)            http_response_code(404); // W04 : Home d'un pseudo inexistant
+    elseif ($homeMasquee)   http_response_code(403); // W04 : Home masquée par la modération (interdite au public)
     render_head('community');
     if (!$owner) {
         box_open('Habbo Home introuvable', 'o');
         echo '<div class="wip"><span class="ico">🏠</span><h3>Cette Habbo Home n\'existe pas</h3><p>Le Habbo « ' . h($who) . ' » est introuvable. <a href="?p=community">Rechercher un Habbo »</a></p></div>';
         box_close(); render_foot(); exit;
     }
-    $oid = (int)$owner['id'];
-    $home = home_for_user($oid);
-    $viewer = me();
-    $isOwner = $viewer && (int)$viewer['id'] === $oid;
-    if ((int)($home['hidden'] ?? 0) === 1 && !$isOwner && !is_staff()) {
+    if ($homeMasquee) {
         box_open('Habbo Home indisponible', 'o');
         echo '<div class="wip"><span class="ico">🚫</span><h3>Cette Habbo Home n\'est pas disponible</h3><p>Elle est momentanément masquée. Reviens plus tard !</p></div>';
         box_close(); render_foot(); exit;
