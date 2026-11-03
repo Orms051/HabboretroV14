@@ -263,6 +263,15 @@ function ensure_home(): void {
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         INDEX(user_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // My Rating : une ligne = la note (1-5 étoiles) d'un visiteur sur la Home d'un joueur.
+    db()->exec("CREATE TABLE IF NOT EXISTS home_ratings (
+        owner_id INT NOT NULL,
+        voter_id INT NOT NULL,
+        stars TINYINT NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (owner_id, voter_id),
+        INDEX(owner_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
 /** H02 : enregistre l'ÉTAT ACTUEL de la Home comme version restaurable, puis élague (15 max/joueur).
  *  À appeler AVANT d'écraser (dans la transaction de sauvegarde/restauration). Best-effort. */
@@ -294,6 +303,17 @@ function home_guestbook_count(int $uid): int {
     ensure_home();
     try { $st = db()->prepare('SELECT COUNT(*) FROM home_guestbook WHERE owner_id=? AND hidden=0'); $st->execute([$uid]); return (int)$st->fetchColumn(); }
     catch (Throwable $e) { return 0; }
+}
+/** My Rating : moyenne (0-5, 1 décimale), nombre de votes, et la note du visiteur (0 si aucune). */
+function home_rating_summary(int $ownerId, int $voterId = 0): array {
+    ensure_home();
+    try {
+        $st = db()->prepare('SELECT COUNT(*) c, COALESCE(AVG(stars),0) a FROM home_ratings WHERE owner_id=?');
+        $st->execute([$ownerId]); $r = $st->fetch();
+        $mine = 0;
+        if ($voterId > 0) { $m = db()->prepare('SELECT stars FROM home_ratings WHERE owner_id=? AND voter_id=?'); $m->execute([$ownerId, $voterId]); $mine = (int)$m->fetchColumn(); }
+        return ['count' => (int)$r['c'], 'avg' => round((float)$r['a'], 1), 'mine' => $mine];
+    } catch (Throwable $e) { return ['count' => 0, 'avg' => 0.0, 'mine' => 0]; }
 }
 /** Composition de départ (widgets par défaut) pour un compte sans Home. Ne touche pas aux Homes existantes. */
 function home_init_default(int $uid): void {

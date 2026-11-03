@@ -231,9 +231,10 @@ function hw_box(string $title, string $body, int $w = 280, string $hc = 'b', str
 function home_widget_width(string $type, string $resource = ''): int {
     switch ($type) {
         case 'widget_profile':   return 210;
+        case 'widget_rating':    return 210;
         case 'widget_friends':   return 300;
-        case 'widget_badges':    return 280;
-        case 'widget_rooms':     return 240;
+        case 'widget_badges':    return 300;
+        case 'widget_rooms':     return 300;
         case 'widget_guestbook': return 330;
         case 'widget_notes':     return 240;
         case 'sticker':
@@ -319,13 +320,13 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                 }
                 $b .= '</div>';
             }
-            return hw_box('Mes badges', $b, 280, 'o', $skin);
+            return hw_box('Mes badges', $b, 300, 'o', $skin);
         case 'widget_rooms':
             try { $st = db()->prepare('SELECT id,name FROM rooms WHERE owner_id=? ORDER BY id LIMIT 12'); $st->execute([(string)$oid]); $rm = $st->fetchAll(); }
             catch (Throwable $e) { $rm = []; }
             if (!$rm) $b = '<p class="muted" style="font-size:10px">Aucun appartement.</p>';
             else { $b = ''; foreach ($rm as $r) $b .= '<div style="padding:3px 0;border-bottom:1px dotted #e0e0e0;font-size:11px">🚪 ' . h((string)$r['name']) . '</div>'; }
-            return hw_box('Mes apparts', $b, 240, 'p', $skin);
+            return hw_box('Mes apparts', $b, 300, 'p', $skin);
         case 'widget_guestbook':
             if ($ctx === 'edit') return hw_box('Livre d\'or', '<p class="muted" style="font-size:10px">Les messages des visiteurs s\'afficheront ici.</p>', 330, 'y', $skin);
             $viewer = me(); $isOwner = $viewer && (int)$viewer['id'] === $oid;
@@ -364,6 +365,28 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             return '<a name="gb"></a>' . hw_box('Livre d\'or (' . $total . ')', $b, 330, 'y', $skin);
         case 'widget_notes':
             return hw_box('Pense-bête', '<div style="font-size:11px;white-space:pre-wrap">' . h($content) . '</div>', 240, 'y', $skin);
+        case 'widget_rating':
+            $viewer = me(); $isOwner = $viewer && (int)$viewer['id'] === $oid;
+            $sum = home_rating_summary($oid, $viewer ? (int)$viewer['id'] : 0);
+            $full = (int)round($sum['avg']);
+            $stars = '';
+            for ($i = 1; $i <= 5; $i++) $stars .= '<span style="color:' . ($i <= $full ? '#f2b705' : '#ccc') . '">★</span>';
+            $b = '<div style="text-align:center">'
+               . '<div style="font-size:19px;line-height:1">' . $stars . '</div>'
+               . '<div style="font-size:10px;color:#5a6672;margin-top:3px">' . ($sum['count'] > 0 ? h(number_format($sum['avg'], 1, ',', '')) . '/5 · ' . $sum['count'] . ' vote' . ($sum['count'] > 1 ? 's' : '') : 'Aucun vote') . '</div>';
+            if ($viewer && !$isOwner && $ctx === 'view') {
+                $b .= '<form method="post" action="?p=home_rate" style="margin-top:6px">'
+                    . '<input type="hidden" name="csrf" value="' . h(csrf()) . '"><input type="hidden" name="owner_id" value="' . $oid . '"><input type="hidden" name="owner_name" value="' . h((string)$owner['username']) . '">'
+                    . '<div style="line-height:1">';
+                for ($i = 1; $i <= 5; $i++) $b .= '<button type="submit" name="stars" value="' . $i . '" title="' . $i . ' étoile' . ($i > 1 ? 's' : '') . '" style="border:0;background:none;cursor:pointer;color:' . ($i <= $sum['mine'] ? '#f2b705' : '#bbb') . ';font-size:19px;padding:0 1px">★</button>';
+                $b .= '</div><div style="font-size:9px;color:#8a97a3;margin-top:1px">' . ($sum['mine'] > 0 ? 'Ta note : ' . $sum['mine'] . '/5 (clique pour changer)' : 'Note cette Home') . '</div></form>';
+            } elseif (!$viewer && $ctx === 'view') {
+                $b .= '<div style="font-size:9px;margin-top:5px"><a href="?p=register">Connecte-toi</a> pour noter.</div>';
+            } elseif ($isOwner) {
+                $b .= '<div style="font-size:9px;color:#8a97a3;margin-top:5px">Les visiteurs peuvent noter ta Home.</div>';
+            }
+            $b .= '</div>';
+            return hw_box('Ma note', $b, 210, 'o', $skin);
         default:
             return hw_box('Widget', '<p class="muted" style="font-size:10px">Widget inconnu.</p>', 200, 'b', $skin);
     }
@@ -1150,6 +1173,22 @@ if ($p === 'home_sign') {
     } catch (Throwable $e) {}
     redirect($back . '&done=signed#gb');
 }
+/* ---- My Rating : noter la Home d'un joueur (1-5 étoiles, 1 vote par visiteur, modifiable) ---- */
+if ($p === 'home_rate') {
+    $u = me();
+    $back = '?p=home/' . rawurlencode(trim((string)($_POST['owner_name'] ?? '')));
+    if (!$u) redirect($back . '&need=login');
+    if (!csrf_ok()) redirect($back);
+    $ownerId = (int)($_POST['owner_id'] ?? 0);
+    $stars = (int)($_POST['stars'] ?? 0);
+    if ($ownerId <= 0 || $ownerId === (int)$u['id'] || $stars < 1 || $stars > 5) redirect($back);
+    ensure_home();
+    try {
+        db()->prepare('INSERT INTO home_ratings (owner_id,voter_id,stars) VALUES (?,?,?) ON DUPLICATE KEY UPDATE stars=VALUES(stars), created_at=CURRENT_TIMESTAMP')
+            ->execute([$ownerId, (int)$u['id'], $stars]);
+    } catch (Throwable $e) {}
+    redirect($back . '&done=rated');
+}
 /* ---- Supprimer un message du livre d'or (propriétaire de la Home, ou staff) ---- */
 if ($p === 'home_gb_delete') {
     $u = me();
@@ -1236,7 +1275,7 @@ if ($p === 'home_save') {
     $bg = (string)($data['background'] ?? '');
     if ($bg !== '' && !home_asset_ok('bg', $bg)) $bg = '';
     else $bg = $bg === '' ? '' : basename($bg);
-    $allowed = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'sticker'];
+    $allowed = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'widget_rating', 'sticker'];
     $skins = home_skins();
     $rows = [];
     foreach ((array)($data['items'] ?? []) as $it) {
@@ -1290,7 +1329,7 @@ if ($p === 'home_restore') {
     $items = json_decode((string)$snap['items_json'], true); if (!is_array($items)) $items = [];
     // Re-validation des assets (une ressource de la version peut avoir été bannie depuis) — mêmes règles que home_save.
     $bg = (string)$snap['background']; $bg = ($bg !== '' && home_asset_ok('bg', $bg)) ? basename($bg) : '';
-    $allowed = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'sticker'];
+    $allowed = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'widget_rating', 'sticker'];
     $skins = home_skins();
     $rows = [];
     foreach ($items as $it) {
@@ -1328,10 +1367,10 @@ if ($p === 'home_edit') {
     $locked = (int)($home['edit_locked'] ?? 0) === 1;
     $items = home_items($oid);
     // Pré-rendu des widgets (vraies données du propriétaire) pour l'ajout en direct
-    $types = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes'];
+    $types = ['widget_profile', 'widget_friends', 'widget_badges', 'widget_rooms', 'widget_guestbook', 'widget_notes', 'widget_rating'];
     $wmap = [];
     foreach ($types as $t) $wmap[$t] = home_widget_html($t, $owner, $oid, '', $t === 'widget_notes' ? '{{NOTES}}' : '', 'edit');
-    $labels = ['widget_profile' => 'Profil', 'widget_friends' => 'Mes amis', 'widget_badges' => 'Mes badges', 'widget_rooms' => 'Mes apparts', 'widget_guestbook' => 'Livre d\'or', 'widget_notes' => 'Pense-bête'];
+    $labels = ['widget_profile' => 'Profil', 'widget_friends' => 'Mes amis', 'widget_badges' => 'Mes badges', 'widget_rooms' => 'Mes apparts', 'widget_guestbook' => 'Livre d\'or', 'widget_notes' => 'Pense-bête', 'widget_rating' => 'Ma note'];
     $jsItems = [];
     foreach ($items as $it) $jsItems[] = ['type' => $it['type'], 'resource' => (string)$it['resource'], 'x' => (int)$it['x'], 'y' => (int)$it['y'], 'z' => (int)$it['z'], 'content' => (string)($it['content'] ?? ''), 'style' => (string)($it['style'] ?? '')];
     $snapshots = home_snapshots_list($oid); // H02 : versions restaurables
@@ -1516,7 +1555,7 @@ if (strpos($p, 'home/') === 0) {
     if ((int)($home['hidden'] ?? 0) === 1) echo '<div class="hist-note">🚫 <b>Cette Home est actuellement masquée par la modération.</b> ' . ($isOwner ? 'Elle n\'est pas visible par les autres joueurs.' : 'Visible uniquement par toi (staff) et son propriétaire.') . '</div>';
     if ($isOwner && (int)($home['edit_locked'] ?? 0) === 1) echo '<div class="hist-note">🔒 <b>L\'édition de ta Home est temporairement bloquée par la modération.</b></div>';
     // Message de confirmation
-    $flash = ['signed' => '✅ Merci, ton message a été ajouté au livre d\'or !', 'slow' => '⏳ Patiente un peu avant de re-signer ce livre d\'or.', 'reported' => '✅ Merci, ton signalement a été transmis à la modération.', 'gbdel' => '🗑️ Message supprimé.', 'needreason' => '⚠️ Choisis un motif pour envoyer le signalement.', 'friend' => '✅ Ajouté à tes amis !', 'friendreq' => '✅ Demande d\'ami envoyée ! Elle apparaîtra dans sa console (il doit l\'accepter).', 'already' => 'ℹ️ Vous êtes déjà amis.', 'pending' => '⏳ Une demande est déjà en attente.', 'norequests' => 'ℹ️ Ce joueur n\'accepte pas les demandes d\'ami.'];
+    $flash = ['signed' => '✅ Merci, ton message a été ajouté au livre d\'or !', 'slow' => '⏳ Patiente un peu avant de re-signer ce livre d\'or.', 'reported' => '✅ Merci, ton signalement a été transmis à la modération.', 'gbdel' => '🗑️ Message supprimé.', 'rated' => '⭐ Merci, ta note a été enregistrée !', 'needreason' => '⚠️ Choisis un motif pour envoyer le signalement.', 'friend' => '✅ Ajouté à tes amis !', 'friendreq' => '✅ Demande d\'ami envoyée ! Elle apparaîtra dans sa console (il doit l\'accepter).', 'already' => 'ℹ️ Vous êtes déjà amis.', 'pending' => '⏳ Une demande est déjà en attente.', 'norequests' => 'ℹ️ Ce joueur n\'accepte pas les demandes d\'ami.'];
     $done = (string)($_GET['done'] ?? '');
     if (isset($flash[$done])) echo '<div class="hist-note" style="background:#e7f6ea;border-color:#9ed3ad;color:#1c5a2e">' . h($flash[$done]) . '</div>';
     if (($_GET['need'] ?? '') === 'login') echo '<div class="hist-note">🔑 Connecte-toi pour effectuer cette action. <a href="?p=register">Se connecter / s\'inscrire</a></div>';
