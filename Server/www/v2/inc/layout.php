@@ -212,7 +212,7 @@ function tabmenu_html(?string $err): string {
           <a href="?p=home/<?= h(rawurlencode((string)$u['username'])) ?>">Voir ma Habbo Home</a>
           <a href="?p=messages">Mes messages<?php $nm = function_exists('unread_msgs') ? unread_msgs((int)$u['id']) : 0; if ($nm > 0): ?> <span title="<?= (int)$nm ?> non lu<?= $nm > 1 ? 's' : '' ?>" style="display:inline-block;min-width:16px;height:16px;line-height:16px;padding:0 4px;margin-left:3px;background:#e5820c;color:#fff;font-size:10px;font-weight:bold;text-align:center;border-radius:8px;vertical-align:middle"><?= (int)$nm ?></span><?php endif; ?></a>
           <a href="?p=me">Modifier mes paramètres</a>
-          <?php if ($isAdmin): ?><a href="/admin/" class="mh-admin">Administration</a><?php endif; ?>
+          <?php if ($isAdmin): ?><a href="/admin/" class="mh-admin" target="_blank" rel="noopener">Administration</a><?php endif; ?>
         </div>
       </div>
     <?php else: ?>

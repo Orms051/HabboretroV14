@@ -4363,7 +4363,7 @@ function page_user(): void {
     page_title('👤 ' . $uname, 'Fiche complète du joueur · ID ' . $id);
     // ===== Bandeau joueur (gauche: identité · centre: état/mission/activité · droite: actions) =====
     echo '<div class="ubanner">';
-    echo '<div class="ub-id"><img class="ub-av" src="/avatar.php?user=' . h(rawurlencode($uname)) . '&size=b&v=2" alt="Avatar de ' . h($uname) . '" width="58" height="100" loading="lazy"><div><div class="ub-name">' . h($uname) . '</div><div class="muted sm">ID #' . $id . '</div></div></div>';
+    echo '<div class="ub-id"><img class="ub-av" src="/avatar.php?user=' . h(rawurlencode($uname)) . '&size=b&v=2" alt="Avatar de ' . h($uname) . '" width="74" height="128" loading="lazy"><div><div class="ub-name">' . h($uname) . '</div><div class="muted sm">ID #' . $id . '</div></div></div>';
     echo '<div class="ub-meta">' . rank_badge((int)$u['rank']) . ' ' . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">Compte actif</span>')
        . '<div class="muted sm" style="margin-top:6px">Mission : <b>' . h($u['motto'] !== '' ? $u['motto'] : '—') . '</b></div>'
        . '<div class="muted sm">Dernière activité : ' . h($seen) . ' · Club : ' . ($hcActive ? h($hc) : 'non membre') . '</div></div>';
@@ -4646,7 +4646,7 @@ function page_users(): void {
         $seen = (int)$u['last_online'] > 0 ? date('d/m/Y H:i', (int)$u['last_online']) : '<span class="muted">jamais</span>';
         $isBan = isset($bans[(int)$u['id']]);
         echo '<tr>
-            <td class="muted">' . (int)$u['id'] . '</td><td><div style="display:flex;align-items:center;gap:8px"><span style="flex:0 0 auto;width:28px;height:34px;overflow:hidden;background:#f3eecf;border:1px solid #d8cfa6;border-radius:3px;display:flex;justify-content:center"><img src="/avatar.php?user=' . h(rawurlencode((string)$u['username'])) . '&size=s&head=1&v=2" alt="" width="32" height="55" loading="lazy" style="image-rendering:pixelated;image-rendering:crisp-edges"></span><span><a class="ulink" href="?p=user&id=' . (int)$u['id'] . '">' . h($u['username']) . '</a><div class="muted sm">' . h($u['motto']) . '</div></span></div></td>
+            <td class="muted">' . (int)$u['id'] . '</td><td><div style="display:flex;align-items:center;gap:8px"><span style="flex:0 0 auto;width:46px;height:48px;overflow:hidden;display:flex;justify-content:center;align-items:flex-start"><img src="/avatar.php?user=' . h(rawurlencode((string)$u['username'])) . '&size=s&head=1&v=2" alt="" width="50" height="86" loading="lazy" style="image-rendering:pixelated;image-rendering:crisp-edges"></span><span><a class="ulink" href="?p=user&id=' . (int)$u['id'] . '">' . h($u['username']) . '</a><div class="muted sm">' . h($u['motto']) . '</div></span></div></td>
             <td>' . rank_badge((int)$u['rank']) . '</td><td>' . (int)$u['credits'] . '</td><td>' . badge_preview(array_merge($rb, $ub)) . '</td>
             <td>' . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">OK</span>') . '</td>
             <td style="text-align:right"><button class="mini ghost" onclick="tgl(\'ue' . (int)$u['id'] . '\')">Éditer</button>
@@ -6550,7 +6550,7 @@ body.sb-collapsed .side .brand::after{content:'H';font-size:18px}
 .ubanner{display:flex;align-items:center;gap:18px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:14px 18px;margin:-6px 0 14px}
 .ubanner>*+*{margin-left:18px}
 .ub-id{display:flex;align-items:center;gap:12px}.ub-id>*+*{margin-left:12px}
-.ub-av{image-rendering:pixelated;background:#f3eecf;border:1px solid #d8cfa6;border-radius:6px;vertical-align:bottom}
+.ub-av{image-rendering:pixelated;vertical-align:bottom}
 .ub-name{font-size:19px;font-weight:800}
 .ub-meta{flex:1;min-width:200px}
 .ub-act{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ub-act>*+*{margin-left:8px}
