@@ -226,6 +226,23 @@ function hw_box(string $title, string $body, int $w = 280, string $hc = 'b', str
         . '<div class="widget-content"><div class="widget-body">' . $body . '</div></div>'
         . '</div>';
 }
+/* Largeur extérieure réelle d'un widget (= le $w passé à hw_box). Sert à borner la position
+   pour qu'aucun widget ne soit coupé à droite du canevas (928px, overflow:hidden). */
+function home_widget_width(string $type, string $resource = ''): int {
+    switch ($type) {
+        case 'widget_profile':   return 210;
+        case 'widget_friends':   return 300;
+        case 'widget_badges':    return 280;
+        case 'widget_rooms':     return 240;
+        case 'widget_guestbook': return 330;
+        case 'widget_notes':     return 240;
+        case 'sticker':
+            $f = basename($resource);
+            if ($f !== '') { $sp = dirname(__DIR__) . '/c_images/myhabbo/stickers/' . $f; if (is_file($sp)) { $s = @getimagesize($sp); if ($s && (int)$s[0] > 0) return (int)$s[0]; } }
+            return 100;
+        default: return 200;
+    }
+}
 function home_report_form(string $type, int $tid): string {
     $reasons = ['Contenu choquant', 'Insultes / harcèlement', 'Spam / publicité', 'Usurpation d\'identité', 'Autre'];
     $h = '<form method="post" action="?p=home_report" style="margin-top:6px;background:#fff;border:1px solid #e0c0c6;border-radius:4px;padding:8px;max-width:420px">'
@@ -310,7 +327,7 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             else { $b = ''; foreach ($rm as $r) $b .= '<div style="padding:3px 0;border-bottom:1px dotted #e0e0e0;font-size:11px">🚪 ' . h((string)$r['name']) . '</div>'; }
             return hw_box('Mes apparts', $b, 240, 'p', $skin);
         case 'widget_guestbook':
-            if ($ctx === 'edit') return hw_box('Livre d\'or', '<p class="muted" style="font-size:10px">Les messages des visiteurs s\'afficheront ici.</p>', 320, 'y', $skin);
+            if ($ctx === 'edit') return hw_box('Livre d\'or', '<p class="muted" style="font-size:10px">Les messages des visiteurs s\'afficheront ici.</p>', 330, 'y', $skin);
             $viewer = me(); $isOwner = $viewer && (int)$viewer['id'] === $oid;
             $per = 6; $page = max(0, (int)($_GET['gbp'] ?? 0));
             $total = home_guestbook_count($oid);
@@ -1227,7 +1244,7 @@ if ($p === 'home_save') {
         if (!in_array($type, $allowed, true)) continue;
         $res = '';
         if ($type === 'sticker') { $res = basename((string)($it['resource'] ?? '')); if (!home_asset_ok('sticker', $res)) continue; }
-        $x = max(0, min(920, (int)($it['x'] ?? 0)));
+        $x = max(0, min(928 - home_widget_width($type, $res), (int)($it['x'] ?? 0)));
         $y = max(0, min(1360, (int)($it['y'] ?? 0)));
         $z = max(0, min(999, (int)($it['z'] ?? 1)));
         $style = (string)($it['style'] ?? '');
@@ -1281,7 +1298,7 @@ if ($p === 'home_restore') {
         if (!in_array($type, $allowed, true)) continue;
         $res = '';
         if ($type === 'sticker') { $res = basename((string)($it['resource'] ?? '')); if (!home_asset_ok('sticker', $res)) continue; }
-        $x = max(0, min(920, (int)($it['x'] ?? 0))); $y = max(0, min(1360, (int)($it['y'] ?? 0))); $z = max(0, min(999, (int)($it['z'] ?? 1)));
+        $x = max(0, min(928 - home_widget_width($type, $res), (int)($it['x'] ?? 0))); $y = max(0, min(1360, (int)($it['y'] ?? 0))); $z = max(0, min(999, (int)($it['z'] ?? 1)));
         $style = (string)($it['style'] ?? ''); if ($type === 'sticker' || !isset($skins[$style]) || !home_asset_ok('skin', $style)) $style = '';
         $content = $type === 'widget_notes' ? mb_substr(trim(strip_tags((string)($it['content'] ?? ''))), 0, 600) : null;
         $rows[] = [$type, $res, $x, $y, $z, $content, $style];
@@ -1343,7 +1360,7 @@ if ($p === 'home_edit') {
       <a class="new-button" href="#" onclick="return heCancel()"><b>Annuler</b><i></i></a>
       <a class="new-button" href="?p=home/<?= h(rawurlencode((string)$owner['username'])) ?>"><b>Voir ↗</b><i></i></a>
     </div>
-    <div id="hedit-canvas" style="position:relative;width:928px;max-width:100%;height:<?= $ech ?>px;border:1px solid #06252b;background:#c9dbe6;overflow:hidden;user-select:none"></div>
+    <div id="hedit-canvas" style="position:relative;width:928px;margin-left:-6px;margin-right:-6px;height:<?= $ech ?>px;border:1px solid #06252b;background:#c9dbe6;overflow:hidden;user-select:none"></div>
 
     <!-- Palette -->
     <div id="hepal" style="display:none;position:fixed;left:50%;top:90px;transform:translateX(-50%);width:420px;max-width:92vw;max-height:72vh;overflow:auto;background:#fff;border:2px solid #06252b;border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,.4);z-index:9999;padding:10px">
@@ -1528,9 +1545,10 @@ if (strpos($p, 'home/') === 0) {
     foreach ($items as $it) $ch = max($ch, (int)$it['y'] + 200);
     if ($hasBg) { $sz = @getimagesize(home_asset_dir('bg') . '/' . basename((string)$home['background'])); if ($sz && $sz[1] > 0) $ch = max($ch, (int)$sz[1]); }
     $ch = min($ch, 1360);
-    echo '<div class="homecanvas" style="position:relative;width:928px;max-width:100%;height:' . $ch . 'px;border:1px solid #06252b;background:#c9dbe6' . $bgCss . ';overflow:hidden">';
+    echo '<div class="homecanvas" style="position:relative;width:928px;margin-left:-6px;margin-right:-6px;height:' . $ch . 'px;border:1px solid #06252b;background:#c9dbe6' . $bgCss . ';overflow:hidden">';
     foreach ($items as $it) {
-        $x = (int)$it['x']; $y = (int)$it['y']; $z = (int)$it['z'];
+        $ww = home_widget_width((string)$it['type'], (string)($it['resource'] ?? ''));
+        $x = max(0, min(928 - $ww, (int)$it['x'])); $y = max(0, (int)$it['y']); $z = (int)$it['z'];
         echo '<div style="position:absolute;left:' . $x . 'px;top:' . $y . 'px;z-index:' . $z . '">';
         echo home_widget_html((string)$it['type'], $owner, $oid, (string)($it['resource'] ?? ''), (string)($it['content'] ?? ''), 'view', (string)($it['style'] ?? ''));
         echo '</div>';
