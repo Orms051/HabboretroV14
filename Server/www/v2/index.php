@@ -176,9 +176,11 @@ function home_css(): string {
 .hw.w_skin_hc_machineskin div.widget-content{background:url(' . $S . '/Skin_HCmachine_btmR.png) no-repeat bottom right;padding:0 46px 31px 0;color:#fff}
 .hw.w_skin_hc_machineskin div.widget-content a{color:#8fe84a}
 .hw.w_skin_hc_machineskin div.widget-body{background:url(' . $S . '/Skin_HCmachine_btmL.png) no-repeat bottom left;padding-left:49px}
-.hw.w_skin_hc_machineskin div.widget-headline{background:url(' . $S . '/Skin_HCmachine_topRh.png) no-repeat top right;height:42px}
-.hw.w_skin_hc_machineskin div.widget-corner{background:url(' . $S . '/Skin_HCmachine_topLh.png) no-repeat top left;padding-left:61px;height:42px}
-.hw.w_skin_hc_machineskin div.widget-headline h3{text-align:center;font-size:11px;position:relative;top:3px;color:#fff;padding-top:6px;margin:2px 61px 0 0}
+/* Coins du HAUT = mêmes embouts de barillet PROPRES que le bas (images btm retournées
+   verticalement via scaleY(-1)), au lieu des coudes de tuyaux dorés qui dépassaient. */
+.hw.w_skin_hc_machineskin div.widget-headline{background:url(' . $S . '/Skin_HCmachine_btmR.png) no-repeat bottom right;height:42px;transform:scaleY(-1)}
+.hw.w_skin_hc_machineskin div.widget-corner{background:url(' . $S . '/Skin_HCmachine_btmL.png) no-repeat bottom left;padding-left:49px;height:42px}
+.hw.w_skin_hc_machineskin div.widget-headline h3{transform:scaleY(-1);text-align:center;font-size:11px;color:#fff;padding-top:14px;margin:0 49px 0 0}
 /* notepad */
 .hw.w_skin_notepadskin div.widget-content{background:url(' . $S . '/Skin_Notepad_btmR.png) no-repeat bottom right;padding:2px 7px 18px 2px;color:#000}
 .hw.w_skin_notepadskin div.widget-body{background:url(' . $S . '/Skin_Notepad_btmL.png) no-repeat bottom left;padding-left:27px}
