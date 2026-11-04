@@ -147,17 +147,35 @@ function home_skin_class(string $key): string {
     $m = ['habbohomes' => 'w_skin_defaultskin', 'metal' => 'w_skin_metalskin', 'hcmachine' => 'w_skin_hc_machineskin', 'notepad' => 'w_skin_notepadskin', 'speechbubble' => 'w_skin_speechbubbleskin', 'stickienote' => 'w_skin_noteitskin'];
     return $m[$key] ?? 'w_skin_defaultskin';
 }
-/** Position par défaut des titres de widgets (réglable en admin → Gestion du Site › Titres des widgets Home).
- *  skin (classe CSS) => [libellé, line-height (vertical : plus petit = plus haut), left (horizontal)]. */
+/** Position/taille par défaut des titres de widgets (réglable en admin → Gestion du Site › Réglages Home).
+ *  skin (classe CSS) => [libellé, line-height (vertical : + petit = + haut), left (horizontal), font-size (px)]. */
 function home_title_cfg(): array {
     return [
-        'defaultskin'      => ['Profil / Ma note (cadre jaune)', 34, -33],
-        'metalskin'        => ['Métal (Mes amis, Pense-bête)', 21, 0],
-        'hc_machineskin'   => ['HC (Mes apparts, bandeau vert)', 28, 0],
-        'notepadskin'      => ['Bloc-notes (Mes badges, Traxplayer)', 29, 2],
-        'noteitskin'       => ['Note bleue / post-it (Livre d\'or)', 30, 8],
-        'speechbubbleskin' => ['Bulle (speechbubble)', 12, -4],
+        'defaultskin'      => ['Profil / Ma note (cadre jaune)', 34, -33, 10],
+        'metalskin'        => ['Métal (Mes amis, Pense-bête)', 21, 0, 10],
+        'hc_machineskin'   => ['HC (Mes apparts, bandeau vert)', 28, 0, 11],
+        'notepadskin'      => ['Bloc-notes (Mes badges, Traxplayer)', 29, 2, 12],
+        'noteitskin'       => ['Note bleue / post-it (Livre d\'or)', 30, 8, 11],
+        'speechbubbleskin' => ['Bulle (speechbubble)', 12, -4, 13],
     ];
+}
+/** Largeur par défaut de chaque type de widget Home. type => [libellé, largeur px]. */
+function home_widget_cfg(): array {
+    return [
+        'widget_profile'   => ['Profil', 210],
+        'widget_friends'   => ['Mes amis', 300],
+        'widget_badges'    => ['Mes badges', 300],
+        'widget_rooms'     => ['Mes apparts', 300],
+        'widget_guestbook' => ['Livre d\'or', 330],
+        'widget_notes'     => ['Pense-bête', 240],
+        'widget_rating'    => ['Ma note', 210],
+        'widget_trax'      => ['Traxplayer', 243],
+    ];
+}
+/** Largeur configurée d'un type de widget (repli = défaut de home_widget_cfg). */
+function hw_wd(string $type): int {
+    $cfg = home_widget_cfg(); $def = $cfg[$type][1] ?? 280;
+    return max(120, min(600, (int) setting_get('home.width.' . $type, (string) $def)));
 }
 function home_css(): string {
     // Vrais skins Habbo Home (images d'origine web-gallery/images/skins/), structure headline/corner + content/body.
@@ -232,10 +250,17 @@ function home_css(): string {
 ';
     /* Overrides position des titres — réglables depuis l'admin (Gestion du Site › Titres des widgets Home).
        Même sélecteur que les règles de base => s'applique par-dessus les valeurs par défaut. */
+    // Taille du texte (contenu) + agrandissement global des widgets
+    $ts = max(8, min(20, (int) setting_get('home.text.size', '11')));
+    $sc = max(60, min(180, (int) setting_get('home.scale', '100')));
+    $css .= '.hw{font-size:' . $ts . 'px}';
+    if ($sc !== 100) $css .= '.hw{transform:scale(' . number_format($sc / 100, 3, '.', '') . ');transform-origin:top left}';
+    // Titres : position (vertical/horizontal) + taille, par skin
     foreach (home_title_cfg() as $skin => $d) {
         $lh = max(6, min(60, (int) setting_get('home.title.' . $skin . '.lh', (string) $d[1])));
         $lf = max(-80, min(80, (int) setting_get('home.title.' . $skin . '.left', (string) $d[2])));
-        $css .= '.hw.w_skin_' . $skin . ' div.widget-headline h3{position:relative;line-height:' . $lh . 'px;left:' . $lf . 'px}';
+        $fs = max(7, min(28, (int) setting_get('home.title.' . $skin . '.fs', (string) $d[3])));
+        $css .= '.hw.w_skin_' . $skin . ' div.widget-headline h3{position:relative;line-height:' . $lh . 'px;left:' . $lf . 'px;font-size:' . $fs . 'px}';
     }
     return $css . '</style>';
 }
@@ -375,7 +400,7 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                 }
             }
             $b .= '<div class="profile-tags"><div class="pt-band">Aucun tag.</div></div>';
-            return hw_box('Profil', $b, 210, 'b', $skin);
+            return hw_box('Profil', $b, hw_wd('widget_profile'), 'b', $skin);
         case 'widget_friends':
             $rows = [];
             try { $st = db()->prepare('SELECT CASE WHEN from_id=? THEN to_id ELSE from_id END AS fid FROM messenger_friends WHERE from_id=? OR to_id=? LIMIT 30'); $st->execute([$oid, $oid, $oid]); $ids = array_column($st->fetchAll(), 'fid'); }
@@ -383,7 +408,7 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             if ($ids) { $in = implode(',', array_map('intval', array_slice($ids, 0, 18))); try { $rows = db()->query('SELECT username,sex FROM users WHERE id IN (' . $in . ')')->fetchAll(); } catch (Throwable $e) {} }
             if (!$rows) $b = '<p class="muted" style="font-size:10px">Aucun ami pour le moment.</p>';
             else { $b = '<div style="display:flex;flex-wrap:wrap">'; foreach ($rows as $r) $b .= '<a href="?p=home/' . h(rawurlencode((string)$r['username'])) . '" title="' . h((string)$r['username']) . '" style="width:46px;text-align:center;margin:0 3px 6px 0;font-size:8px;color:#30384a;text-decoration:none"><span style="display:block;margin:0 auto 2px">' . avatar_tag((string)$r['username'], ['head' => true, 'alt' => (string)$r['username']]) . '</span>' . h(mb_strimwidth((string)$r['username'], 0, 7, '…')) . '</a>'; $b .= '</div>'; }
-            return hw_box('Mes amis', $b, 300, 'g', $skin);
+            return hw_box('Mes amis', $b, hw_wd('widget_friends'), 'g', $skin);
         case 'widget_badges':
             try { $st = db()->prepare('SELECT badge FROM users_badges WHERE user_id=? LIMIT 24'); $st->execute([$oid]); $bd = array_column($st->fetchAll(), 'badge'); }
             catch (Throwable $e) { $bd = []; }
@@ -398,15 +423,15 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                 }
                 $b .= '</div>';
             }
-            return hw_box('Mes badges', $b, 300, 'o', $skin);
+            return hw_box('Mes badges', $b, hw_wd('widget_badges'), 'o', $skin);
         case 'widget_rooms':
             try { $st = db()->prepare('SELECT id,name FROM rooms WHERE owner_id=? ORDER BY id LIMIT 12'); $st->execute([(string)$oid]); $rm = $st->fetchAll(); }
             catch (Throwable $e) { $rm = []; }
             if (!$rm) $b = '<p class="muted" style="font-size:10px">Aucun appartement.</p>';
             else { $b = ''; foreach ($rm as $r) $b .= '<div style="padding:3px 0;border-bottom:1px dotted #e0e0e0;font-size:11px">🚪 ' . h((string)$r['name']) . '</div>'; }
-            return hw_box('Mes apparts', $b, 300, 'p', $skin);
+            return hw_box('Mes apparts', $b, hw_wd('widget_rooms'), 'p', $skin);
         case 'widget_guestbook':
-            if ($ctx === 'edit') return hw_box('Livre d\'or', '<p class="muted" style="font-size:10px">Les messages des visiteurs s\'afficheront ici.</p>', 330, 'y', $skin);
+            if ($ctx === 'edit') return hw_box('Livre d\'or', '<p class="muted" style="font-size:10px">Les messages des visiteurs s\'afficheront ici.</p>', hw_wd('widget_guestbook'), 'y', $skin);
             $viewer = me(); $isOwner = $viewer && (int)$viewer['id'] === $oid;
             $per = 6; $page = max(0, (int)($_GET['gbp'] ?? 0));
             $total = home_guestbook_count($oid);
@@ -440,9 +465,9 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                     $b .= $nav . '</div>';
                 }
             }
-            return '<a name="gb"></a>' . hw_box('Livre d\'or (' . $total . ')', $b, 330, 'y', $skin);
+            return '<a name="gb"></a>' . hw_box('Livre d\'or (' . $total . ')', $b, hw_wd('widget_guestbook'), 'y', $skin);
         case 'widget_notes':
-            return hw_box('Pense-bête', '<div style="font-size:11px;white-space:pre-wrap">' . h($content) . '</div>', 240, 'y', $skin);
+            return hw_box('Pense-bête', '<div style="font-size:11px;white-space:pre-wrap">' . h($content) . '</div>', hw_wd('widget_notes'), 'y', $skin);
         case 'widget_rating':
             $viewer = me(); $isOwner = $viewer && (int)$viewer['id'] === $oid;
             $sum = home_rating_summary($oid, $viewer ? (int)$viewer['id'] : 0);
@@ -464,11 +489,11 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                 $b .= '<div style="font-size:9px;color:#8a97a3;margin-top:5px">Les visiteurs peuvent noter ta Home.</div>';
             }
             $b .= '</div>';
-            return hw_box('Ma note', $b, 210, 'o', $skin);
+            return hw_box('Ma note', $b, hw_wd('widget_rating'), 'o', $skin);
         case 'widget_trax':
             $songs = home_trax_songs($oid);
             if (!$songs) {
-                return hw_box('Traxplayer', '<p class="muted" style="font-size:10px">Aucun morceau Trax enregistré.</p>', 243, 'b', $skin);
+                return hw_box('Traxplayer', '<p class="muted" style="font-size:10px">Aucun morceau Trax enregistré.</p>', hw_wd('widget_trax'), 'b', $skin);
             }
             $sg = $songs[0]; // le Traxplayer de la Home joue le morceau le plus récent du joueur
             $title = trim((string)$sg['title']); if ($title === '') $title = 'Sans titre';
@@ -501,7 +526,7 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                . '</div>'
                . '<div style="font-size:9px;color:#8a97a3;margin-top:3px;clear:both">son de synthèse provisoire</div>';
             $b .= home_trax_js();
-            return hw_box('Traxplayer', $b, 243, 'b', $skin);
+            return hw_box('Traxplayer', $b, hw_wd('widget_trax'), 'b', $skin);
         default:
             return hw_box('Widget', '<p class="muted" style="font-size:10px">Widget inconnu.</p>', 200, 'b', $skin);
     }
