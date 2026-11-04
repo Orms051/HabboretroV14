@@ -163,14 +163,17 @@ function home_css(): string {
 /* default (HabboHomes) */
 .hw.w_skin_defaultskin div.widget-content{background:url(' . $S . '/Skin_HabboHomes_btmR.png) no-repeat bottom right;padding:4px 16px 19px 4px;color:#000}
 .hw.w_skin_defaultskin div.widget-body{background:url(' . $S . '/Skin_HabboHomes_btmL.png) no-repeat bottom left;padding-left:14px}
-.hw.w_skin_defaultskin div.widget-headline{background:url(' . $S . '/Skin_HabboHomes_topRh.png) no-repeat top right;height:41px}
-.hw.w_skin_defaultskin div.widget-corner{background:url(' . $S . '/Skin_HabboHomes_topLh.png) no-repeat top left;padding-left:41px;height:41px}
+/* La barre de titre (topRh) est bornée à la zone de contenu pour ne PAS peindre son
+   coin carré derrière l\'arrondi du coin (topLh) => le coin haut-gauche redevient arrondi
+   comme les 3 autres. (corner décalé de -padding pour garder titre + arrondi à x0.) */
+.hw.w_skin_defaultskin div.widget-headline{background:url(' . $S . '/Skin_HabboHomes_topRh.png) no-repeat top right;background-origin:content-box;background-clip:content-box;padding-left:41px;height:41px}
+.hw.w_skin_defaultskin div.widget-corner{background:url(' . $S . '/Skin_HabboHomes_topLh.png) no-repeat top left;margin-left:-41px;padding-left:41px;height:41px}
 .hw.w_skin_defaultskin div.widget-headline h3{text-align:left;font-size:11px;font-weight:normal;color:#fff;position:relative;padding-top:12px;left:-33px}
 /* metal */
 .hw.w_skin_metalskin div.widget-content{background:url(' . $S . '/Skin_Metal_btmR.png) no-repeat bottom right;padding:1px 26px 23px 7px;color:#000}
 .hw.w_skin_metalskin div.widget-body{background:url(' . $S . '/Skin_Metal_btmL.png) no-repeat bottom left;padding-left:22px}
-.hw.w_skin_metalskin div.widget-headline{background:url(' . $S . '/Skin_Metal_topRh.png) no-repeat top right;height:33px}
-.hw.w_skin_metalskin div.widget-corner{background:url(' . $S . '/Skin_Metal_topLh.png) no-repeat top left;padding-left:35px;height:33px}
+.hw.w_skin_metalskin div.widget-headline{background:url(' . $S . '/Skin_Metal_topRh.png) no-repeat top right;background-origin:content-box;background-clip:content-box;padding-left:35px;height:33px}
+.hw.w_skin_metalskin div.widget-corner{background:url(' . $S . '/Skin_Metal_topLh.png) no-repeat top left;margin-left:-35px;padding-left:35px;height:33px}
 .hw.w_skin_metalskin div.widget-headline h3{text-align:center;font-size:11px;position:relative;top:3px;color:#41404a;padding-top:4px;margin:2px 40px 0 0}
 /* HC machine */
 .hw.w_skin_hc_machineskin div.widget-content{background:url(' . $S . '/Skin_HCmachine_btmR.png) no-repeat bottom right;padding:0 46px 31px 0;color:#fff}
@@ -187,8 +190,8 @@ function home_css(): string {
 /* notepad */
 .hw.w_skin_notepadskin div.widget-content{background:url(' . $S . '/Skin_Notepad_btmR.png) no-repeat bottom right;padding:2px 7px 18px 2px;color:#000}
 .hw.w_skin_notepadskin div.widget-body{background:url(' . $S . '/Skin_Notepad_btmL.png) no-repeat bottom left;padding-left:27px}
-.hw.w_skin_notepadskin div.widget-headline{background:url(' . $S . '/Skin_Notepad_topRh.png) no-repeat top right;height:29px}
-.hw.w_skin_notepadskin div.widget-corner{background:url(' . $S . '/Skin_Notepad_topLh.png) no-repeat top left;padding-left:27px;height:29px}
+.hw.w_skin_notepadskin div.widget-headline{background:url(' . $S . '/Skin_Notepad_topRh.png) no-repeat top right;background-origin:content-box;background-clip:content-box;padding-left:27px;height:29px}
+.hw.w_skin_notepadskin div.widget-corner{background:url(' . $S . '/Skin_Notepad_topLh.png) no-repeat top left;margin-left:-27px;padding-left:27px;height:29px}
 .hw.w_skin_notepadskin div.widget-headline h3{text-align:left;font-size:12px;position:relative;padding-top:9px;left:-4px;color:#4c3a41}
 /* stickienote (noteit) */
 .hw.w_skin_noteitskin div.widget-content{background:url(' . $S . '/Skin_Stickienote_btmR.png) no-repeat bottom right;padding:7px 9px 30px 9px;color:#000}
@@ -199,8 +202,8 @@ function home_css(): string {
 /* speechbubble */
 .hw.w_skin_speechbubbleskin div.widget-content{background:url(' . $S . '/Skin_Speechbubble_btmR.png) no-repeat bottom right;padding:17px 10px 22px 0;color:#000}
 .hw.w_skin_speechbubbleskin div.widget-body{background:url(' . $S . '/Skin_Speechbubble_btmL.png) no-repeat bottom left;padding-left:10px}
-.hw.w_skin_speechbubbleskin div.widget-headline{background:url(' . $S . '/Skin_Speechbubble_topR.png) no-repeat top right;height:12px}
-.hw.w_skin_speechbubbleskin div.widget-corner{background:url(' . $S . '/Skin_Speechbubble_topL.png) no-repeat top left;padding-left:10px;height:12px}
+.hw.w_skin_speechbubbleskin div.widget-headline{background:url(' . $S . '/Skin_Speechbubble_topR.png) no-repeat top right;background-origin:content-box;background-clip:content-box;padding-left:10px;height:12px}
+.hw.w_skin_speechbubbleskin div.widget-corner{background:url(' . $S . '/Skin_Speechbubble_topL.png) no-repeat top left;margin-left:-10px;padding-left:10px;height:12px}
 .hw.w_skin_speechbubbleskin div.widget-headline h3{text-align:left;font-size:12px;position:relative;padding-top:2px;left:4px;color:#666}
 /* Contenu du ProfileWidget — dimensions/marges reprises de myhabbo.css d\'origine (infos à gauche, figure à droite) */
 .hw .profile-info{width:90px;float:left;font-size:11px;line-height:1.35}
