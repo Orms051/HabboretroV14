@@ -1525,7 +1525,21 @@ if ($p === 'home_edit') {
     function heBgUrl(f){return '/c_images/myhabbo/backgrounds2/'+encodeURIComponent(f);}
     function heStUrl(f){return '/c_images/myhabbo/stickers/'+encodeURIComponent(f);}
     function heMarkDirty(){HE.dirty=true;document.getElementById('hedit-dirty').style.display='inline-block';}
-    function heApplyBg(){var c=document.getElementById('hedit-canvas');c.style.background=HE.bg?('#c9dbe6 url('+heBgUrl(HE.bg)+') no-repeat top center'):'#c9dbe6';}
+    function heApplyBg(){
+      var c=document.getElementById('hedit-canvas');
+      if(!HE.bg){c.style.background='#c9dbe6';return;}
+      var url=heBgUrl(HE.bg);
+      // Par défaut : grand papier peint, centré en haut, sans répétition.
+      c.style.background='#c9dbe6 url('+url+') no-repeat top center';
+      // Si l'image est une petite tuile (<=256px), c'est un motif -> on le répète sur tout le canevas.
+      var im=new Image();
+      im.onload=function(){
+        if(HE.bg && heBgUrl(HE.bg)===url && im.naturalWidth<=256 && im.naturalHeight<=256){
+          c.style.background='#c9dbe6 url('+url+') repeat top left';
+        }
+      };
+      im.src=url;
+    }
     function heMaxZ(){var m=0;HE.items.forEach(function(it){if(it.z>m)m=it.z;});return m;}
     function heRender(){
       var c=document.getElementById('hedit-canvas');c.innerHTML='';heApplyBg();
@@ -1669,10 +1683,15 @@ if (strpos($p, 'home/') === 0) {
     // Canvas — hauteur selon le contenu (ou la hauteur réelle du fond), pas une valeur arbitraire
     echo home_css();
     $hasBg = (string)$home['background'] !== '' && home_asset_ok('bg', (string)$home['background']);
-    $bgCss = $hasBg ? ' url(' . home_asset_url('bg', (string)$home['background']) . ') no-repeat top center' : '';
+    // Fond : une petite image (<=256px) est une TUILE/motif -> repeat sur tout le canevas ;
+    // une grande image est un papier peint -> no-repeat, centré en haut.
+    $bgSz   = $hasBg ? @getimagesize(home_asset_dir('bg') . '/' . basename((string)$home['background'])) : false;
+    $bgTile = $bgSz && (int)$bgSz[0] > 0 && (int)$bgSz[0] <= 256 && (int)$bgSz[1] <= 256;
+    $bgCss  = $hasBg ? ' url(' . home_asset_url('bg', (string)$home['background']) . ') ' . ($bgTile ? 'repeat top left' : 'no-repeat top center') : '';
     $ch = 420;
     foreach ($items as $it) $ch = max($ch, (int)$it['y'] + 200);
-    if ($hasBg) { $sz = @getimagesize(home_asset_dir('bg') . '/' . basename((string)$home['background'])); if ($sz && $sz[1] > 0) $ch = max($ch, (int)$sz[1]); }
+    // Seul un grand papier peint impose une hauteur mini ; une tuile se répète, elle n'impose rien.
+    if ($bgSz && !$bgTile && (int)$bgSz[1] > 0) $ch = max($ch, (int)$bgSz[1]);
     $ch = min($ch, 1360);
     echo '<div class="homecanvas" style="position:relative;width:928px;max-width:100%;height:' . $ch . 'px;border:1px solid #06252b;background:#c9dbe6' . $bgCss . ';overflow:hidden">';
     foreach ($items as $it) {
