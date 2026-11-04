@@ -264,7 +264,7 @@ function home_trax_js(): string {
         return tr;}
       function fmt(s){var m=Math.floor(s/60),x=s%60;return m+":"+(x<10?"0":"")+x;}
       function setTime(){var p=P();if(!p)return;var t=p.querySelector(".time");if(t&&t.firstChild)t.firstChild.nodeValue=fmt(elapsed);}
-      function setVol(v){vol=v/100;var p=P();if(p){var f=p.querySelector(".volume-indicator-filled");if(f)f.style.width=((62/100)*v)+"px";}}
+      function setVol(v){vol=v/100;}
       function stop(){playing=false;if(stopT){clearTimeout(stopT);stopT=null;}clearInterval(tick);
         nodes.forEach(function(o){try{o.stop();}catch(e){}});nodes=[];elapsed=0;setTime();
         var p=P();if(p){var b=p.querySelector(".play-btn");if(b)b.classList.remove("playing");var a=p.querySelector(".music-activity");if(a)a.classList.remove("playing");}}
@@ -446,21 +446,30 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             $title = trim((string)$sg['title']); if ($title === '') $title = 'Sans titre';
             $len = (int)$sg['length'];
             $mmss = sprintf('%d:%02d', intdiv($len, 60), $len % 60);
-            $b = '<link rel="stylesheet" href="/web-gallery/v2/styles/webbanditten/traxplayer.css">'
-               // Correctif : superpose le curseur natif (transparent) sur la jauge de volume au lieu de l'empiler dessous.
-               . '<style>#trax-player .volumecontainer{height:9px}'
-               . '#trax-player .volume-indicator{position:absolute;top:0;left:0}'
-               . '#trax-player .volume{position:absolute;top:0;left:0;height:9px;background:transparent;z-index:2;margin:0;cursor:pointer}</style>'
+            // Traxplayer FIDÈLE : le chrome complet est l'image player.png (209x66) = écran LCD en haut,
+            // puis rangée bouton lecture / volume / égaliseur en bas. On superpose juste les éléments interactifs.
+            $b = '<style>'
+               . '#trax-player{position:relative;width:209px;height:66px;background:url(/web-gallery/images/traxplayer/player.png) no-repeat;font:10px Verdana,Arial,sans-serif;color:#2f3a22}'
+               . '#trax-player .tp-screen{position:absolute;left:9px;top:5px;width:191px;height:23px;overflow:hidden;line-height:11px}'
+               . '#trax-player .tp-screen .title{font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}'
+               . '#trax-player .tp-screen .author{color:#5a6a3a}'
+               . '#trax-player .tp-screen .time{position:absolute;right:2px;bottom:0;color:#2f3a22}'
+               . '#trax-player .tp-screen .time .length{color:#8a9a6a;padding-left:3px}'
+               . '#trax-player .play-btn{position:absolute;left:6px;top:38px;width:34px;height:23px;padding:0;border:0;background:transparent;cursor:pointer}'
+               . '#trax-player .volume{position:absolute;left:62px;top:45px;width:78px;height:11px;-webkit-appearance:none;appearance:none;background:transparent;outline:none;cursor:pointer;margin:0}'
+               . '#trax-player .volume::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:6px;height:11px;border:1px solid #3c4a28;border-radius:1px;background:#8aa15e;cursor:pointer}'
+               . '#trax-player .volume::-moz-range-thumb{width:6px;height:11px;border:1px solid #3c4a28;border-radius:1px;background:#8aa15e;cursor:pointer}'
+               . '#trax-player .music-activity{position:absolute;right:7px;top:40px;width:45px;height:20px;pointer-events:none}'
+               . '</style>'
                . '<div id="trax-player" data-trax="' . h((string)$sg['data']) . '">'
-               . '<div class="control"><button type="button" class="play-btn" title="Lecture / pause"></button></div>'
-               . '<div class="display"><div class="display-inner">'
+               . '<div class="tp-screen">'
                . '<div class="title">' . h($title) . '</div>'
                . '<div class="author">' . h((string)$owner['username']) . '</div>'
                . '<div class="time">0:00<span class="length">(' . $mmss . ')</span></div>'
+               . '</div>'
+               . '<button type="button" class="play-btn" title="Lecture / pause"></button>'
                . '<div class="music-activity"></div>'
-               . '</div></div>'
-               . '<div class="volumecontainer"><div class="volume-indicator"><div class="volume-indicator-filled"><div class="volume-indicator-filled-bg"></div></div></div>'
-               . '<input type="range" class="volume" min="0" max="100" value="50"></div>'
+               . '<input type="range" class="volume" min="0" max="100" value="50" title="Volume">'
                . '</div>'
                . '<div style="font-size:9px;color:#8a97a3;margin-top:3px;clear:both">son de synthèse provisoire</div>';
             $b .= home_trax_js();
