@@ -168,13 +168,13 @@ function home_css(): string {
    comme les 3 autres. (corner décalé de -padding pour garder titre + arrondi à x0.) */
 .hw.w_skin_defaultskin div.widget-headline{background:url(' . $S . '/Skin_HabboHomes_topRh.png) no-repeat top right;background-origin:content-box;background-clip:content-box;padding-left:41px;height:41px}
 .hw.w_skin_defaultskin div.widget-corner{background:url(' . $S . '/Skin_HabboHomes_topLh.png) no-repeat top left;margin-left:-41px;padding-left:41px;height:41px}
-.hw.w_skin_defaultskin div.widget-headline h3{text-align:left;font-size:x-small;font-weight:normal;color:#fff;vertical-align:bottom;position:relative;padding-top:10px;left:-33px;margin-top:0}
+.hw.w_skin_defaultskin div.widget-headline h3{text-align:left;font-size:x-small;font-weight:normal;color:#fff;position:relative;left:-33px;height:41px;line-height:41px;margin:0;padding:0}
 /* metal */
 .hw.w_skin_metalskin div.widget-content{background:url(' . $S . '/Skin_Metal_btmR.png) no-repeat bottom right;padding:1px 26px 23px 7px;color:#000}
 .hw.w_skin_metalskin div.widget-body{background:url(' . $S . '/Skin_Metal_btmL.png) no-repeat bottom left;padding-left:22px}
 .hw.w_skin_metalskin div.widget-headline{background:url(' . $S . '/Skin_Metal_topRh.png) no-repeat top right;background-origin:content-box;background-clip:content-box;padding-left:35px;height:33px}
 .hw.w_skin_metalskin div.widget-corner{background:url(' . $S . '/Skin_Metal_topLh.png) no-repeat top left;margin-left:-35px;padding-left:35px;height:33px}
-.hw.w_skin_metalskin div.widget-headline h3{text-align:center;font-size:x-small;position:relative;top:3px;height:33px;color:#41404a;padding-top:2px;margin:2px 40px 0 0}
+.hw.w_skin_metalskin div.widget-headline h3{text-align:center;font-size:x-small;color:#41404a;height:33px;line-height:33px;margin:0 40px 0 0;padding:0}
 /* HC machine */
 .hw.w_skin_hc_machineskin div.widget-content{background:url(' . $S . '/Skin_HCmachine_btmR.png) no-repeat bottom right;padding:0 46px 31px 0;color:#fff}
 .hw.w_skin_hc_machineskin div.widget-content a{color:#8fe84a}
@@ -186,19 +186,19 @@ function home_css(): string {
    ne pas révéler le coude de raccord => plus rien ne déborde/n\'est trop large à gauche. */
 .hw.w_skin_hc_machineskin div.widget-headline{background:url(' . $S . '/Skin_HCmachine_topFlatRh.png) no-repeat top right;background-origin:content-box;background-clip:content-box;padding-left:49px;height:42px}
 .hw.w_skin_hc_machineskin div.widget-corner{background:url(' . $S . '/Skin_HCmachine_topFlatLh.png) no-repeat top left;margin-left:-49px;padding-left:49px;height:42px}
-.hw.w_skin_hc_machineskin div.widget-headline h3{text-align:center;font-size:11px;color:#fff;padding-top:13px;margin:0 49px 0 0}
+.hw.w_skin_hc_machineskin div.widget-headline h3{text-align:center;font-size:11px;color:#fff;height:42px;line-height:42px;margin:0 49px 0 0;padding:0}
 /* notepad */
 .hw.w_skin_notepadskin div.widget-content{background:url(' . $S . '/Skin_Notepad_btmR.png) no-repeat bottom right;padding:2px 7px 18px 2px;color:#000}
 .hw.w_skin_notepadskin div.widget-body{background:url(' . $S . '/Skin_Notepad_btmL.png) no-repeat bottom left;padding-left:27px}
 .hw.w_skin_notepadskin div.widget-headline{background:url(' . $S . '/Skin_Notepad_topRh.png) no-repeat top right;background-origin:content-box;background-clip:content-box;padding-left:27px;height:29px}
 .hw.w_skin_notepadskin div.widget-corner{background:url(' . $S . '/Skin_Notepad_topLh.png) no-repeat top left;margin-left:-27px;padding-left:27px;height:29px}
-.hw.w_skin_notepadskin div.widget-headline h3{text-align:left;font-size:small;vertical-align:bottom;position:relative;padding-top:10px;left:-4px;color:#4c3a41;margin-top:0}
+.hw.w_skin_notepadskin div.widget-headline h3{text-align:left;font-size:12px;color:#4c3a41;position:relative;left:-4px;height:29px;line-height:29px;margin:0;padding:0}
 /* stickienote (noteit) */
 .hw.w_skin_noteitskin div.widget-content{background:url(' . $S . '/Skin_Stickienote_btmR.png) no-repeat bottom right;padding:7px 9px 30px 9px;color:#000}
 .hw.w_skin_noteitskin div.widget-body{background:url(' . $S . '/Skin_Stickienote_btmL.png) no-repeat bottom left;padding-left:1px}
 .hw.w_skin_noteitskin div.widget-headline{background:url(' . $S . '/Skin_Stickienote_topR.png) no-repeat top right;height:30px}
 .hw.w_skin_noteitskin div.widget-corner{background:url(' . $S . '/Skin_Stickienote_topL.png) no-repeat top left;padding-left:5px;height:30px}
-.hw.w_skin_noteitskin div.widget-headline h3{text-align:left;font-size:11px;vertical-align:bottom;position:relative;padding-top:10px;left:-4px;color:#202933;margin-top:0}
+.hw.w_skin_noteitskin div.widget-headline h3{text-align:left;font-size:11px;color:#202933;position:relative;left:-4px;height:30px;line-height:30px;margin:0;padding:0}
 /* speechbubble */
 .hw.w_skin_speechbubbleskin div.widget-content{background:url(' . $S . '/Skin_Speechbubble_btmR.png) no-repeat bottom right;padding:17px 10px 22px 0;color:#000}
 .hw.w_skin_speechbubbleskin div.widget-body{background:url(' . $S . '/Skin_Speechbubble_btmL.png) no-repeat bottom left;padding-left:10px}
