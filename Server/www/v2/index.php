@@ -176,11 +176,14 @@ function home_css(): string {
 .hw.w_skin_hc_machineskin div.widget-content{background:url(' . $S . '/Skin_HCmachine_btmR.png) no-repeat bottom right;padding:0 46px 31px 0;color:#fff}
 .hw.w_skin_hc_machineskin div.widget-content a{color:#8fe84a}
 .hw.w_skin_hc_machineskin div.widget-body{background:url(' . $S . '/Skin_HCmachine_btmL.png) no-repeat bottom left;padding-left:49px}
-/* Coins du HAUT = mêmes embouts de barillet PROPRES que le bas (images btm retournées
-   verticalement via scaleY(-1)), au lieu des coudes de tuyaux dorés qui dépassaient. */
-.hw.w_skin_hc_machineskin div.widget-headline{background:url(' . $S . '/Skin_HCmachine_btmR.png) no-repeat bottom right;height:42px;transform:scaleY(-1)}
-.hw.w_skin_hc_machineskin div.widget-corner{background:url(' . $S . '/Skin_HCmachine_btmL.png) no-repeat bottom left;padding-left:49px;height:42px}
-.hw.w_skin_hc_machineskin div.widget-headline h3{transform:scaleY(-1);text-align:center;font-size:11px;color:#fff;padding-top:14px;margin:0 49px 0 0}
+/* Coins du HAUT = miroir PROPRE du bas. On utilise les images du bas retournées
+   verticalement (topFlat*, générées par GD) posées en orientation normale (pas de
+   transform CSS, qui créait un décalage/coude). Le rail du haut (headline) est borné
+   à la zone de contenu (padding-left + background-clip) EXACTEMENT comme le bas, pour
+   ne pas révéler le coude de raccord => plus rien ne déborde/n\'est trop large à gauche. */
+.hw.w_skin_hc_machineskin div.widget-headline{background:url(' . $S . '/Skin_HCmachine_topFlatRh.png) no-repeat top right;background-origin:content-box;background-clip:content-box;padding-left:49px;height:42px}
+.hw.w_skin_hc_machineskin div.widget-corner{background:url(' . $S . '/Skin_HCmachine_topFlatLh.png) no-repeat top left;margin-left:-49px;padding-left:49px;height:42px}
+.hw.w_skin_hc_machineskin div.widget-headline h3{text-align:center;font-size:11px;color:#fff;padding-top:13px;margin:0 49px 0 0}
 /* notepad */
 .hw.w_skin_notepadskin div.widget-content{background:url(' . $S . '/Skin_Notepad_btmR.png) no-repeat bottom right;padding:2px 7px 18px 2px;color:#000}
 .hw.w_skin_notepadskin div.widget-body{background:url(' . $S . '/Skin_Notepad_btmL.png) no-repeat bottom left;padding-left:27px}
