@@ -728,6 +728,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute([$k, $v]);
                 admin_log('site_bg', 'reset');
                 $msg = '↩️ Fond par défaut restauré.'; break;
+            /* --- Titres des widgets Home : position (vertical line-height + horizontal left) par skin --- */
+            case 'home_titres_apply': {
+                foreach (home_title_cfg() as $skin => $d) {
+                    $lh = max(6, min(60, (int)($_POST['lh_' . $skin] ?? $d[1])));
+                    $lf = max(-80, min(80, (int)($_POST['left_' . $skin] ?? $d[2])));
+                    db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute(['home.title.' . $skin . '.lh', (string)$lh]);
+                    db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute(['home.title.' . $skin . '.left', (string)$lf]);
+                }
+                admin_log('home_titres', 'apply');
+                $msg = '🏷️ Position des titres enregistrée. Recharge ta Home pour la voir en vrai.'; break;
+            }
+            case 'home_titres_reset': {
+                foreach (home_title_cfg() as $skin => $d)
+                    db()->prepare('DELETE FROM settings WHERE setting IN (?,?)')->execute(['home.title.' . $skin . '.lh', 'home.title.' . $skin . '.left']);
+                admin_log('home_titres', 'reset');
+                $msg = '↩️ Positions par défaut des titres restaurées.'; break;
+            }
             case 'sitepage_save': {
                 ensure_site_pages_admin();
                 $slug = preg_replace('/[^a-z0-9_]/', '', (string)($_POST['slug'] ?? ''));
@@ -1636,7 +1653,7 @@ function ensure_home_admin(): void {
     try { if (!col_exists('home_pages', 'hidden_until')) db()->exec("ALTER TABLE home_pages ADD COLUMN hidden_until DATETIME NULL, ADD COLUMN locked_until DATETIME NULL"); } catch (Throwable $e) {}
 }
 function sitemgr_sections(): array {
-    return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'linkcheck' => ['🔗', 'Liens & contrôle'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'apparence' => ['🎨', 'Apparence'], 'ressources' => ['🏠', 'Ressources Homes'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
+    return ['overview' => ['📋', 'Vue d\'ensemble'], 'allcontent' => ['🗂️', 'Tous les contenus'], 'pagesnav' => ['🧭', 'Pages et navigation'], 'linkcheck' => ['🔗', 'Liens & contrôle'], 'news' => ['📰', 'Actualités'], 'carousel' => ['🎠', 'Carrousel'], 'media' => ['🖼️', 'Médias'], 'apparence' => ['🎨', 'Apparence'], 'ressources' => ['🏠', 'Ressources Homes'], 'hometitres' => ['🏷️', 'Titres widgets Home'], 'events' => ['🎉', 'Événements & Infobus'], 'settings' => ['⚙️', 'Réglages du site'], 'history' => ['🕑', 'Historique']];
 }
 function sitemgr_style(): void {
     static $done = false; if ($done) return; $done = true;
@@ -2096,6 +2113,7 @@ function page_sitemgr(): void {
         case 'media': sitemgr_media(); break;
         case 'apparence': sitemgr_apparence(); break;
         case 'ressources': ensure_home_admin(); echo '<p class="sm-crumb">Gestion du Site › <b>Ressources Homes</b> (stickers &amp; fonds)</p>'; hm_view_catalog(); break;
+        case 'hometitres': sitemgr_hometitres(); break;
         case 'settings': sitemgr_settings(); break;
         case 'history': sitemgr_history(); break;
         default: sitemgr_overview(); break;
@@ -3017,6 +3035,62 @@ function sitemgr_media(): void {
     }
     echo '</div>';
 }
+/** Position par défaut des titres de widgets Home. skin => [libellé, line-height, left].
+ *  DOIT rester identique à home_title_cfg() de v2/index.php. */
+function home_title_cfg(): array {
+    return [
+        'defaultskin'      => ['Profil / Ma note (cadre jaune)', 34, -33],
+        'metalskin'        => ['Métal (Mes amis, Pense-bête)', 21, 0],
+        'hc_machineskin'   => ['HC (Mes apparts, bandeau vert)', 28, 0],
+        'notepadskin'      => ['Bloc-notes (Mes badges, Traxplayer)', 29, 2],
+        'noteitskin'       => ['Note bleue / post-it (Livre d\'or)', 30, 8],
+        'speechbubbleskin' => ['Bulle (speechbubble)', 12, -4],
+    ];
+}
+function sitemgr_hometitres(): void {
+    page_title('Titres des widgets Home', 'Règle la position des titres (Profil, Mes apparts, Pense-bête…) dans leur barre. Glisse les curseurs : l\'aperçu bouge en direct. Clique « Appliquer » pour enregistrer.');
+    $home = preg_replace('/[^A-Za-z0-9_\-=?!@:.,]/', '', (string)($_GET['home'] ?? 'Orms')); if ($home === '') $home = 'Orms';
+
+    echo '<form method="post" class="js" data-reload id="htpform">' . csrf_field() . '<input type="hidden" name="action" value="home_titres_apply">';
+
+    // Aperçu live : la vraie Home dans une iframe (même origine) => le CSS est injecté en direct.
+    echo '<div class="panel"><div class="ph"><h3>👁️ Aperçu en direct</h3>'
+       . '<span class="muted sm" style="margin-left:auto">Home affichée : <input type="text" id="htphome" value="' . h($home) . '" style="width:120px"> '
+       . '<button type="button" class="sm-btn" onclick="htpSetHome()">Changer</button></span></div>';
+    echo '<iframe id="htpframe" src="/?p=home/' . h(rawurlencode($home)) . '" style="width:100%;height:460px;border:1px solid var(--line2);border-radius:6px;background:#2b3a44"></iframe>';
+    echo '<p class="muted sm" style="margin-top:4px">C\'est la vraie page. Les curseurs la modifient en direct ; rien n\'est enregistré tant que tu ne cliques pas « Appliquer ».</p></div>';
+
+    // Curseurs par skin
+    echo '<div class="panel"><div class="ph"><h3>🎚️ Réglages par skin</h3><span class="muted sm" style="margin-left:auto">Vertical : + petit = + haut · Horizontal : + = vers la droite</span></div>';
+    echo '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    echo '<tr class="muted"><th style="text-align:left;padding:4px">Skin</th><th style="text-align:left;padding:4px">Vertical (hauteur du titre)</th><th style="text-align:left;padding:4px">Horizontal (gauche ↔ droite)</th></tr>';
+    foreach (home_title_cfg() as $skin => $d) {
+        $lh = max(6, min(60, (int) site_setting_get('home.title.' . $skin . '.lh', (string) $d[1])));
+        $lf = max(-80, min(80, (int) site_setting_get('home.title.' . $skin . '.left', (string) $d[2])));
+        echo '<tr style="border-top:1px solid var(--line2)">';
+        echo '<td style="padding:6px 4px"><b>' . h($d[0]) . '</b><br><span class="muted sm">.' . h($skin) . '</span></td>';
+        echo '<td style="padding:6px 4px"><input type="range" min="6" max="60" value="' . $lh . '" id="lh_' . h($skin) . '" name="lh_' . h($skin) . '" style="width:160px;vertical-align:middle"> <span id="lh_' . h($skin) . '_o" class="mono">' . $lh . '</span></td>';
+        echo '<td style="padding:6px 4px"><input type="range" min="-80" max="80" value="' . $lf . '" id="left_' . h($skin) . '" name="left_' . h($skin) . '" style="width:160px;vertical-align:middle"> <span id="left_' . h($skin) . '_o" class="mono">' . $lf . '</span></td>';
+        echo '</tr>';
+    }
+    echo '</table></div>';
+
+    echo '<div class="sm-actions"><button class="sm-btn primary" type="submit">✅ Appliquer</button> <a class="sm-btn" href="?p=sitemgr&sec=hometitres">↩️ Annuler</a></div></form>';
+
+    // Rétablir défauts
+    echo '<form method="post" class="js" data-reload style="margin-top:8px" onsubmit="return confirm(\'Rétablir les positions par défaut des titres ?\')">' . csrf_field() . '<input type="hidden" name="action" value="home_titres_reset"><button class="sm-btn" type="submit">🧹 Rétablir les valeurs par défaut</button></form>';
+
+    // JS : aperçu en direct (injection CSS dans l'iframe même origine)
+    $keys = json_encode(array_keys(home_title_cfg()));
+    echo '<script>(function(){var SK=' . $keys . ';'
+       . 'function v(id){var e=document.getElementById(id);return e?e.value:0;}'
+       . 'function css(){var o="";for(var i=0;i<SK.length;i++){var s=SK[i];o+=".hw.w_skin_"+s+" div.widget-headline h3{position:relative;line-height:"+v("lh_"+s)+"px !important;left:"+v("left_"+s)+"px !important}";}return o;}'
+       . 'function inj(){var f=document.getElementById("htpframe");if(!f)return;try{var d=f.contentDocument||f.contentWindow.document;if(!d||!d.head)return;var st=d.getElementById("htp-live");if(!st){st=d.createElement("style");st.id="htp-live";d.head.appendChild(st);}st.textContent=css();}catch(e){}}'
+       . 'document.addEventListener("input",function(e){var t=e.target;if(t&&/^(lh|left)_/.test(t.id||"")){var o=document.getElementById(t.id+"_o");if(o)o.textContent=t.value;inj();}});'
+       . 'var f=document.getElementById("htpframe");if(f)f.addEventListener("load",inj);'
+       . 'window.htpSetHome=function(){var n=(document.getElementById("htphome").value||"Orms").trim();document.getElementById("htpframe").src="/?p=home/"+encodeURIComponent(n);};'
+       . '})();</script>';
+}
 function sitemgr_apparence(): void {
     $bgdir = dirname(__DIR__) . '/web-gallery/v2/images/bg_patterns';
     $bgurl = '/web-gallery/v2/images/bg_patterns';
@@ -3125,7 +3199,7 @@ function action_tab(string $a): string {
     static $map = [
         // Gestion du Site (v2)
         'carousel_save' => 'sitemgr', 'site_setting' => 'sitemgr', 'sitepage_save' => 'sitemgr', 'sitepage_block_save' => 'sitemgr', 'sitepage_arrange' => 'sitemgr',
-        'nav_tab_save' => 'sitemgr', 'nav_item_save' => 'sitemgr', 'nav_move' => 'sitemgr', 'nav_flag' => 'sitemgr', 'media_upload' => 'sitemgr', 'media_delete' => 'sitemgr', 'site_bg_apply' => 'sitemgr', 'site_bg_reset' => 'sitemgr', 'site_bg_upload' => 'sitemgr',
+        'nav_tab_save' => 'sitemgr', 'nav_item_save' => 'sitemgr', 'nav_move' => 'sitemgr', 'nav_flag' => 'sitemgr', 'media_upload' => 'sitemgr', 'media_delete' => 'sitemgr', 'site_bg_apply' => 'sitemgr', 'site_bg_reset' => 'sitemgr', 'site_bg_upload' => 'sitemgr', 'home_titres_apply' => 'sitemgr', 'home_titres_reset' => 'sitemgr',
         'page_pin' => 'sitemgr', 'site_page_create' => 'sitemgr', 'site_news_save' => 'news', 'site_news_delete' => 'news',
         'hm_report_status' => 'homemod', 'hm_home_hide' => 'homemod', 'hm_home_lock' => 'homemod', 'hm_gb_hide' => 'homemod', 'hm_item_del' => 'homemod', 'hm_asset_status' => 'homemod', 'hm_asset_bulk' => 'homemod',
         // Joueurs

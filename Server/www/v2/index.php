@@ -147,10 +147,22 @@ function home_skin_class(string $key): string {
     $m = ['habbohomes' => 'w_skin_defaultskin', 'metal' => 'w_skin_metalskin', 'hcmachine' => 'w_skin_hc_machineskin', 'notepad' => 'w_skin_notepadskin', 'speechbubble' => 'w_skin_speechbubbleskin', 'stickienote' => 'w_skin_noteitskin'];
     return $m[$key] ?? 'w_skin_defaultskin';
 }
+/** Position par défaut des titres de widgets (réglable en admin → Gestion du Site › Titres des widgets Home).
+ *  skin (classe CSS) => [libellé, line-height (vertical : plus petit = plus haut), left (horizontal)]. */
+function home_title_cfg(): array {
+    return [
+        'defaultskin'      => ['Profil / Ma note (cadre jaune)', 34, -33],
+        'metalskin'        => ['Métal (Mes amis, Pense-bête)', 21, 0],
+        'hc_machineskin'   => ['HC (Mes apparts, bandeau vert)', 28, 0],
+        'notepadskin'      => ['Bloc-notes (Mes badges, Traxplayer)', 29, 2],
+        'noteitskin'       => ['Note bleue / post-it (Livre d\'or)', 30, 8],
+        'speechbubbleskin' => ['Bulle (speechbubble)', 12, -4],
+    ];
+}
 function home_css(): string {
     // Vrais skins Habbo Home (images d'origine web-gallery/images/skins/), structure headline/corner + content/body.
     $S = '/web-gallery/images/skins';
-    return '<style>
+    $css = '<style>
 .hw{position:relative;font:11px/1.4 Verdana,Arial,sans-serif}
 .hw div.widget-headline h3{margin:0}
 .hw div.widget-content{min-width:150px}
@@ -217,7 +229,15 @@ function home_css(): string {
 .hw .profile-friend{clear:both;margin-top:6px}
 .hw .profile-tags{clear:both;margin-top:6px;padding-top:6px;border-top:1px solid #d9d2b8}
 .hw .pt-band{background:url(/web-gallery/images/myhabbo/widgets/raster_selected.gif);border:1px solid #fff;padding:3px 6px;font-size:10px;color:#777}
-</style>';
+';
+    /* Overrides position des titres — réglables depuis l'admin (Gestion du Site › Titres des widgets Home).
+       Même sélecteur que les règles de base => s'applique par-dessus les valeurs par défaut. */
+    foreach (home_title_cfg() as $skin => $d) {
+        $lh = max(6, min(60, (int) setting_get('home.title.' . $skin . '.lh', (string) $d[1])));
+        $lf = max(-80, min(80, (int) setting_get('home.title.' . $skin . '.left', (string) $d[2])));
+        $css .= '.hw.w_skin_' . $skin . ' div.widget-headline h3{position:relative;line-height:' . $lh . 'px;left:' . $lf . 'px}';
+    }
+    return $css . '</style>';
 }
 /* Avatar de repli ORIGINAL et neutre (initiale colorée) — pas le personnage Habbo (imager non dispo côté web). */
 function av_initial(string $name, int $size = 44): string {
