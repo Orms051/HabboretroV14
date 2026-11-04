@@ -157,42 +157,45 @@ function home_css(): string {
 .hw div.widget-content a{color:#2f6f9f}
 .hw .hwb table{font-size:11px}
 .av-ini{display:inline-block;color:#fff;font:bold 13px Verdana,Arial,sans-serif;text-align:center;text-shadow:0 1px 1px rgba(0,0,0,.3);border:1px solid rgba(0,0,0,.2);border-radius:4px}
+/* === Skins 9-slice FIDÈLES Habbo (structure + valeurs reprises de web-gallery/styles/myhabbo/skins.css) ===
+   Le cadre = 4 couches imbriquées : widget-headline(topR, barre haut) > widget-corner(topL, coin haut-gauche + titre)
+   et widget-body(btmL, bord/pilier GAUCHE pleine hauteur) > widget-content(btmR, bord DROIT + bas). */
 /* default (HabboHomes) */
-.hw.w_skin_defaultskin div.widget-content{background:url(' . $S . '/Skin_HabboHomes_btmL.png) no-repeat bottom left,url(' . $S . '/Skin_HabboHomes_btmR.png) no-repeat bottom right;padding:4px 16px 19px 18px;color:#000}
-.hw.w_skin_defaultskin div.widget-body{padding:0}
-.hw.w_skin_defaultskin div.widget-headline{background:url(' . $S . '/Skin_HabboHomes_topLh.png) no-repeat top left,url(' . $S . '/Skin_HabboHomes_topRh.png) no-repeat top right;height:41px}
-.hw.w_skin_defaultskin div.widget-corner{padding-left:41px;height:41px}
+.hw.w_skin_defaultskin div.widget-content{background:url(' . $S . '/Skin_HabboHomes_btmR.png) no-repeat bottom right;padding:4px 16px 19px 4px;color:#000}
+.hw.w_skin_defaultskin div.widget-body{background:url(' . $S . '/Skin_HabboHomes_btmL.png) no-repeat bottom left;padding-left:14px}
+.hw.w_skin_defaultskin div.widget-headline{background:url(' . $S . '/Skin_HabboHomes_topRh.png) no-repeat top right;height:41px}
+.hw.w_skin_defaultskin div.widget-corner{background:url(' . $S . '/Skin_HabboHomes_topLh.png) no-repeat top left;padding-left:41px;height:41px}
 .hw.w_skin_defaultskin div.widget-headline h3{text-align:left;font-size:11px;font-weight:normal;color:#fff;position:relative;padding-top:12px;left:-33px}
 /* metal */
-.hw.w_skin_metalskin div.widget-content{background:url(' . $S . '/Skin_Metal_btmL.png) no-repeat bottom left,url(' . $S . '/Skin_Metal_btmR.png) no-repeat bottom right;padding:1px 26px 23px 29px;color:#000}
-.hw.w_skin_metalskin div.widget-body{padding:0}
-.hw.w_skin_metalskin div.widget-headline{background:url(' . $S . '/Skin_Metal_topLh.png) no-repeat top left,url(' . $S . '/Skin_Metal_topRh.png) no-repeat top right;height:33px}
-.hw.w_skin_metalskin div.widget-corner{padding-left:35px;height:33px}
+.hw.w_skin_metalskin div.widget-content{background:url(' . $S . '/Skin_Metal_btmR.png) no-repeat bottom right;padding:1px 26px 23px 7px;color:#000}
+.hw.w_skin_metalskin div.widget-body{background:url(' . $S . '/Skin_Metal_btmL.png) no-repeat bottom left;padding-left:22px}
+.hw.w_skin_metalskin div.widget-headline{background:url(' . $S . '/Skin_Metal_topRh.png) no-repeat top right;height:33px}
+.hw.w_skin_metalskin div.widget-corner{background:url(' . $S . '/Skin_Metal_topLh.png) no-repeat top left;padding-left:35px;height:33px}
 .hw.w_skin_metalskin div.widget-headline h3{text-align:center;font-size:11px;position:relative;top:3px;color:#41404a;padding-top:4px;margin:2px 40px 0 0}
 /* HC machine */
-.hw.w_skin_hc_machineskin div.widget-content{background:url(' . $S . '/Skin_HCmachine_btmL.png) no-repeat bottom left,url(' . $S . '/Skin_HCmachine_btmR.png) no-repeat bottom right;padding:0 46px 31px 49px;color:#fff}
+.hw.w_skin_hc_machineskin div.widget-content{background:url(' . $S . '/Skin_HCmachine_btmR.png) no-repeat bottom right;padding:0 46px 31px 0;color:#fff}
 .hw.w_skin_hc_machineskin div.widget-content a{color:#8fe84a}
-.hw.w_skin_hc_machineskin div.widget-body{padding:0}
-.hw.w_skin_hc_machineskin div.widget-headline{background:url(' . $S . '/Skin_HCmachine_topLh.png) no-repeat top left,url(' . $S . '/Skin_HCmachine_topRh.png) no-repeat top right;height:42px}
-.hw.w_skin_hc_machineskin div.widget-corner{padding-left:61px;height:42px}
+.hw.w_skin_hc_machineskin div.widget-body{background:url(' . $S . '/Skin_HCmachine_btmL.png) no-repeat bottom left;padding-left:49px}
+.hw.w_skin_hc_machineskin div.widget-headline{background:url(' . $S . '/Skin_HCmachine_topRh.png) no-repeat top right;height:42px}
+.hw.w_skin_hc_machineskin div.widget-corner{background:url(' . $S . '/Skin_HCmachine_topLh.png) no-repeat top left;padding-left:61px;height:42px}
 .hw.w_skin_hc_machineskin div.widget-headline h3{text-align:center;font-size:11px;position:relative;top:3px;color:#fff;padding-top:6px;margin:2px 61px 0 0}
 /* notepad */
-.hw.w_skin_notepadskin div.widget-content{background:url(' . $S . '/Skin_Notepad_btmL.png) no-repeat bottom left,url(' . $S . '/Skin_Notepad_btmR.png) no-repeat bottom right;padding:2px 7px 18px 29px;color:#000}
-.hw.w_skin_notepadskin div.widget-body{padding:0}
-.hw.w_skin_notepadskin div.widget-headline{background:url(' . $S . '/Skin_Notepad_topLh.png) no-repeat top left,url(' . $S . '/Skin_Notepad_topRh.png) no-repeat top right;height:29px}
-.hw.w_skin_notepadskin div.widget-corner{padding-left:27px;height:29px}
+.hw.w_skin_notepadskin div.widget-content{background:url(' . $S . '/Skin_Notepad_btmR.png) no-repeat bottom right;padding:2px 7px 18px 2px;color:#000}
+.hw.w_skin_notepadskin div.widget-body{background:url(' . $S . '/Skin_Notepad_btmL.png) no-repeat bottom left;padding-left:27px}
+.hw.w_skin_notepadskin div.widget-headline{background:url(' . $S . '/Skin_Notepad_topRh.png) no-repeat top right;height:29px}
+.hw.w_skin_notepadskin div.widget-corner{background:url(' . $S . '/Skin_Notepad_topLh.png) no-repeat top left;padding-left:27px;height:29px}
 .hw.w_skin_notepadskin div.widget-headline h3{text-align:left;font-size:12px;position:relative;padding-top:9px;left:-4px;color:#4c3a41}
 /* stickienote (noteit) */
-.hw.w_skin_noteitskin div.widget-content{background:url(' . $S . '/Skin_Stickienote_btmL.png) no-repeat bottom left,url(' . $S . '/Skin_Stickienote_btmR.png) no-repeat bottom right;padding:7px 9px 30px 10px;color:#000}
-.hw.w_skin_noteitskin div.widget-body{padding:0}
-.hw.w_skin_noteitskin div.widget-headline{background:url(' . $S . '/Skin_Stickienote_topL.png) no-repeat top left,url(' . $S . '/Skin_Stickienote_topR.png) no-repeat top right;height:30px}
-.hw.w_skin_noteitskin div.widget-corner{padding-left:5px;height:30px}
+.hw.w_skin_noteitskin div.widget-content{background:url(' . $S . '/Skin_Stickienote_btmR.png) no-repeat bottom right;padding:7px 9px 30px 9px;color:#000}
+.hw.w_skin_noteitskin div.widget-body{background:url(' . $S . '/Skin_Stickienote_btmL.png) no-repeat bottom left;padding-left:1px}
+.hw.w_skin_noteitskin div.widget-headline{background:url(' . $S . '/Skin_Stickienote_topR.png) no-repeat top right;height:30px}
+.hw.w_skin_noteitskin div.widget-corner{background:url(' . $S . '/Skin_Stickienote_topL.png) no-repeat top left;padding-left:5px;height:30px}
 .hw.w_skin_noteitskin div.widget-headline h3{text-align:left;font-size:11px;position:relative;padding-top:9px;left:-4px;color:#202933}
 /* speechbubble */
-.hw.w_skin_speechbubbleskin div.widget-content{background:url(' . $S . '/Skin_Speechbubble_btmL.png) no-repeat bottom left,url(' . $S . '/Skin_Speechbubble_btmR.png) no-repeat bottom right;padding:4px 10px 22px 10px;color:#000}
-.hw.w_skin_speechbubbleskin div.widget-body{padding:0}
-.hw.w_skin_speechbubbleskin div.widget-headline{background:url(' . $S . '/Skin_Speechbubble_topL.png) no-repeat top left,url(' . $S . '/Skin_Speechbubble_topR.png) no-repeat top right;height:12px}
-.hw.w_skin_speechbubbleskin div.widget-corner{padding-left:10px;height:12px}
+.hw.w_skin_speechbubbleskin div.widget-content{background:url(' . $S . '/Skin_Speechbubble_btmR.png) no-repeat bottom right;padding:17px 10px 22px 0;color:#000}
+.hw.w_skin_speechbubbleskin div.widget-body{background:url(' . $S . '/Skin_Speechbubble_btmL.png) no-repeat bottom left;padding-left:10px}
+.hw.w_skin_speechbubbleskin div.widget-headline{background:url(' . $S . '/Skin_Speechbubble_topR.png) no-repeat top right;height:12px}
+.hw.w_skin_speechbubbleskin div.widget-corner{background:url(' . $S . '/Skin_Speechbubble_topL.png) no-repeat top left;padding-left:10px;height:12px}
 .hw.w_skin_speechbubbleskin div.widget-headline h3{text-align:left;font-size:12px;position:relative;padding-top:2px;left:4px;color:#666}
 /* Contenu du ProfileWidget — dimensions/marges reprises de myhabbo.css d\'origine (infos à gauche, figure à droite) */
 .hw .profile-info{width:90px;float:left;font-size:11px;line-height:1.35}
@@ -223,7 +226,7 @@ function hw_box(string $title, string $body, int $w = 280, string $hc = 'b', str
     $cls = 'hw ' . home_skin_class($useSkin);
     return '<div class="' . $cls . '" style="width:' . $w . 'px">'
         . '<div class="widget-headline"><div class="widget-corner"><h3>' . h($title) . '</h3></div></div>'
-        . '<div class="widget-content"><div class="widget-body">' . $body . '</div></div>'
+        . '<div class="widget-body"><div class="widget-content">' . $body . '</div></div>'
         . '</div>';
 }
 /* Largeur extérieure réelle d'un widget (= le $w passé à hw_box). Sert à borner la position
@@ -444,6 +447,10 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             $len = (int)$sg['length'];
             $mmss = sprintf('%d:%02d', intdiv($len, 60), $len % 60);
             $b = '<link rel="stylesheet" href="/web-gallery/v2/styles/webbanditten/traxplayer.css">'
+               // Correctif : superpose le curseur natif (transparent) sur la jauge de volume au lieu de l'empiler dessous.
+               . '<style>#trax-player .volumecontainer{height:9px}'
+               . '#trax-player .volume-indicator{position:absolute;top:0;left:0}'
+               . '#trax-player .volume{position:absolute;top:0;left:0;height:9px;background:transparent;z-index:2;margin:0;cursor:pointer}</style>'
                . '<div id="trax-player" data-trax="' . h((string)$sg['data']) . '">'
                . '<div class="control"><button type="button" class="play-btn" title="Lecture / pause"></button></div>'
                . '<div class="display"><div class="display-inner">'
