@@ -564,7 +564,7 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             $nb = count($songs);
             $eq = '<div class="music-activity"><div class="tp-eq">' . str_repeat('<i></i>', 9) . '</div></div>';
             $b = '<style>'
-               . '#trax-player{position:relative;width:209px;height:66px;background:url(/web-gallery/images/traxplayer/player.png?v=5) no-repeat;font:10px Verdana,Arial,sans-serif;color:#2f3a22}'
+               . '#trax-player{position:relative;width:209px;height:66px;background:url(/web-gallery/images/traxplayer/player.png?v=6) no-repeat;font:10px Verdana,Arial,sans-serif;color:#2f3a22}'
                . '#trax-player .tp-screen{position:absolute;left:9px;top:5px;width:191px;height:23px;overflow:hidden;line-height:11px}'
                . '#trax-player .tp-screen .title{font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}'
                . '#trax-player.playing .tp-screen .title{animation:tpmq 8s linear infinite}'
@@ -572,8 +572,12 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                . '#trax-player .tp-screen .author{color:#5a6a3a}'
                . '#trax-player .tp-screen .time{position:absolute;right:2px;bottom:0;color:#2f3a22}'
                . '#trax-player .tp-screen .time .length{color:#8a9a6a;padding-left:3px}'
-               // Bouton Lecture : aucune teinte/carré (ni survol, ni lecture, ni chargement) — juste le graphisme. Aligné sur la ligne du bas (centre y53).
-               . '#trax-player .play-btn{position:absolute;left:6px;top:41px;width:34px;height:24px;padding:0;border:0;background:transparent;cursor:pointer}'
+               // Bouton Lecture/Pause : collé au bouton gris cuit. Le triangle cuit a ete efface de player.png,
+               // l icone est redessinee en CSS : triangle par defaut, deux barres quand la musique joue (.playing).
+               . '#trax-player .play-btn{position:absolute;left:4px;top:42px;width:18px;height:22px;padding:0;border:0;background:transparent;cursor:pointer}'
+               . '#trax-player .play-btn::before{content:"";position:absolute;left:6px;top:6px;width:0;height:0;border-style:solid;border-width:5px 0 5px 8px;border-color:transparent transparent transparent #5f8f33}'
+               . '#trax-player .play-btn.playing::before{border:0;left:5px;top:6px;width:3px;height:10px;background:#5f8f33}'
+               . '#trax-player .play-btn.playing::after{content:"";position:absolute;left:10px;top:6px;width:3px;height:10px;background:#5f8f33}'
                // Volume : indicateur d'origine (descendu/aligné) + curseur transparent + petit pouce par-dessus. Centré y53.
                . '#trax-player .volume{position:absolute;left:72px;top:48px;width:64px;height:11px;-webkit-appearance:none;appearance:none;background:transparent;outline:none;cursor:pointer;margin:0}'
                . '#trax-player .volume::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:6px;height:11px;border:1px solid #3c4a28;border-radius:1px;background:#8aa15e;cursor:pointer}'

@@ -38,5 +38,10 @@ imagefilledrectangle($im, 64, 53, 140, 66, $t);  // 1) barre grise horizontale d
 imagefilledrectangle($im, 154, 37, 209, 66, $t); // 2) égaliseur dessiné (remplacé par l'animé)
 imagecopy($im, $tmp, 74, 49, 0, 0, $mw, $mh);    // 3b) recolle l'indicateur 8 px plus bas (centre ~53)
 
+// 4) efface le triangle "Lecture" cuit (vert) en le remplissant avec la couleur du bouton (gris #bfbfbf) :
+//    l'icône ▶/⏸ est désormais redessinée en CSS (bascule triangle ⇄ deux barres) dans v2/index.php.
+$grey = imagecolorallocate($im, 0xbf, 0xbf, 0xbf);
+imagefilledrectangle($im, 6, 46, 19, 60, $grey);
+
 imagepng($im, $p);
-echo "OK — barre grise + égaliseur effacés, indicateur de volume descendu de 8 px (aligné).\n";
+echo "OK — barre grise + égaliseur + triangle Lecture effacés, indicateur de volume descendu de 8 px (aligné).\n";
