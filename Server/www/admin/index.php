@@ -6087,8 +6087,43 @@ function page_alerts(): void {
     elseif ($sec === 'history') alerts_sec_history();
     else alerts_sec_send();
 }
+function alerts_cfh_chatlog(int $id): void {
+    ensure_calls_for_help();
+    $a = null;
+    try { $s = db()->prepare("SELECT c.*, u.username AS caller_name FROM calls_for_help c LEFT JOIN users u ON u.id=c.caller_id WHERE c.id=?"); $s->execute([$id]); $a = $s->fetch(); } catch (Throwable $e) {}
+    echo '<div style="margin-bottom:10px"><a class="mini ghost" href="?p=alerts&sec=cfh">← Retour aux appels</a></div>';
+    if (!$a) { echo '<div class="panel"><div class="empty">Appel introuvable.</div></div>'; return; }
+    $caller = $a['caller_name'] !== null ? (string)$a['caller_name'] : ('#' . (int)$a['caller_id']);
+    $roomId = (int)$a['room_id'];
+    echo '<div class="panel"><div class="ph"><h3>📜 Journal de discussion — salle « ' . h((string)$a['room_name']) . ' »</h3></div>';
+    echo '<p class="sub">Appel de <a href="?p=user&id=' . (int)$a['caller_id'] . '">' . h($caller) . '</a> le ' . h(substr((string)$a['created_at'], 0, 16)) . '. Chat de la salle autour de l\'appel (30 min avant → 15 min après).</p>';
+    if ($roomId <= 0) { echo '<div class="empty">Salle inconnue pour cet appel.</div></div>'; return; }
+    $rows = [];
+    try {
+        $st = db()->prepare("SELECT c.user_id, DATE_FORMAT(FROM_UNIXTIME(c.timestamp), '%d/%m %H:%i:%s') AS hhmm, c.chat_type, c.message, u.username
+            FROM room_chatlogs c LEFT JOIN users u ON u.id = c.user_id
+            WHERE c.room_id = ? AND c.timestamp BETWEEN (UNIX_TIMESTAMP(?) - 1800) AND (UNIX_TIMESTAMP(?) + 900)
+            ORDER BY c.timestamp ASC LIMIT 500");
+        $st->execute([$roomId, $a['created_at'], $a['created_at']]);
+        $rows = $st->fetchAll();
+    } catch (Throwable $e) {}
+    if (!$rows) {
+        echo '<div class="note">Aucun message enregistré pour cette salle sur cette période. <span class="muted sm">(Le chat est journalisé côté jeu toutes les 60 s ; une salle sans discussion n\'a rien à afficher.)</span></div>';
+    } else {
+        echo '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr class="muted sm"><th style="text-align:left">Heure</th><th style="text-align:left">Joueur</th><th style="text-align:left">Message</th></tr>';
+        foreach ($rows as $r) {
+            $who = $r['username'] !== null ? h((string)$r['username']) : ('#' . (int)$r['user_id']);
+            $shout = ((int)$r['chat_type'] === 1) ? ' <span class="muted sm">(cri)</span>' : '';
+            echo '<tr style="border-top:1px solid var(--line2)"><td style="padding:4px 8px 4px 0;white-space:nowrap;color:var(--mut)">' . h((string)$r['hhmm']) . '</td><td style="white-space:nowrap"><b>' . $who . '</b></td><td style="white-space:pre-wrap">' . h((string)$r['message']) . $shout . '</td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '</div>';
+}
 function alerts_sec_cfh(): void {
     ensure_calls_for_help();
+    $logId = (int)($_GET['log'] ?? 0);
+    if ($logId > 0) { alerts_cfh_chatlog($logId); return; }
     $rows = [];
     try {
         $rows = db()->query("SELECT c.*, u.username AS caller_name, m.username AS mod_name
@@ -6140,6 +6175,8 @@ function alerts_sec_cfh(): void {
             echo '<form method="post" class="js" data-reload data-confirm="Clôturer cet appel ?" style="flex:1;min-width:240px"><input type="hidden" name="action" value="cfh_close"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
             echo '<label class="sm">✅ Clôturer (motif, optionnel)<input name="reason" maxlength="255" placeholder="Résolu, hors-sujet…"></label>';
             echo '<button class="mini" style="margin-top:4px">Clôturer l\'appel</button></form>';
+            // Voir le journal de discussion de la salle (autour de l'appel)
+            echo '<a class="mini ghost" style="align-self:flex-end" href="?p=alerts&sec=cfh&log=' . $cid . '">📜 Journal de discussion</a>';
             // Supprimer définitivement
             echo '<form method="post" class="js" data-reload data-confirm="Supprimer définitivement cet appel ? (irréversible)" style="align-self:flex-end"><input type="hidden" name="action" value="cfh_delete"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost danger" title="Supprimer définitivement">🗑️ Supprimer</button></form>';
             echo '</div>';
@@ -6162,7 +6199,7 @@ function alerts_sec_cfh(): void {
             echo '<td class="muted sm">' . h(cfh_cat_label((int)$r['category'])) . '</td>';
             echo '<td class="muted sm">' . h(mb_strimwidth((string)$r['message'], 0, 60, '…')) . '</td>';
             echo '<td class="muted sm">' . h(mb_strimwidth($extra, 0, 60, '…')) . '</td>';
-            echo '<td style="text-align:right;white-space:nowrap"><form method="post" class="js" data-reload onsubmit="return confirm(\'Rouvrir cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_reopen"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost">↩️ Rouvrir</button></form> <form method="post" class="js" data-reload onsubmit="return confirm(\'Supprimer définitivement cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost danger">🗑️</button></form></td>';
+            echo '<td style="text-align:right;white-space:nowrap"><a class="mini ghost" href="?p=alerts&sec=cfh&log=' . (int)$r['id'] . '" title="Journal de discussion">📜</a> <form method="post" class="js" data-reload onsubmit="return confirm(\'Rouvrir cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_reopen"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost">↩️ Rouvrir</button></form> <form method="post" class="js" data-reload onsubmit="return confirm(\'Supprimer définitivement cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost danger">🗑️</button></form></td>';
             echo '</tr>';
         }
         echo '</table>';
