@@ -3266,7 +3266,7 @@ time_ban.8760=365 jours (1 an)
 camera_open_dialog_heading=Caméra
 furni_chair_plasty_desc=Un ravissant meuble en plastique
 poster_50_desc=Flap, flap, cri, cri...
-chatlog.url=https://theallseeingeye.sulake.com/ase/habbo/uk/housekeeping/extra/hobba/chatlog.action?chatId=
+chatlog.url=http://localhost/admin/?p=alerts&sec=cfh&chatId=
 furni_romantique_tray2_desc=Pour un festin de roi
 queue_line=Tu fais la queue en ce moment...
 club_general_infolink=Plus d'infos sur le Club Habbo >>
