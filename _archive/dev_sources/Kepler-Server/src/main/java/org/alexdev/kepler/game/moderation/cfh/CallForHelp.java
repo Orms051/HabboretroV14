@@ -20,6 +20,7 @@ public class CallForHelp {
     private int category = 2;
     private long expireTime;
     private boolean isDeleted;
+    private int dbId; // id de la ligne calls_for_help (persistance admin), 0 si non persisté
 
     CallForHelp(int cryId, int callerId, Room room, String message) {
         this.cryId = cryId;
@@ -83,6 +84,14 @@ public class CallForHelp {
 
     public boolean isDeleted() {
         return isDeleted;
+    }
+
+    public int getDbId() {
+        return this.dbId;
+    }
+
+    public void setDbId(int dbId) {
+        this.dbId = dbId;
     }
 
     public void setDeleted(boolean deleted) {

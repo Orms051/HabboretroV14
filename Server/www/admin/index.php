@@ -1450,6 +1450,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $msg = 'ajouté';
                 }
                 break;
+            case 'cfh_note': {
+                ensure_calls_for_help();
+                $cid = (int)($_POST['id'] ?? 0);
+                $note = mb_substr(trim($_POST['note'] ?? ''), 0, 1000);
+                db()->prepare('UPDATE calls_for_help SET staff_note=? WHERE id=?')->execute([$note, $cid]);
+                admin_log('cfh_note', 'appel #' . $cid);
+                $msg = '📝 Note enregistrée.'; break;
+            }
+            case 'cfh_close': {
+                ensure_calls_for_help();
+                $cid = (int)($_POST['id'] ?? 0);
+                $reason = mb_substr(trim($_POST['reason'] ?? ''), 0, 255);
+                db()->prepare("UPDATE calls_for_help SET status='closed', close_reason=?, closed_at=NOW() WHERE id=? AND status<>'closed'")->execute([$reason, $cid]);
+                admin_log('cfh_close', 'appel #' . $cid . ($reason !== '' ? ' — ' . $reason : ''));
+                $msg = '✅ Appel clôturé.'; break;
+            }
+            case 'cfh_reopen': {
+                ensure_calls_for_help();
+                $cid = (int)($_POST['id'] ?? 0);
+                db()->prepare("UPDATE calls_for_help SET status='open', close_reason='', closed_at=NULL, picked_up_by=NULL, picked_at=NULL WHERE id=?")->execute([$cid]);
+                admin_log('cfh_reopen', 'appel #' . $cid);
+                $msg = '↩️ Appel rouvert.'; break;
+            }
             default: $ok = false; $msg = 'Action inconnue.';
         }
     } catch (Throwable $e) { $ok = false; $msg = '❌ Erreur : ' . $e->getMessage(); }
@@ -3348,6 +3371,7 @@ function action_tab(string $a): string {
         // Communauté / modération
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
         'ban_add' => 'moderation', 'ban_remove' => 'moderation', 'bus_type' => 'bus',
+        'cfh_note' => 'moderation', 'cfh_close' => 'moderation', 'cfh_reopen' => 'moderation',
         'cmd_fav_toggle' => 'commandes',
         'pwreset_do' => 'messages', 'pwreset_reject' => 'messages',
         'cmsg_handle' => 'messages', 'cmsg_delete' => 'messages', 'umsg_send' => 'users',
@@ -6012,6 +6036,20 @@ function hotel_alert_presets(): array {
 /* Service d'avatars Minerva (port local 5123). */
 function minerva_running(): bool { $c = @fsockopen('127.0.0.1', 5123, $e, $s, 0.6); if ($c) { fclose($c); return true; } return false; }
 
+/* ===== Appels à l'aide (CFH) — persistés par Kepler dans calls_for_help ===== */
+function ensure_calls_for_help(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS calls_for_help (id INT AUTO_INCREMENT PRIMARY KEY, caller_id INT NOT NULL, room_id INT NOT NULL DEFAULT 0, room_name VARCHAR(255) NOT NULL DEFAULT '', message VARCHAR(1000) NOT NULL DEFAULT '', category INT NOT NULL DEFAULT 2, status ENUM('open','picked','closed') NOT NULL DEFAULT 'open', picked_up_by INT NULL, staff_note VARCHAR(1000) NOT NULL DEFAULT '', close_reason VARCHAR(255) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, picked_at DATETIME NULL, closed_at DATETIME NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, INDEX(status), INDEX(caller_id), INDEX(created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+/* Nombre d'appels NON pris en charge (pour le badge du bouton d'alerte de l'en-tête). */
+function cfh_pending_count(): int {
+    try { ensure_calls_for_help(); return (int) db()->query("SELECT COUNT(*) FROM calls_for_help WHERE status='open'")->fetchColumn(); } catch (Throwable $e) { return 0; }
+}
+/* Libellé de catégorie CFH (l'entier vient du client rev401). */
+function cfh_cat_label(int $cat): string {
+    $m = [1 => 'Infraction', 2 => 'Besoin d\'aide', 3 => 'Bug / technique', 4 => 'Autre'];
+    return $m[$cat] ?? ('Catégorie ' . $cat);
+}
+
 /* ===== Hub « Alertes & annonces » ===== */
 function page_alerts(): void {
     page_title('Alertes & annonces', 'Appels à l\'aide, alertes en jeu et annonces — regroupés');
@@ -6027,11 +6065,78 @@ function page_alerts(): void {
     else alerts_sec_send();
 }
 function alerts_sec_cfh(): void {
-    echo '<div class="panel"><div class="ph"><h3>🆘 Appels à l\'aide (jeu)</h3><span class="rk red" style="margin-left:auto">⚠️ Non raccordé</span></div>';
-    echo '<div class="note" style="margin:0 0 10px">⚠️ <b>Réception des appels du jeu non raccordée.</b> (Ce n\'est pas « aucun appel » : la liaison avec l\'émulateur reste à développer.)</div>';
-    echo '<p class="muted sm">Dans Kepler, les appels à l\'aide (Call For Help) sont gérés <b>en mémoire</b> et diffusés aux modérateurs connectés en jeu — ils ne sont pas enregistrés en base. Pour les traiter ici, il faut :</p>';
-    echo '<ol class="muted sm" style="margin:6px 0 0 18px"><li>Patch Kepler : persister chaque appel dans une table <code>calls_for_help</code> (à la soumission, la prise en charge, le changement de catégorie, la clôture).</li><li>Recompiler le <code>kepler.jar</code> et jouer la migration.</li><li>Brancher ici la file (prise en charge, note interne, réponse si possible, clôture motivée, réouverture) + le bouton d\'en-tête avec compteur des appels <b>non pris en charge</b>.</li></ol>';
-    echo '<p class="muted sm" style="margin-top:8px">Tant que ce n\'est pas fait, le bouton d\'alerte de l\'en-tête ouvre cet onglet sans afficher de compteur (état honnête, pas un faux zéro). <b>Chantier prévu.</b></p>';
+    ensure_calls_for_help();
+    $rows = [];
+    try {
+        $rows = db()->query("SELECT c.*, u.username AS caller_name, m.username AS mod_name
+            FROM calls_for_help c
+            LEFT JOIN users u ON u.id = c.caller_id
+            LEFT JOIN users m ON m.id = c.picked_up_by
+            ORDER BY (c.status = 'closed'), c.created_at DESC LIMIT 200")->fetchAll();
+    } catch (Throwable $e) {}
+
+    $active = array_values(array_filter($rows, fn($r) => $r['status'] !== 'closed'));
+    $closed = array_values(array_filter($rows, fn($r) => $r['status'] === 'closed'));
+    $open = count(array_filter($active, fn($r) => $r['status'] === 'open'));
+    $up = emu_running();
+    $back = '?p=alerts&sec=cfh';
+    $age = function ($dt) { $t = strtotime((string)$dt); if (!$t) return ''; $s = max(0, time() - $t); if ($s < 60) return $s . ' s'; if ($s < 3600) return floor($s / 60) . ' min'; if ($s < 86400) return floor($s / 3600) . ' h'; return floor($s / 86400) . ' j'; };
+
+    echo '<div class="panel"><div class="ph"><h3>🆘 Appels à l\'aide (jeu)</h3><span class="rk' . ($up ? '' : ' red') . '" style="margin-left:auto">' . ($up ? '🟢 Émulateur en ligne' : '🔴 Émulateur hors ligne') . '</span></div>';
+    echo '<p class="sub"><b>' . $open . '</b> appel' . ($open > 1 ? 's' : '') . ' en attente · <b>' . count($active) . '</b> actif' . (count($active) > 1 ? 's' : '') . '. Le <b>traitement live se fait en jeu</b> (prise en charge, réponse au joueur) avec ton compte modérateur ; cet écran apporte la <b>persistance, l\'historique et une note interne</b>. Une prise en charge en jeu apparaît ici automatiquement.</p>';
+    echo '</div>';
+
+    // --- Appels actifs ---
+    if (!$active) {
+        echo '<div class="panel"><div class="empty">Aucun appel à l\'aide en cours. ✨</div></div>';
+    } else {
+        foreach ($active as $r) {
+            $cid = (int)$r['id'];
+            $isOpen = $r['status'] === 'open';
+            $caller = $r['caller_name'] !== null ? (string)$r['caller_name'] : ('#' . (int)$r['caller_id']);
+            echo '<div class="panel">';
+            echo '<div class="ph"><h3 style="font-size:15px">' . ($isOpen ? '🔴 En attente' : '🟡 Pris en charge') . '</h3>';
+            echo '<span class="muted sm" style="margin-left:auto">' . h(cfh_cat_label((int)$r['category'])) . ' · il y a ' . $age($r['created_at']) . '</span></div>';
+            echo '<p style="margin:0 0 6px"><span class="muted">Joueur :</span> <a href="?p=user&id=' . (int)$r['caller_id'] . '"><b>' . h($caller) . '</b></a>';
+            if ((string)$r['room_name'] !== '') echo ' <span class="muted">· Salle :</span> ' . h((string)$r['room_name']);
+            if (!$isOpen && $r['mod_name'] !== null) echo ' <span class="muted">· Pris par :</span> ' . h((string)$r['mod_name']);
+            echo '</p>';
+            echo '<div class="note" style="margin:0 0 10px;white-space:pre-wrap">' . ($r['message'] !== '' ? h((string)$r['message']) : '<span class="muted">(sans message)</span>') . '</div>';
+
+            echo '<div class="row" style="gap:16px;flex-wrap:wrap;align-items:flex-start">';
+            // Note interne
+            echo '<form method="post" class="js" data-reload style="flex:1;min-width:240px"><input type="hidden" name="action" value="cfh_note"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
+            echo '<label class="sm">📝 Note interne<textarea name="note" rows="2" maxlength="1000" style="width:100%" placeholder="Visible par le staff uniquement">' . h((string)$r['staff_note']) . '</textarea></label>';
+            echo '<button class="mini" style="margin-top:4px">💾 Enregistrer la note</button></form>';
+            // Clôture
+            echo '<form method="post" class="js" data-reload data-confirm="Clôturer cet appel ?" style="flex:1;min-width:240px"><input type="hidden" name="action" value="cfh_close"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
+            echo '<label class="sm">✅ Clôturer (motif, optionnel)<input name="reason" maxlength="255" placeholder="Résolu, hors-sujet…"></label>';
+            echo '<button class="mini" style="margin-top:4px">Clôturer l\'appel</button></form>';
+            echo '</div>';
+            echo '</div>';
+        }
+    }
+
+    // --- Historique (clôturés) ---
+    echo '<div class="panel"><div class="ph"><h3>🕑 Appels clôturés (récents)</h3></div>';
+    if (!$closed) {
+        echo '<p class="muted" style="padding:4px 0">Aucun appel clôturé.</p>';
+    } else {
+        echo '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr class="muted sm"><th style="text-align:left">Date</th><th style="text-align:left">Joueur</th><th style="text-align:left">Catégorie</th><th style="text-align:left">Message</th><th style="text-align:left">Motif / note</th><th></th></tr>';
+        foreach (array_slice($closed, 0, 40) as $r) {
+            $caller = $r['caller_name'] !== null ? (string)$r['caller_name'] : ('#' . (int)$r['caller_id']);
+            $extra = trim(((string)$r['close_reason'] !== '' ? (string)$r['close_reason'] : '') . ((string)$r['staff_note'] !== '' ? ' · ' . (string)$r['staff_note'] : ''));
+            echo '<tr style="border-top:1px solid var(--line2)">';
+            echo '<td style="padding:5px 6px 5px 0;white-space:nowrap">' . h(substr((string)($r['closed_at'] ?: $r['created_at']), 0, 16)) . '</td>';
+            echo '<td><a href="?p=user&id=' . (int)$r['caller_id'] . '">' . h($caller) . '</a></td>';
+            echo '<td class="muted sm">' . h(cfh_cat_label((int)$r['category'])) . '</td>';
+            echo '<td class="muted sm">' . h(mb_strimwidth((string)$r['message'], 0, 60, '…')) . '</td>';
+            echo '<td class="muted sm">' . h(mb_strimwidth($extra, 0, 60, '…')) . '</td>';
+            echo '<td style="text-align:right"><form method="post" class="js" data-reload onsubmit="return confirm(\'Rouvrir cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_reopen"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost">↩️ Rouvrir</button></form></td>';
+            echo '</tr>';
+        }
+        echo '</table>';
+    }
     echo '</div>';
 }
 function alerts_sec_send(): void {
@@ -6897,7 +7002,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
   <button type="button" class="sbtoggle" onclick="toggleSidebar()" title="Replier / déplier le menu" aria-label="Replier le menu">☰</button>
   <div class="tb-crumb"><?php if ($secLabel !== '') echo '<span class="tb-sec">' . h($secLabel) . '</span><span class="tb-sep">›</span>'; ?><b><?= h($pageLabel) ?></b></div>
   <form class="tb-search" method="get" action="?"><input type="hidden" name="p" value="search"><input name="q" placeholder="Rechercher un joueur, un mobi, une salle…" value="<?= $sq ?>"><button type="submit" title="Rechercher">🔍</button></form>
-  <?php if (tab_allowed('alerts')) { ?><a class="tb-status" href="?p=alerts&sec=cfh" title="Alertes &amp; annonces — appels à l'aide du jeu (réception non raccordée pour l'instant)" style="margin-right:10px">📢 Alertes</a><?php } ?>
+  <?php if (tab_allowed('alerts')) { $cfhN = cfh_pending_count(); ?><a class="tb-status" href="?p=alerts&sec=cfh" title="Alertes &amp; annonces — appels à l'aide des joueurs<?= $cfhN > 0 ? ' (' . $cfhN . ' en attente)' : '' ?>" style="margin-right:10px">📢 Alertes<?php if ($cfhN > 0) echo '<span style="background:#e5484d;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:800;margin-left:5px">' . $cfhN . '</span>'; ?></a><?php } ?>
   <a class="tb-status <?= $emuUp ? 'up' : 'down' ?>" href="?p=server" title="État de l'émulateur — ouvrir la page Serveur"><span class="dot"></span><?= $emuUp ? 'En marche' : 'Arrêté' ?></a>
 </header><div class="content"><?php
     // Plus de barre d'onglets horizontale pour le groupe courant : ses onglets sont

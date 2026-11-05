@@ -1,5 +1,6 @@
 package org.alexdev.kepler.game.moderation.cfh;
 
+import org.alexdev.kepler.dao.mysql.CallForHelpDao;
 import org.alexdev.kepler.game.fuserights.Fuseright;
 import org.alexdev.kepler.game.player.Player;
 import org.alexdev.kepler.game.player.PlayerManager;
@@ -26,6 +27,10 @@ public class CallForHelpManager {
     public CallForHelpManager() {
         this.callsForHelp = new ConcurrentHashMap<>();
         this.latestCallId = new AtomicInteger();
+
+        // La file mémoire repart vide : on clôt les appels laissés ouverts par
+        // une exécution précédente pour que le compteur admin reste honnête.
+        CallForHelpDao.closeDangling();
     }
 
     /**
@@ -41,6 +46,8 @@ public class CallForHelpManager {
 
         CallForHelp cfh = new CallForHelp(callId, callerId, room, message);
         this.callsForHelp.put(callId, cfh);
+
+        CallForHelpDao.create(cfh); // persistance admin (pose le dbId sur l'appel)
 
         sendToModerators(new CALL_FOR_HELP(cfh));
         caller.send(new CRY_RECEIVED());
@@ -104,6 +111,8 @@ public class CallForHelpManager {
     public void pickUp(CallForHelp cfh, Player moderator) {
         cfh.setPickedUpBy(moderator);
 
+        CallForHelpDao.markPickedUp(cfh.getDbId(), moderator.getDetails().getId());
+
         // Send the updated CallForHelp to all moderators
         sendToModerators(new PICKED_CRY(cfh));
     }
@@ -120,6 +129,7 @@ public class CallForHelpManager {
         }
 
         cfh.updateCategory(newCategory);
+        CallForHelpDao.updateCategory(cfh.getDbId(), newCategory);
         sendToModerators(new CALL_FOR_HELP(cfh));
     }
 
@@ -130,6 +140,7 @@ public class CallForHelpManager {
      */
     public void deleteCall(CallForHelp cfh) {
         cfh.setDeleted(true);
+        CallForHelpDao.markClosed(cfh.getDbId());
         sendToModerators(new DELETE_CRY(cfh.getCryId()));
     }
 
