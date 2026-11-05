@@ -151,12 +151,12 @@ function home_skin_class(string $key): string {
  *  skin (classe CSS) => [libellé, line-height (vertical : + petit = + haut), left (horizontal), font-size (px)]. */
 function home_title_cfg(): array {
     return [
-        'defaultskin'      => ['Profil / Ma note (cadre jaune)', 34, -33, 10],
-        'metalskin'        => ['Métal (Mes amis, Pense-bête)', 21, 0, 10],
-        'hc_machineskin'   => ['HC (Mes apparts, bandeau vert)', 28, 0, 11],
-        'notepadskin'      => ['Bloc-notes (Mes badges, Traxplayer)', 29, 2, 12],
-        'noteitskin'       => ['Note bleue / post-it (Livre d\'or)', 30, 8, 11],
-        'speechbubbleskin' => ['Bulle (speechbubble)', 12, -4, 13],
+        'defaultskin'      => ['Défaut — cadre jaune (Habbo Homes)', 34, -33, 10],
+        'metalskin'        => ['Métal — plaque grise', 21, 0, 10],
+        'hc_machineskin'   => ['HC machine — doré, bandeau vert', 28, 0, 11],
+        'notepadskin'      => ['Bloc-notes — papier à spirale', 29, 2, 12],
+        'noteitskin'       => ['Post-it / note bleue (Stickienote)', 30, 8, 11],
+        'speechbubbleskin' => ['Bulle (Speechbubble)', 12, -4, 13],
     ];
 }
 /** Largeur par défaut de chaque type de widget Home. type => [libellé, largeur px]. */
