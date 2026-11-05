@@ -1473,6 +1473,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 admin_log('cfh_reopen', 'appel #' . $cid);
                 $msg = '↩️ Appel rouvert.'; break;
             }
+            case 'cfh_reply': {
+                ensure_calls_for_help();
+                $cid = (int)($_POST['id'] ?? 0);
+                $reply = trim($_POST['reply'] ?? '');
+                if ($reply === '') { $ok = false; $msg = '❌ Message de réponse vide.'; break; }
+                $r = db()->prepare('SELECT caller_id FROM calls_for_help WHERE id=?'); $r->execute([$cid]); $callerId = (int)$r->fetchColumn();
+                if ($callerId <= 0) { $ok = false; $msg = '❌ Appel introuvable.'; break; }
+                $sig = trim($_POST['sender'] ?? ($_SESSION['admin']['username'] ?? ''));
+                $body = kepler_text('Reponse de la moderation a ton appel a l\'aide :') . '<br><br>' . kepler_text($reply) . ($sig !== '' ? '<br><br>- ' . kepler_text($sig) : '');
+                $sent = rcon_send('user_alert', ['userId' => (string)$callerId, 'message' => $body]);
+                // Trace la réponse dans la note interne (horodatée) pour garder l'historique.
+                $stamp = '[' . date('d/m H:i') . ' ' . ($_SESSION['admin']['username'] ?? '?') . '] → ' . mb_substr($reply, 0, 300);
+                db()->prepare("UPDATE calls_for_help SET staff_note = TRIM(CONCAT(COALESCE(staff_note,''), CASE WHEN staff_note IS NULL OR staff_note='' THEN '' ELSE '\n' END, ?)) WHERE id=?")->execute([$stamp, $cid]);
+                admin_log('cfh_reply', 'appel #' . $cid . ' → joueur #' . $callerId . ($sent ? '' : ' (ému injoignable)'));
+                $ok = $sent; $msg = $sent ? '💬 Réponse envoyée au joueur (s\'il est connecté).' : '❌ Émulateur injoignable (RCON). Le joueur n\'a pas reçu la réponse.'; break;
+            }
+            case 'cfh_delete': {
+                ensure_calls_for_help();
+                $cid = (int)($_POST['id'] ?? 0);
+                db()->prepare('DELETE FROM calls_for_help WHERE id=?')->execute([$cid]);
+                admin_log('cfh_delete', 'appel #' . $cid);
+                $msg = '🗑️ Appel supprimé.'; break;
+            }
             default: $ok = false; $msg = 'Action inconnue.';
         }
     } catch (Throwable $e) { $ok = false; $msg = '❌ Erreur : ' . $e->getMessage(); }
@@ -3371,7 +3394,7 @@ function action_tab(string $a): string {
         // Communauté / modération
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
         'ban_add' => 'moderation', 'ban_remove' => 'moderation', 'bus_type' => 'bus',
-        'cfh_note' => 'moderation', 'cfh_close' => 'moderation', 'cfh_reopen' => 'moderation',
+        'cfh_note' => 'moderation', 'cfh_close' => 'moderation', 'cfh_reopen' => 'moderation', 'cfh_reply' => 'moderation', 'cfh_delete' => 'moderation',
         'cmd_fav_toggle' => 'commandes',
         'pwreset_do' => 'messages', 'pwreset_reject' => 'messages',
         'cmsg_handle' => 'messages', 'cmsg_delete' => 'messages', 'umsg_send' => 'users',
@@ -6103,6 +6126,11 @@ function alerts_sec_cfh(): void {
             echo '</p>';
             echo '<div class="note" style="margin:0 0 10px;white-space:pre-wrap">' . ($r['message'] !== '' ? h((string)$r['message']) : '<span class="muted">(sans message)</span>') . '</div>';
 
+            // Répondre directement au joueur (popup en jeu via RCON) — s'il est connecté.
+            echo '<form method="post" class="js" data-reload style="margin:0 0 12px"><input type="hidden" name="action" value="cfh_reply"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
+            echo '<label class="sm">💬 Répondre au joueur (popup en jeu)<textarea name="reply" rows="2" maxlength="300" style="width:100%" placeholder="Ta réponse à ' . h($caller) . '… (ℹ️ reçue seulement s\'il est connecté ; les emoji ne s\'affichent pas)"></textarea></label>';
+            echo '<div class="row" style="gap:8px;align-items:flex-end;margin-top:4px"><label class="sm" style="flex:0 0 160px">Signature (option)<input name="sender" value="' . h((string)($_SESSION['admin']['username'] ?? '')) . '"></label><button>💬 Envoyer la réponse</button></div></form>';
+
             echo '<div class="row" style="gap:16px;flex-wrap:wrap;align-items:flex-start">';
             // Note interne
             echo '<form method="post" class="js" data-reload style="flex:1;min-width:240px"><input type="hidden" name="action" value="cfh_note"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
@@ -6112,6 +6140,8 @@ function alerts_sec_cfh(): void {
             echo '<form method="post" class="js" data-reload data-confirm="Clôturer cet appel ?" style="flex:1;min-width:240px"><input type="hidden" name="action" value="cfh_close"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
             echo '<label class="sm">✅ Clôturer (motif, optionnel)<input name="reason" maxlength="255" placeholder="Résolu, hors-sujet…"></label>';
             echo '<button class="mini" style="margin-top:4px">Clôturer l\'appel</button></form>';
+            // Supprimer définitivement
+            echo '<form method="post" class="js" data-reload data-confirm="Supprimer définitivement cet appel ? (irréversible)" style="align-self:flex-end"><input type="hidden" name="action" value="cfh_delete"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost danger" title="Supprimer définitivement">🗑️ Supprimer</button></form>';
             echo '</div>';
             echo '</div>';
         }
@@ -6132,7 +6162,7 @@ function alerts_sec_cfh(): void {
             echo '<td class="muted sm">' . h(cfh_cat_label((int)$r['category'])) . '</td>';
             echo '<td class="muted sm">' . h(mb_strimwidth((string)$r['message'], 0, 60, '…')) . '</td>';
             echo '<td class="muted sm">' . h(mb_strimwidth($extra, 0, 60, '…')) . '</td>';
-            echo '<td style="text-align:right"><form method="post" class="js" data-reload onsubmit="return confirm(\'Rouvrir cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_reopen"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost">↩️ Rouvrir</button></form></td>';
+            echo '<td style="text-align:right;white-space:nowrap"><form method="post" class="js" data-reload onsubmit="return confirm(\'Rouvrir cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_reopen"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost">↩️ Rouvrir</button></form> <form method="post" class="js" data-reload onsubmit="return confirm(\'Supprimer définitivement cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost danger">🗑️</button></form></td>';
             echo '</tr>';
         }
         echo '</table>';

@@ -113,6 +113,15 @@ public class RconConnectionHandler extends ChannelInboundHandlerAdapter {
                     }
 
                     break;
+                case USER_ALERT:
+                    // Réponse ciblée à un joueur (ex. réponse à un Appel à l'aide depuis l'admin web).
+                    Player target = PlayerManager.getInstance().getPlayerById(Integer.parseInt(message.getValues().get("userId")));
+
+                    if (target != null) {
+                        target.send(new ALERT(message.getValues().get("message")));
+                    }
+
+                    break;
                 case SHUTDOWN:
                     // Arrêt propre déclenché à distance (bouton admin -> pack.ps1 -> RCON).
                     // Indépendant de la console : fiable quel que soit le lanceur (fin du Ctrl+C fragile).
