@@ -732,11 +732,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'home_titres_apply': {
                 $up = db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)');
                 $up->execute(['home.text.size', (string) max(8, min(20, (int)($_POST['text_size'] ?? 11)))]);
+                $up->execute(['home.text.lh', (string) max(100, min(220, (int)($_POST['text_lh'] ?? 140)))]);
                 $up->execute(['home.scale', (string) max(60, min(180, (int)($_POST['scale'] ?? 100)))]);
-                foreach (home_title_cfg() as $skin => $d) {
-                    $up->execute(['home.title.' . $skin . '.lh', (string) max(6, min(60, (int)($_POST['lh_' . $skin] ?? $d[1])))]);
-                    $up->execute(['home.title.' . $skin . '.left', (string) max(-80, min(80, (int)($_POST['left_' . $skin] ?? $d[2])))]);
-                    $up->execute(['home.title.' . $skin . '.fs', (string) max(7, min(28, (int)($_POST['fs_' . $skin] ?? $d[3])))]);
+                $fonts = home_font_map();
+                foreach (home_skin_cfg() as $skin => $d) {
+                    $up->execute(['home.title.' . $skin . '.lh', (string) max(6, min(60, (int)($_POST['lh_' . $skin] ?? $d['lh'])))]);
+                    $up->execute(['home.title.' . $skin . '.left', (string) max(-80, min(80, (int)($_POST['left_' . $skin] ?? $d['left'])))]);
+                    $up->execute(['home.title.' . $skin . '.fs', (string) max(7, min(28, (int)($_POST['fs_' . $skin] ?? $d['fs'])))]);
+                    $col = strtolower(trim((string)($_POST['color_' . $skin] ?? $d['color'])));
+                    if (!preg_match('/^#[0-9a-f]{6}$/', $col)) $col = $d['color'];
+                    $up->execute(['home.title.' . $skin . '.color', $col]);
+                    $fk = (string)($_POST['font_' . $skin] ?? $d['font']); if (!isset($fonts[$fk])) $fk = $d['font'];
+                    $up->execute(['home.title.' . $skin . '.font', $fk]);
+                    $up->execute(['home.title.' . $skin . '.bold', isset($_POST['bold_' . $skin]) ? '1' : '0']);
+                    $al = (string)($_POST['align_' . $skin] ?? $d['align']); if (!in_array($al, ['left', 'center', 'right'], true)) $al = $d['align'];
+                    $up->execute(['home.title.' . $skin . '.align', $al]);
+                    $up->execute(['home.skin.' . $skin . '.barh', (string) max(10, min(80, (int)($_POST['barh_' . $skin] ?? $d['barh'])))]);
+                    $up->execute(['home.skin.' . $skin . '.pad', (string) max(0, min(40, (int)($_POST['pad_' . $skin] ?? $d['pad'])))]);
+                    $up->execute(['home.skin.' . $skin . '.scale', (string) max(50, min(200, (int)($_POST['sscale_' . $skin] ?? $d['scale'])))]);
                 }
                 foreach (home_widget_cfg() as $type => $d)
                     $up->execute(['home.width.' . $type, (string) max(120, min(600, (int)($_POST['w_' . $type] ?? $d[1])))]);
@@ -744,8 +757,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = '🏠 Réglages de la Home enregistrés. Recharge ta Home pour les voir en vrai.'; break;
             }
             case 'home_titres_reset': {
-                $keys = ['home.text.size', 'home.scale'];
-                foreach (home_title_cfg() as $skin => $d) { $keys[] = 'home.title.' . $skin . '.lh'; $keys[] = 'home.title.' . $skin . '.left'; $keys[] = 'home.title.' . $skin . '.fs'; }
+                $keys = ['home.text.size', 'home.text.lh', 'home.scale'];
+                foreach (home_skin_cfg() as $skin => $d) {
+                    foreach (['lh', 'left', 'fs', 'color', 'font', 'bold', 'align'] as $f) $keys[] = 'home.title.' . $skin . '.' . $f;
+                    foreach (['barh', 'pad', 'scale'] as $f) $keys[] = 'home.skin.' . $skin . '.' . $f;
+                }
                 foreach (home_widget_cfg() as $type => $d) $keys[] = 'home.width.' . $type;
                 db()->prepare('DELETE FROM settings WHERE setting IN (' . implode(',', array_fill(0, count($keys), '?')) . ')')->execute($keys);
                 admin_log('home_titres', 'reset');
@@ -3041,16 +3057,25 @@ function sitemgr_media(): void {
     }
     echo '</div>';
 }
-/** Position/taille par défaut des titres. skin => [libellé, line-height, left, font-size].
- *  DOIT rester identique à home_title_cfg() de v2/index.php. */
-function home_title_cfg(): array {
+/** Réglages par SKIN. DOIT rester identique à home_skin_cfg() de v2/index.php. */
+function home_skin_cfg(): array {
     return [
-        'defaultskin'      => ['Défaut — cadre jaune (Habbo Homes)', 34, -33, 10],
-        'metalskin'        => ['Métal — plaque grise', 21, 0, 10],
-        'hc_machineskin'   => ['HC machine — doré, bandeau vert', 28, 0, 11],
-        'notepadskin'      => ['Bloc-notes — papier à spirale', 29, 2, 12],
-        'noteitskin'       => ['Post-it / note bleue (Stickienote)', 30, 8, 11],
-        'speechbubbleskin' => ['Bulle (Speechbubble)', 12, -4, 13],
+        'defaultskin'      => ['label' => 'Défaut — cadre jaune (Habbo Homes)', 'lh' => 34, 'left' => -33, 'fs' => 10, 'color' => '#ffffff', 'font' => 'verdana', 'bold' => 0, 'align' => 'left',   'barh' => 41, 'pad' => 0, 'scale' => 100, 'padbase' => [4, 16, 19, 4]],
+        'metalskin'        => ['label' => 'Métal — plaque grise',               'lh' => 21, 'left' => 0,   'fs' => 10, 'color' => '#41404a', 'font' => 'verdana', 'bold' => 1, 'align' => 'center', 'barh' => 33, 'pad' => 0, 'scale' => 100, 'padbase' => [1, 26, 23, 7]],
+        'hc_machineskin'   => ['label' => 'HC machine — doré, bandeau vert',    'lh' => 28, 'left' => 0,   'fs' => 11, 'color' => '#ffffff', 'font' => 'verdana', 'bold' => 1, 'align' => 'center', 'barh' => 42, 'pad' => 0, 'scale' => 100, 'padbase' => [0, 46, 31, 0]],
+        'notepadskin'      => ['label' => 'Bloc-notes — papier à spirale',      'lh' => 29, 'left' => 2,   'fs' => 12, 'color' => '#4c3a41', 'font' => 'verdana', 'bold' => 1, 'align' => 'left',   'barh' => 29, 'pad' => 0, 'scale' => 100, 'padbase' => [2, 7, 18, 2]],
+        'noteitskin'       => ['label' => 'Post-it / note bleue (Stickienote)', 'lh' => 30, 'left' => 8,   'fs' => 11, 'color' => '#202933', 'font' => 'verdana', 'bold' => 1, 'align' => 'left',   'barh' => 30, 'pad' => 0, 'scale' => 100, 'padbase' => [7, 9, 30, 9]],
+        'speechbubbleskin' => ['label' => 'Bulle (Speechbubble)',               'lh' => 12, 'left' => -4,  'fs' => 13, 'color' => '#666666', 'font' => 'verdana', 'bold' => 1, 'align' => 'left',   'barh' => 12, 'pad' => 0, 'scale' => 100, 'padbase' => [17, 10, 22, 0]],
+    ];
+}
+/** Polices proposées. DOIT rester identique à v2/index.php. */
+function home_font_map(): array {
+    return [
+        'verdana' => 'Verdana,Arial,sans-serif',
+        'arial'   => 'Arial,Helvetica,sans-serif',
+        'tahoma'  => 'Tahoma,Verdana,sans-serif',
+        'georgia' => 'Georgia,"Times New Roman",serif',
+        'courier' => '"Courier New",monospace',
     ];
 }
 /** Largeur par défaut de chaque type de widget. DOIT rester identique à v2/index.php. */
@@ -3067,18 +3092,22 @@ function home_widget_cfg(): array {
     ];
 }
 function sitemgr_hometitres(): void {
-    page_title('Réglages de la Home', 'Taille et position de tout ce qui s\'affiche sur la Habbo Home : agrandissement des widgets, taille du texte, largeur de chaque widget, position/taille des titres. Curseur OU boutons −/+ OU valeur tapée au pixel. Aperçu en direct, puis « Appliquer ».');
+    page_title('Réglages de la Home', 'SKIN (couleur / police / position du titre, cadre, zoom) ≠ WIDGET (largeur) : un même skin peut être posé sur n\'importe quel widget. Curseur / −/+ / valeur au pixel. Aperçu live, puis « Appliquer ».');
     $home = preg_replace('/[^A-Za-z0-9_\-=?!@:.,]/', '', (string)($_GET['home'] ?? 'Orms')); if ($home === '') $home = 'Orms';
+    $fonts = home_font_map();
 
-    // Un contrôle = curseur + boutons −/+ + champ au pixel (tout synchronisé). Le <input range> porte le name POST.
-    $ctl = function (string $id, int $min, int $max, int $val, string $unit = 'px', int $rw = 150): string {
+    // Un contrôle numérique = curseur + boutons −/+ + champ au pixel (synchronisés). Le <input range> porte le name POST.
+    $ctl = function (string $id, int $min, int $max, int $val, string $unit = 'px', int $rw = 130): string {
         $id = h($id);
-        return '<span class="htp-ctl" style="white-space:nowrap;display:inline-flex;align-items:center;gap:4px">'
+        return '<span style="white-space:nowrap;display:inline-flex;align-items:center;gap:4px">'
             . '<button type="button" class="sm-btn htp-step" data-t="' . $id . '" data-d="-1" tabindex="-1" style="padding:0 8px">−</button>'
             . '<input type="range" min="' . $min . '" max="' . $max . '" value="' . $val . '" id="' . $id . '" name="' . $id . '" style="width:' . $rw . 'px;vertical-align:middle">'
             . '<button type="button" class="sm-btn htp-step" data-t="' . $id . '" data-d="1" tabindex="-1" style="padding:0 8px">+</button>'
-            . '<input type="number" min="' . $min . '" max="' . $max . '" value="' . $val . '" id="' . $id . '_n" class="htp-num mono" style="width:60px">'
+            . '<input type="number" min="' . $min . '" max="' . $max . '" value="' . $val . '" id="' . $id . '_n" class="htp-num mono" style="width:58px">'
             . '<span class="muted sm">' . h($unit) . '</span></span>';
+    };
+    $row = function (string $lbl, string $html): string {
+        return '<tr style="border-top:1px solid var(--line2)"><td style="padding:5px 4px;width:210px">' . $lbl . '</td><td style="padding:5px 4px">' . $html . '</td></tr>';
     };
 
     echo '<form method="post" class="js" data-reload id="htpform">' . csrf_field() . '<input type="hidden" name="action" value="home_titres_apply">';
@@ -3088,62 +3117,88 @@ function sitemgr_hometitres(): void {
        . '<span class="muted sm" style="margin-left:auto">Home affichée : <input type="text" id="htphome" value="' . h($home) . '" style="width:120px"> '
        . '<button type="button" class="sm-btn" onclick="htpSetHome()">Changer</button></span></div>';
     echo '<iframe id="htpframe" src="/?p=home/' . h(rawurlencode($home)) . '" style="width:100%;height:480px;border:1px solid var(--line2);border-radius:6px;background:#2b3a44"></iframe>';
-    echo '<p class="muted sm" style="margin-top:4px">La vraie page. Curseur / −/+ / valeur tapée modifient l\'aperçu en direct ; la <b>largeur des widgets</b> ne s\'affiche qu\'après « Appliquer ». Rien n\'est enregistré avant.</p></div>';
+    echo '<p class="muted sm" style="margin-top:4px">La vraie page. Curseur / −/+ / valeur / couleur modifient l\'aperçu en direct ; seule la <b>largeur des widgets</b> s\'affiche après « Appliquer ». Rien n\'est enregistré avant.</p></div>';
 
-    // --- Global : agrandissement + taille du texte ---
-    $scale = max(60, min(180, (int) site_setting_get('home.scale', '100')));
-    $tsize = max(8, min(20, (int) site_setting_get('home.text.size', '11')));
-    echo '<div class="panel"><div class="ph"><h3>🔍 Agrandissement &amp; texte</h3><span class="muted sm" style="margin-left:auto">s\'applique à tous les widgets</span></div>';
+    // === GLOBAL (toute la Home) ===
+    $gscale = max(60, min(180, (int) site_setting_get('home.scale', '100')));
+    $tsize  = max(8, min(20, (int) site_setting_get('home.text.size', '11')));
+    $tlh    = max(100, min(220, (int) site_setting_get('home.text.lh', '140')));
+    echo '<div class="panel"><div class="ph"><h3>🌍 Global — toute la Home</h3></div>';
     echo '<table style="width:100%;border-collapse:collapse;font-size:12px">';
-    echo '<tr style="border-top:1px solid var(--line2)"><td style="padding:6px 4px;width:200px"><b>Agrandissement des widgets</b></td><td style="padding:6px 4px">' . $ctl('scale', 60, 180, $scale, '%', 200) . '</td></tr>';
-    echo '<tr style="border-top:1px solid var(--line2)"><td style="padding:6px 4px"><b>Taille du texte (contenu)</b></td><td style="padding:6px 4px">' . $ctl('text_size', 8, 20, $tsize, 'px', 200) . '</td></tr>';
-    echo '</table><p class="muted sm" style="margin-top:4px">⚠️ Au-delà de 100 %, les widgets grossissent vers le bas/droite (leur coin ne bouge pas) et peuvent se chevaucher. 100 % = taille d\'origine.</p></div>';
+    echo $row('<b>Agrandissement global</b>', $ctl('scale', 60, 180, $gscale, '%', 200));
+    echo $row('<b>Taille du texte (contenu)</b>', $ctl('text_size', 8, 20, $tsize, 'px', 200));
+    echo $row('<b>Interligne du texte</b>', $ctl('text_lh', 100, 220, $tlh, '%', 200));
+    echo '</table><p class="muted sm" style="margin-top:4px">⚠️ Au-delà de 100 %, l\'agrandissement peut faire chevaucher les widgets (ils grossissent vers le bas/droite). Zoom final d\'un widget = global × zoom du skin.</p></div>';
 
-    // --- Largeur des widgets (par type) ---
-    echo '<div class="panel"><div class="ph"><h3>↔️ Largeur des widgets</h3><span class="muted sm" style="margin-left:auto">par type · visible après « Appliquer »</span></div>';
+    // === WIDGET — largeur (dépend du widget, pas du skin) ===
+    echo '<div class="panel"><div class="ph"><h3>📦 Par WIDGET — largeur</h3><span class="muted sm" style="margin-left:auto">dépend du widget · visible après « Appliquer »</span></div>';
     echo '<table style="width:100%;border-collapse:collapse;font-size:12px">';
     foreach (home_widget_cfg() as $type => $d) {
         $w = max(120, min(600, (int) site_setting_get('home.width.' . $type, (string) $d[1])));
-        echo '<tr style="border-top:1px solid var(--line2)"><td style="padding:6px 4px;width:170px"><b>' . h($d[0]) . '</b></td>';
-        echo '<td style="padding:6px 4px">' . $ctl('w_' . $type, 120, 600, $w, 'px', 230) . '</td></tr>';
+        echo $row('<b>' . h($d[0]) . '</b>', $ctl('w_' . $type, 120, 600, $w, 'px', 240));
     }
     echo '</table></div>';
 
-    // --- Titres par skin : position + taille ---
-    echo '<div class="panel"><div class="ph"><h3>🏷️ Titres des widgets</h3><span class="muted sm" style="margin-left:auto">Vertical : + petit = + haut · Horizontal : + = à droite</span></div>';
-    echo '<table style="width:100%;border-collapse:collapse;font-size:12px">';
-    echo '<tr class="muted"><th style="text-align:left;padding:4px">Skin</th><th style="text-align:left;padding:4px">Vertical</th><th style="text-align:left;padding:4px">Horizontal</th><th style="text-align:left;padding:4px">Taille</th></tr>';
-    foreach (home_title_cfg() as $skin => $d) {
-        $lh = max(6, min(60, (int) site_setting_get('home.title.' . $skin . '.lh', (string) $d[1])));
-        $lf = max(-80, min(80, (int) site_setting_get('home.title.' . $skin . '.left', (string) $d[2])));
-        $fs = max(7, min(28, (int) site_setting_get('home.title.' . $skin . '.fs', (string) $d[3])));
-        echo '<tr style="border-top:1px solid var(--line2)">';
-        echo '<td style="padding:6px 4px"><b>' . h($d[0]) . '</b><br><span class="muted sm">.' . h($skin) . '</span></td>';
-        echo '<td style="padding:6px 4px">' . $ctl('lh_' . $skin, 6, 60, $lh, 'px', 110) . '</td>';
-        echo '<td style="padding:6px 4px">' . $ctl('left_' . $skin, -80, 80, $lf, 'px', 110) . '</td>';
-        echo '<td style="padding:6px 4px">' . $ctl('fs_' . $skin, 7, 28, $fs, 'px', 100) . '</td>';
-        echo '</tr>';
+    // === SKIN — une carte par skin (couleur/police/position du titre, cadre, zoom) ===
+    echo '<p class="sm-crumb" style="margin:14px 0 4px">🎨 <b>Par SKIN</b> — un skin peut être posé sur n\'importe quel widget ; ces réglages suivent le skin.</p>';
+    $fontOpts  = ['verdana' => 'Verdana', 'arial' => 'Arial', 'tahoma' => 'Tahoma', 'georgia' => 'Georgia', 'courier' => 'Courier'];
+    $alignOpts = ['left' => 'Gauche', 'center' => 'Centré', 'right' => 'Droite'];
+    foreach (home_skin_cfg() as $skin => $d) {
+        $lh = max(6, min(60, (int) site_setting_get('home.title.' . $skin . '.lh', (string) $d['lh'])));
+        $lf = max(-80, min(80, (int) site_setting_get('home.title.' . $skin . '.left', (string) $d['left'])));
+        $fs = max(7, min(28, (int) site_setting_get('home.title.' . $skin . '.fs', (string) $d['fs'])));
+        $col = site_setting_get('home.title.' . $skin . '.color', $d['color']); if (!preg_match('/^#[0-9A-Fa-f]{6}$/', $col)) $col = $d['color'];
+        $fk = site_setting_get('home.title.' . $skin . '.font', $d['font']); if (!isset($fonts[$fk])) $fk = $d['font'];
+        $bold = (int) site_setting_get('home.title.' . $skin . '.bold', (string) $d['bold']);
+        $al = site_setting_get('home.title.' . $skin . '.align', $d['align']); if (!in_array($al, ['left', 'center', 'right'], true)) $al = $d['align'];
+        $bh = max(10, min(80, (int) site_setting_get('home.skin.' . $skin . '.barh', (string) $d['barh'])));
+        $pad = max(0, min(40, (int) site_setting_get('home.skin.' . $skin . '.pad', (string) $d['pad'])));
+        $ss = max(50, min(200, (int) site_setting_get('home.skin.' . $skin . '.scale', (string) $d['scale'])));
+
+        echo '<div class="panel"><div class="ph"><h3 style="font-size:13px">🎨 ' . h($d['label']) . '</h3><span class="muted sm" style="margin-left:auto">.' . h($skin) . '</span></div>';
+        echo '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+        echo $row('Titre — vertical <span class="muted sm">(+ petit = + haut)</span>', $ctl('lh_' . $skin, 6, 60, $lh));
+        echo $row('Titre — horizontal <span class="muted sm">(+ = à droite)</span>', $ctl('left_' . $skin, -80, 80, $lf));
+        echo $row('Titre — taille', $ctl('fs_' . $skin, 7, 28, $fs));
+        echo $row('Titre — couleur', '<input type="color" id="color_' . h($skin) . '" name="color_' . h($skin) . '" value="' . h($col) . '" style="width:46px;height:28px;padding:0;border:1px solid var(--line2);border-radius:4px;vertical-align:middle"> <span class="muted sm mono">' . h($col) . '</span>');
+        $o = ''; foreach ($fontOpts as $k => $lbl) $o .= '<option value="' . $k . '"' . ($k === $fk ? ' selected' : '') . '>' . $lbl . '</option>';
+        echo $row('Titre — police', '<select id="font_' . h($skin) . '" name="font_' . h($skin) . '">' . $o . '</select>');
+        echo $row('Titre — gras', '<label><input type="checkbox" id="bold_' . h($skin) . '" name="bold_' . h($skin) . '"' . ($bold ? ' checked' : '') . '> en gras</label>');
+        $o = ''; foreach ($alignOpts as $k => $lbl) $o .= '<option value="' . $k . '"' . ($k === $al ? ' selected' : '') . '>' . $lbl . '</option>';
+        echo $row('Titre — alignement', '<select id="align_' . h($skin) . '" name="align_' . h($skin) . '">' . $o . '</select>');
+        echo $row('Hauteur de la barre de titre', $ctl('barh_' . $skin, 10, 80, $bh));
+        echo $row('Marge interne du contenu', $ctl('pad_' . $skin, 0, 40, $pad));
+        echo $row('Zoom de ce skin', $ctl('sscale_' . $skin, 50, 200, $ss, '%'));
+        echo '</table></div>';
     }
-    echo '</table></div>';
 
     echo '<div class="sm-actions"><button class="sm-btn primary" type="submit">✅ Appliquer</button> <a class="sm-btn" href="?p=sitemgr&sec=hometitres">↩️ Annuler</a></div></form>';
 
     echo '<form method="post" class="js" data-reload style="margin-top:8px" onsubmit="return confirm(\'Rétablir TOUS les réglages de la Home aux valeurs par défaut ?\')">' . csrf_field() . '<input type="hidden" name="action" value="home_titres_reset"><button class="sm-btn" type="submit">🧹 Tout rétablir par défaut</button></form>';
 
-    // JS : aperçu en direct (injection CSS dans l\'iframe même origine) + synchro curseur/−/+/champ
-    $keys = json_encode(array_keys(home_title_cfg()));
-    echo '<script>(function(){var SK=' . $keys . ';'
-       . 'function v(id){var e=document.getElementById(id);return e?parseFloat(e.value):0;}'
-       . 'function css(){var o=".hw{font-size:"+v("text_size")+"px !important}";'
-       . 'var sc=v("scale");if(sc&&sc!=100)o+=".hw{transform:scale("+(sc/100)+") !important;transform-origin:top left}";'
-       . 'for(var i=0;i<SK.length;i++){var s=SK[i];o+=".hw.w_skin_"+s+" div.widget-headline h3{position:relative;line-height:"+v("lh_"+s)+"px !important;left:"+v("left_"+s)+"px !important;font-size:"+v("fs_"+s)+"px !important}";}return o;}'
-       . 'function inj(){var f=document.getElementById("htpframe");if(!f)return;try{var d=f.contentDocument||f.contentWindow.document;if(!d||!d.head)return;var st=d.getElementById("htp-live");if(!st){st=d.createElement("style");st.id="htp-live";d.head.appendChild(st);}st.textContent=css();}catch(e){}}'
-       . 'function clampEl(el,x){var mn=parseFloat(el.min),mx=parseFloat(el.max);if(isNaN(x))x=parseFloat(el.value)||0;if(x<mn)x=mn;if(x>mx)x=mx;return Math.round(x);}'
-       . 'function setVal(id,x){var r=document.getElementById(id),n=document.getElementById(id+"_n");if(!r)return;x=clampEl(r,x);r.value=x;if(n)n.value=x;inj();}'
-       . 'document.addEventListener("input",function(e){var t=e.target;if(!t||!t.id)return;if(/_n$/.test(t.id)){var base=t.id.slice(0,-2);if(document.getElementById(base))setVal(base,parseFloat(t.value));}else if(document.getElementById(t.id+"_n")){var n=document.getElementById(t.id+"_n");n.value=t.value;inj();}});'
-       . 'document.addEventListener("click",function(e){var b=e.target.closest?e.target.closest(".htp-step"):null;if(!b)return;e.preventDefault();var id=b.getAttribute("data-t"),d=parseFloat(b.getAttribute("data-d"))||0,r=document.getElementById(id);if(r)setVal(id,parseFloat(r.value)+d);});'
-       . 'var f=document.getElementById("htpframe");if(f)f.addEventListener("load",inj);'
-       . 'window.htpSetHome=function(){var n=(document.getElementById("htphome").value||"Orms").trim();document.getElementById("htpframe").src="/?p=home/"+encodeURIComponent(n);};'
+    // JS : aperçu live (injection CSS dans l\'iframe même origine) + synchro curseur/−/+/champ
+    $keys = json_encode(array_keys(home_skin_cfg()));
+    $padbase = []; foreach (home_skin_cfg() as $s => $d) $padbase[$s] = $d['padbase'];
+    echo '<script>(function(){var SK=' . $keys . ',FONTS=' . json_encode($fonts) . ',PB=' . json_encode($padbase) . ';'
+       . 'function el(id){return document.getElementById(id);}'
+       . 'function v(id){var e=el(id);return e?parseFloat(e.value):0;}'
+       . 'function sv(id){var e=el(id);return e?e.value:"";}'
+       . 'function css(){var o=".hw{font-size:"+v("text_size")+"px !important;line-height:"+(v("text_lh")/100)+" !important}";var g=v("scale")/100;'
+       . 'for(var i=0;i<SK.length;i++){var s=SK[i];'
+       . 'var bh=v("barh_"+s),lh=v("lh_"+s),lf=v("left_"+s),fs=v("fs_"+s),col=sv("color_"+s),fk=sv("font_"+s),bold=(el("bold_"+s)&&el("bold_"+s).checked)?"bold":"normal",al=sv("align_"+s),pad=v("pad_"+s),sc=g*(v("sscale_"+s)/100),pb=PB[s]||[0,0,0,0];'
+       . 'o+=".hw.w_skin_"+s+" div.widget-headline,.hw.w_skin_"+s+" div.widget-corner{height:"+bh+"px !important}";'
+       . 'o+=".hw.w_skin_"+s+" div.widget-headline h3{position:relative;line-height:"+lh+"px !important;left:"+lf+"px !important;font-size:"+fs+"px !important;color:"+col+" !important;font-family:"+(FONTS[fk]||FONTS.verdana)+" !important;font-weight:"+bold+" !important;text-align:"+al+" !important}";'
+       . 'o+=".hw.w_skin_"+s+" div.widget-content{padding:"+(pb[0]+pad)+"px "+(pb[1]+pad)+"px "+(pb[2]+pad)+"px "+(pb[3]+pad)+"px !important}";'
+       . 'if(Math.abs(sc-1)>0.001)o+=".hw.w_skin_"+s+"{transform:scale("+sc+") !important;transform-origin:top left}";'
+       . '}return o;}'
+       . 'function inj(){var f=el("htpframe");if(!f)return;try{var d=f.contentDocument||f.contentWindow.document;if(!d||!d.head)return;var st=d.getElementById("htp-live");if(!st){st=d.createElement("style");st.id="htp-live";d.head.appendChild(st);}st.textContent=css();}catch(e){}}'
+       . 'function clampEl(e,x){var mn=parseFloat(e.min),mx=parseFloat(e.max);if(isNaN(x))x=parseFloat(e.value)||0;if(x<mn)x=mn;if(x>mx)x=mx;return Math.round(x);}'
+       . 'function setVal(id,x){var r=el(id),n=el(id+"_n");if(!r)return;x=clampEl(r,x);r.value=x;if(n)n.value=x;inj();}'
+       . 'function onEdit(e){var t=e.target;if(!t||!t.id){inj();return;}if(/_n$/.test(t.id)){var b=t.id.slice(0,-2);if(el(b))setVal(b,parseFloat(t.value));return;}if(el(t.id+"_n"))el(t.id+"_n").value=t.value;inj();}'
+       . 'var form=el("htpform");if(form){form.addEventListener("input",onEdit);form.addEventListener("change",onEdit);}'
+       . 'document.addEventListener("click",function(e){var b=e.target.closest?e.target.closest(".htp-step"):null;if(!b)return;e.preventDefault();var id=b.getAttribute("data-t"),d=parseFloat(b.getAttribute("data-d"))||0,r=el(id);if(r)setVal(id,parseFloat(r.value)+d);});'
+       . 'var fr=el("htpframe");if(fr)fr.addEventListener("load",inj);'
+       . 'window.htpSetHome=function(){var n=(el("htphome").value||"Orms").trim();el("htpframe").src="/?p=home/"+encodeURIComponent(n);};'
        . '})();</script>';
 }
 function sitemgr_apparence(): void {

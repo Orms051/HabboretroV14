@@ -147,16 +147,27 @@ function home_skin_class(string $key): string {
     $m = ['habbohomes' => 'w_skin_defaultskin', 'metal' => 'w_skin_metalskin', 'hcmachine' => 'w_skin_hc_machineskin', 'notepad' => 'w_skin_notepadskin', 'speechbubble' => 'w_skin_speechbubbleskin', 'stickienote' => 'w_skin_noteitskin'];
     return $m[$key] ?? 'w_skin_defaultskin';
 }
-/** Position/taille par défaut des titres de widgets (réglable en admin → Gestion du Site › Réglages Home).
- *  skin (classe CSS) => [libellé, line-height (vertical : + petit = + haut), left (horizontal), font-size (px)]. */
-function home_title_cfg(): array {
+/** Réglages par SKIN (classe .hw.w_skin_X). Un skin peut être posé sur N'IMPORTE QUEL widget,
+ *  donc ces réglages s'appliquent au skin, pas au widget. Défauts = rendu actuel.
+ *  padbase = padding d'origine du contenu [haut,droite,bas,gauche] (le réglage « marge » s'y ajoute). */
+function home_skin_cfg(): array {
     return [
-        'defaultskin'      => ['Défaut — cadre jaune (Habbo Homes)', 34, -33, 10],
-        'metalskin'        => ['Métal — plaque grise', 21, 0, 10],
-        'hc_machineskin'   => ['HC machine — doré, bandeau vert', 28, 0, 11],
-        'notepadskin'      => ['Bloc-notes — papier à spirale', 29, 2, 12],
-        'noteitskin'       => ['Post-it / note bleue (Stickienote)', 30, 8, 11],
-        'speechbubbleskin' => ['Bulle (Speechbubble)', 12, -4, 13],
+        'defaultskin'      => ['label' => 'Défaut — cadre jaune (Habbo Homes)', 'lh' => 34, 'left' => -33, 'fs' => 10, 'color' => '#ffffff', 'font' => 'verdana', 'bold' => 0, 'align' => 'left',   'barh' => 41, 'pad' => 0, 'scale' => 100, 'padbase' => [4, 16, 19, 4]],
+        'metalskin'        => ['label' => 'Métal — plaque grise',               'lh' => 21, 'left' => 0,   'fs' => 10, 'color' => '#41404a', 'font' => 'verdana', 'bold' => 1, 'align' => 'center', 'barh' => 33, 'pad' => 0, 'scale' => 100, 'padbase' => [1, 26, 23, 7]],
+        'hc_machineskin'   => ['label' => 'HC machine — doré, bandeau vert',    'lh' => 28, 'left' => 0,   'fs' => 11, 'color' => '#ffffff', 'font' => 'verdana', 'bold' => 1, 'align' => 'center', 'barh' => 42, 'pad' => 0, 'scale' => 100, 'padbase' => [0, 46, 31, 0]],
+        'notepadskin'      => ['label' => 'Bloc-notes — papier à spirale',      'lh' => 29, 'left' => 2,   'fs' => 12, 'color' => '#4c3a41', 'font' => 'verdana', 'bold' => 1, 'align' => 'left',   'barh' => 29, 'pad' => 0, 'scale' => 100, 'padbase' => [2, 7, 18, 2]],
+        'noteitskin'       => ['label' => 'Post-it / note bleue (Stickienote)', 'lh' => 30, 'left' => 8,   'fs' => 11, 'color' => '#202933', 'font' => 'verdana', 'bold' => 1, 'align' => 'left',   'barh' => 30, 'pad' => 0, 'scale' => 100, 'padbase' => [7, 9, 30, 9]],
+        'speechbubbleskin' => ['label' => 'Bulle (Speechbubble)',               'lh' => 12, 'left' => -4,  'fs' => 13, 'color' => '#666666', 'font' => 'verdana', 'bold' => 1, 'align' => 'left',   'barh' => 12, 'pad' => 0, 'scale' => 100, 'padbase' => [17, 10, 22, 0]],
+    ];
+}
+/** Polices proposées pour les titres. clé => pile CSS. */
+function home_font_map(): array {
+    return [
+        'verdana' => 'Verdana,Arial,sans-serif',
+        'arial'   => 'Arial,Helvetica,sans-serif',
+        'tahoma'  => 'Tahoma,Verdana,sans-serif',
+        'georgia' => 'Georgia,"Times New Roman",serif',
+        'courier' => '"Courier New",monospace',
     ];
 }
 /** Largeur par défaut de chaque type de widget Home. type => [libellé, largeur px]. */
@@ -250,17 +261,33 @@ function home_css(): string {
 ';
     /* Overrides position des titres — réglables depuis l'admin (Gestion du Site › Titres des widgets Home).
        Même sélecteur que les règles de base => s'applique par-dessus les valeurs par défaut. */
-    // Taille du texte (contenu) + agrandissement global des widgets
-    $ts = max(8, min(20, (int) setting_get('home.text.size', '11')));
-    $sc = max(60, min(180, (int) setting_get('home.scale', '100')));
-    $css .= '.hw{font-size:' . $ts . 'px}';
-    if ($sc !== 100) $css .= '.hw{transform:scale(' . number_format($sc / 100, 3, '.', '') . ');transform-origin:top left}';
-    // Titres : position (vertical/horizontal) + taille, par skin
-    foreach (home_title_cfg() as $skin => $d) {
-        $lh = max(6, min(60, (int) setting_get('home.title.' . $skin . '.lh', (string) $d[1])));
-        $lf = max(-80, min(80, (int) setting_get('home.title.' . $skin . '.left', (string) $d[2])));
-        $fs = max(7, min(28, (int) setting_get('home.title.' . $skin . '.fs', (string) $d[3])));
-        $css .= '.hw.w_skin_' . $skin . ' div.widget-headline h3{position:relative;line-height:' . $lh . 'px;left:' . $lf . 'px;font-size:' . $fs . 'px}';
+    // --- Global : taille texte + interligne + agrandissement global ---
+    $ts  = max(8, min(20, (int) setting_get('home.text.size', '11')));
+    $tlh = max(100, min(220, (int) setting_get('home.text.lh', '140')));
+    $gsc = max(60, min(180, (int) setting_get('home.scale', '100')));
+    $css .= '.hw{font-size:' . $ts . 'px;line-height:' . number_format($tlh / 100, 2, '.', '') . '}';
+    // --- Par skin : titre (position/taille/couleur/police/gras/alignement), hauteur de barre, marge, zoom ---
+    $fonts = home_font_map();
+    foreach (home_skin_cfg() as $skin => $d) {
+        $lh = max(6, min(60, (int) setting_get('home.title.' . $skin . '.lh', (string) $d['lh'])));
+        $lf = max(-80, min(80, (int) setting_get('home.title.' . $skin . '.left', (string) $d['left'])));
+        $fs = max(7, min(28, (int) setting_get('home.title.' . $skin . '.fs', (string) $d['fs'])));
+        $col = (string) setting_get('home.title.' . $skin . '.color', $d['color']);
+        if (!preg_match('/^#[0-9A-Fa-f]{6}$/', $col)) $col = $d['color'];
+        $fk = (string) setting_get('home.title.' . $skin . '.font', $d['font']);
+        $ff = $fonts[$fk] ?? $fonts['verdana'];
+        $bold = ((int) setting_get('home.title.' . $skin . '.bold', (string) $d['bold'])) ? 'bold' : 'normal';
+        $al = (string) setting_get('home.title.' . $skin . '.align', $d['align']);
+        if (!in_array($al, ['left', 'center', 'right'], true)) $al = $d['align'];
+        $bh  = max(10, min(80, (int) setting_get('home.skin.' . $skin . '.barh', (string) $d['barh'])));
+        $pad = max(0, min(40, (int) setting_get('home.skin.' . $skin . '.pad', (string) $d['pad'])));
+        $ssc = max(50, min(200, (int) setting_get('home.skin.' . $skin . '.scale', (string) $d['scale'])));
+        $sc  = ($gsc / 100) * ($ssc / 100);
+        [$pt, $pr, $pb, $pl] = $d['padbase'];
+        $css .= '.hw.w_skin_' . $skin . ' div.widget-headline,.hw.w_skin_' . $skin . ' div.widget-corner{height:' . $bh . 'px}';
+        $css .= '.hw.w_skin_' . $skin . ' div.widget-headline h3{position:relative;line-height:' . $lh . 'px;left:' . $lf . 'px;font-size:' . $fs . 'px;color:' . $col . ';font-family:' . $ff . ';font-weight:' . $bold . ';text-align:' . $al . '}';
+        $css .= '.hw.w_skin_' . $skin . ' div.widget-content{padding:' . ($pt + $pad) . 'px ' . ($pr + $pad) . 'px ' . ($pb + $pad) . 'px ' . ($pl + $pad) . 'px}';
+        if (abs($sc - 1) > 0.001) $css .= '.hw.w_skin_' . $skin . '{transform:scale(' . number_format($sc, 3, '.', '') . ');transform-origin:top left}';
     }
     return $css . '</style>';
 }
