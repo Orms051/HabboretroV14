@@ -187,6 +187,14 @@ if (isset($_GET['rkstatus'])) {
     exit;
 }
 
+/* ---------- Compteur d'Appels à l'aide en attente (AJAX, pour le badge auto-rafraîchi) ---------- */
+if (isset($_GET['cfhcount'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    if (!tab_allowed('alerts')) { http_response_code(403); echo '{"count":0}'; exit; }
+    echo json_encode(['count' => cfh_pending_count()]);
+    exit;
+}
+
 /* ---------- Téléchargement d'une sauvegarde (rang 7) ---------- */
 if (isset($_GET['dlbackup']) && (int)($_SESSION['admin']['rank'] ?? 0) >= 7) {
     $name = basename((string)$_GET['dlbackup']);
@@ -1480,9 +1488,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($reply === '') { $ok = false; $msg = '❌ Message de réponse vide.'; break; }
                 $r = db()->prepare('SELECT caller_id FROM calls_for_help WHERE id=?'); $r->execute([$cid]); $callerId = (int)$r->fetchColumn();
                 if ($callerId <= 0) { $ok = false; $msg = '❌ Appel introuvable.'; break; }
-                $sig = trim($_POST['sender'] ?? ($_SESSION['admin']['username'] ?? ''));
-                $body = kepler_text('Reponse de la moderation a ton appel a l\'aide :') . '<br><br>' . kepler_text($reply) . ($sig !== '' ? '<br><br>- ' . kepler_text($sig) : '');
-                $sent = rcon_send('user_alert', ['userId' => (string)$callerId, 'message' => $body]);
+                // Dialogue CFH natif : le client préfixe « Ton appel a reçu la réponse suivante : » → on n'envoie que le texte.
+                $body = kepler_text($reply);
+                $sent = rcon_send('cfh_reply', ['userId' => (string)$callerId, 'message' => $body]);
                 // Trace la réponse dans la note interne (horodatée) pour garder l'historique.
                 $stamp = '[' . date('d/m H:i') . ' ' . ($_SESSION['admin']['username'] ?? '?') . '] → ' . mb_substr($reply, 0, 300);
                 db()->prepare("UPDATE calls_for_help SET staff_note = TRIM(CONCAT(COALESCE(staff_note,''), CASE WHEN staff_note IS NULL OR staff_note='' THEN '' ELSE '\n' END, ?)) WHERE id=?")->execute([$stamp, $cid]);
@@ -4288,6 +4296,7 @@ function page_dashboard(): void {
 
     /* --- À TRAITER (en premier : ce qui demande une action du staff) --- */
     $todo = [];
+    if (tab_allowed('alerts')) { try { $todo[] = ['🆘', cfh_pending_count(), 'Appels à l\'aide', '?p=alerts&sec=cfh']; } catch (Throwable $e) {} }
     if (tab_allowed('homemod')) { try { $todo[] = ['🚩', (int)$d->query("SELECT COUNT(*) FROM home_reports WHERE status='new'")->fetchColumn(), 'Signalements Homes', '?p=homemod&sec=reports']; } catch (Throwable $e) {} }
     if (tab_allowed('messages') && function_exists('conv_unread_staff')) { try { $todo[] = ['💬', conv_unread_staff(), 'Conversations à répondre', '?p=messages&vue=assistance']; } catch (Throwable $e) {} }
     if (tab_allowed('messages')) { try { $todo[] = ['🔑', (int)$d->query("SELECT COUNT(*) FROM password_resets WHERE status='pending'")->fetchColumn(), 'Récupération de compte', '?p=messages&vue=recovery']; } catch (Throwable $e) {} }
@@ -4299,7 +4308,7 @@ function page_dashboard(): void {
     if (!$todo) echo '<div class="panel"><div class="empty" style="padding:14px">✅ Rien à traiter pour le moment — tout est à jour 🎉</div></div>';
     else {
         echo '<div class="todo">';
-        foreach ($todo as $t) echo '<a class="todocard urgent" href="' . $t[3] . '"><span class="tn">' . (int)$t[1] . '</span><span class="tl">' . $t[0] . ' ' . h($t[2]) . '</span></a>';
+        foreach ($todo as $t) { $idAttr = (strpos((string)$t[3], 'p=alerts') !== false) ? ' id="dashCfhCount"' : ''; echo '<a class="todocard urgent" href="' . $t[3] . '"><span class="tn"' . $idAttr . '>' . (int)$t[1] . '</span><span class="tl">' . $t[0] . ' ' . h($t[2]) . '</span></a>'; }
         echo '</div>';
     }
 
@@ -6163,8 +6172,8 @@ function alerts_sec_cfh(): void {
 
             // Répondre directement au joueur (popup en jeu via RCON) — s'il est connecté.
             echo '<form method="post" class="js" data-reload style="margin:0 0 12px"><input type="hidden" name="action" value="cfh_reply"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
-            echo '<label class="sm">💬 Répondre au joueur (popup en jeu)<textarea name="reply" rows="2" maxlength="300" style="width:100%" placeholder="Ta réponse à ' . h($caller) . '… (ℹ️ reçue seulement s\'il est connecté ; les emoji ne s\'affichent pas)"></textarea></label>';
-            echo '<div class="row" style="gap:8px;align-items:flex-end;margin-top:4px"><label class="sm" style="flex:0 0 160px">Signature (option)<input name="sender" value="' . h((string)($_SESSION['admin']['username'] ?? '')) . '"></label><button>💬 Envoyer la réponse</button></div></form>';
+            echo '<label class="sm">💬 Répondre au joueur (dialogue « Ton appel a reçu la réponse suivante »)<textarea name="reply" rows="2" maxlength="300" style="width:100%" placeholder="Ta réponse à ' . h($caller) . '… (ℹ️ reçue seulement s\'il est connecté ; les emoji ne s\'affichent pas)"></textarea></label>';
+            echo '<div style="margin-top:4px"><button>💬 Envoyer la réponse</button></div></form>';
 
             echo '<div class="row" style="gap:16px;flex-wrap:wrap;align-items:flex-start">';
             // Note interne
@@ -7069,7 +7078,8 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
   <button type="button" class="sbtoggle" onclick="toggleSidebar()" title="Replier / déplier le menu" aria-label="Replier le menu">☰</button>
   <div class="tb-crumb"><?php if ($secLabel !== '') echo '<span class="tb-sec">' . h($secLabel) . '</span><span class="tb-sep">›</span>'; ?><b><?= h($pageLabel) ?></b></div>
   <form class="tb-search" method="get" action="?"><input type="hidden" name="p" value="search"><input name="q" placeholder="Rechercher un joueur, un mobi, une salle…" value="<?= $sq ?>"><button type="submit" title="Rechercher">🔍</button></form>
-  <?php if (tab_allowed('alerts')) { $cfhN = cfh_pending_count(); ?><a class="tb-status" href="?p=alerts&sec=cfh" title="Alertes &amp; annonces — appels à l'aide des joueurs<?= $cfhN > 0 ? ' (' . $cfhN . ' en attente)' : '' ?>" style="margin-right:10px">📢 Alertes<?php if ($cfhN > 0) echo '<span style="background:#e5484d;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:800;margin-left:5px">' . $cfhN . '</span>'; ?></a><?php } ?>
+  <?php if (tab_allowed('alerts')) { $cfhN = cfh_pending_count(); ?><a id="cfhAlertBtn" class="tb-status" href="?p=alerts&sec=cfh" title="Alertes &amp; annonces — appels à l'aide des joueurs" style="margin-right:10px">📢 Alertes<span id="cfhBadge" style="background:#e5484d;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:800;margin-left:5px;<?= $cfhN > 0 ? '' : 'display:none' ?>"><?= (int)$cfhN ?></span></a>
+  <script>(function(){var el=document.getElementById('cfhBadge');if(!el)return;function tick(){fetch('?cfhcount=1',{headers:{'X-Requested-With':'fetch'}}).then(function(r){return r.json();}).then(function(d){var n=(d&&d.count)?d.count:0;el.textContent=n;el.style.display=n>0?'':'none';var dh=document.getElementById('dashCfhCount');if(dh)dh.textContent=n;}).catch(function(){});}setInterval(tick,20000);})();</script><?php } ?>
   <a class="tb-status <?= $emuUp ? 'up' : 'down' ?>" href="?p=server" title="État de l'émulateur — ouvrir la page Serveur"><span class="dot"></span><?= $emuUp ? 'En marche' : 'Arrêté' ?></a>
 </header><div class="content"><?php
     // Plus de barre d'onglets horizontale pour le groupe courant : ses onglets sont

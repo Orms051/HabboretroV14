@@ -10,6 +10,7 @@ import org.alexdev.kepler.game.player.PlayerDetails;
 import org.alexdev.kepler.game.player.PlayerManager;
 import org.alexdev.kepler.log.Log;
 import org.alexdev.kepler.messages.outgoing.user.ALERT;
+import org.alexdev.kepler.messages.outgoing.moderation.CRY_REPLY;
 import org.alexdev.kepler.messages.outgoing.user.currencies.CREDIT_BALANCE;
 import org.alexdev.kepler.server.rcon.messages.RconMessage;
 import org.slf4j.Logger;
@@ -113,12 +114,13 @@ public class RconConnectionHandler extends ChannelInboundHandlerAdapter {
                     }
 
                     break;
-                case USER_ALERT:
-                    // Réponse ciblée à un joueur (ex. réponse à un Appel à l'aide depuis l'admin web).
+                case CFH_REPLY:
+                    // Réponse à un Appel à l'aide depuis l'admin web : même dialogue que le
+                    // « Prendre et répondre » en jeu (CRY_REPLY = "Ton appel a reçu la réponse suivante : ...").
                     Player target = PlayerManager.getInstance().getPlayerById(Integer.parseInt(message.getValues().get("userId")));
 
                     if (target != null) {
-                        target.send(new ALERT(message.getValues().get("message")));
+                        target.send(new CRY_REPLY(message.getValues().get("message")));
                     }
 
                     break;

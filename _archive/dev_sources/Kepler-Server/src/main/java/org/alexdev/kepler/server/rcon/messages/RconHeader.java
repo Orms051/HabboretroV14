@@ -6,7 +6,7 @@ public enum RconHeader {
     REFRESH_CLUB("refresh_club"),
     REFRESH_HAND("refresh_hand"),
     REFRESH_CREDITS("refresh_credits"),
-    USER_ALERT("user_alert"),
+    CFH_REPLY("cfh_reply"),
     SHUTDOWN("shutdown");
 
     private final String rawHeader;
