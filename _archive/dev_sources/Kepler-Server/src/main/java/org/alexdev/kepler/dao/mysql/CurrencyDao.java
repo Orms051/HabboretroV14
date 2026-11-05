@@ -87,6 +87,11 @@ public class CurrencyDao {
                 }
             }
 
+            // Journal des transactions (porte-monnaie) — un mouvement par joueur crédité.
+            for (var kvp : playerMap.entrySet()) {
+                CreditLogDao.add(kvp.getKey().getId(), kvp.getValue(), "0", "", "web_internal");
+            }
+
         } catch (Exception e) {
             try {
                 // Rollback these queries
@@ -145,6 +150,9 @@ public class CurrencyDao {
             if (row != null && row.next()) {
                 int updatedAmount = row.getInt("credits");
                 details.setCredits(updatedAmount);
+
+                // Journal des transactions (porte-monnaie) — crédits reçus.
+                CreditLogDao.add(details.getId(), amount, "0", "", "web_internal");
             }
 
         } catch (Exception e) {
@@ -214,6 +222,9 @@ public class CurrencyDao {
                 }
 
                 details.setCredits(updatedAmount);
+
+                // Journal des transactions (porte-monnaie) — crédits dépensés.
+                CreditLogDao.add(details.getId(), -amount, "0", "", "stuff_store");
             }
 
         } catch (Exception e) {

@@ -264,7 +264,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $os = db()->prepare('SELECT username,`rank`,credits,motto FROM users WHERE id=?'); $os->execute([$uid]); $o = $os->fetch();
                 db()->prepare('UPDATE users SET rank=?, credits=?, motto=? WHERE id=?')->execute([$nr, $nc, $nm, $uid]);
                 $ch = [];
-                if ($o) { if ((int)$o['rank'] !== $nr) $ch[] = 'rang ' . $o['rank'] . '→' . $nr; if ((int)$o['credits'] !== $nc) $ch[] = 'crédits ' . $o['credits'] . '→' . $nc; if ((string)$o['motto'] !== $nm) $ch[] = 'motto modifié'; }
+                if ($o) { if ((int)$o['rank'] !== $nr) $ch[] = 'rang ' . $o['rank'] . '→' . $nr; if ((int)$o['credits'] !== $nc) { $ch[] = 'crédits ' . $o['credits'] . '→' . $nc; credit_log_add($uid, $nc - (int)$o['credits'], 'web_internal'); } if ((string)$o['motto'] !== $nm) $ch[] = 'motto modifié'; }
                 $msg = '✅ ' . ($o['username'] ?? ('#' . $uid)) . ' mis à jour' . ($ch ? ' (' . implode(', ', $ch) . ')' : '') . '.'; break;
             case 'user_details':
                 $bd = parse_fr_date($_POST['birthday'] ?? '');
@@ -290,6 +290,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = '✅ Compte "' . $u . '" créé.'; break;
             case 'user_credits':
                 db()->prepare('UPDATE users SET credits = credits + ? WHERE id=?')->execute([(int)$_POST['delta'], (int)$_POST['id']]);
+                credit_log_add((int)$_POST['id'], (int)$_POST['delta'], 'web_internal'); // porte-monnaie
                 $msg = '💰 ' . ((int)$_POST['delta'] >= 0 ? '+' : '') . (int)$_POST['delta'] . ' crédits.'; break;
             case 'user_hc':
                 $days = (int)$_POST['days']; $now = time(); $uid = (int)$_POST['id']; // UNIX en SECONDES (comme le JAR Kepler)
@@ -3439,6 +3440,18 @@ function action_tab(string $a): string {
         'db_backup' => 'mysql',
     ];
     return $map[$a] ?? '';
+}
+
+/* ---- Journal des transactions de crédits (porte-monnaie / dialogue « Transactions du compte ») ----
+   Partagé avec l'ému (table credit_logs) : les dons de crédits faits depuis l'admin
+   apparaissent dans le porte-monnaie du joueur, aux côtés de ses achats en jeu. */
+function ensure_credit_logs(): void {
+    static $done = false; if ($done) return; $done = true;
+    db()->exec("CREATE TABLE IF NOT EXISTS credit_logs (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, credit_value INT NOT NULL DEFAULT 0, real_value VARCHAR(16) NOT NULL DEFAULT '0', currency VARCHAR(16) NOT NULL DEFAULT '', system_name VARCHAR(32) NOT NULL DEFAULT 'web_internal', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX ix_user (user_id, created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+function credit_log_add(int $uid, int $delta, string $system = 'web_internal'): void {
+    if ($uid <= 0 || $delta === 0) return;
+    try { ensure_credit_logs(); db()->prepare("INSERT INTO credit_logs (user_id, credit_value, system_name) VALUES (?, ?, ?)")->execute([$uid, $delta, $system]); } catch (Throwable $e) {}
 }
 
 /* ---- Journal d'actions admin ---- */
