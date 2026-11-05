@@ -124,6 +124,20 @@ public class RconConnectionHandler extends ChannelInboundHandlerAdapter {
                     }
 
                     break;
+                case KICK_USER:
+                    // Déconnexion (kick) d'un joueur depuis l'admin web : envoie une alerte
+                    // optionnelle puis le déconnecte proprement (kickFromServer -> HOTEL_LOGOUT).
+                    Player kicked = PlayerManager.getInstance().getPlayerById(Integer.parseInt(message.getValues().get("userId")));
+
+                    if (kicked != null) {
+                        String kickMsg = message.getValues().get("message");
+                        if (kickMsg != null && !kickMsg.isEmpty()) {
+                            kicked.send(new ALERT(kickMsg));
+                        }
+                        PlayerManager.getInstance().disconnectSession(kicked.getDetails().getId());
+                    }
+
+                    break;
                 case SHUTDOWN:
                     // Arrêt propre déclenché à distance (bouton admin -> pack.ps1 -> RCON).
                     // Indépendant de la console : fiable quel que soit le lanceur (fin du Ctrl+C fragile).

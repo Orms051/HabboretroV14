@@ -190,8 +190,12 @@ if (isset($_GET['rkstatus'])) {
 /* ---------- Compteur d'Appels à l'aide en attente (AJAX, pour le badge auto-rafraîchi) ---------- */
 if (isset($_GET['cfhcount'])) {
     header('Content-Type: application/json; charset=utf-8');
-    if (!tab_allowed('alerts')) { http_response_code(403); echo '{"count":0}'; exit; }
-    echo json_encode(['count' => cfh_pending_count()]);
+    header('Cache-Control: no-store');
+    $out = ['count' => 0, 'conv' => 0, 'online' => 0];
+    if (tab_allowed('alerts')) { try { $out['count'] = cfh_pending_count(); } catch (Throwable $e) {} }
+    if (tab_allowed('messages') && function_exists('conv_unread_staff')) { try { $out['conv'] = (int) conv_unread_staff(); } catch (Throwable $e) {} }
+    try { $o = db()->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn(); $out['online'] = $o !== false ? (int) $o : 0; } catch (Throwable $e) {}
+    echo json_encode($out);
     exit;
 }
 
@@ -1503,6 +1507,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 db()->prepare('DELETE FROM calls_for_help WHERE id=?')->execute([$cid]);
                 admin_log('cfh_delete', 'appel #' . $cid);
                 $msg = '🗑️ Appel supprimé.'; break;
+            }
+            case 'kick_user': {
+                // Déconnecte (kick) un joueur connecté via RCON. Réversible : il peut se reconnecter.
+                $uid = (int)($_POST['id'] ?? 0);
+                if ($uid <= 0) { $ok = false; $msg = '❌ Joueur invalide.'; break; }
+                $reason = trim((string)($_POST['reason'] ?? ''));
+                $params = ['userId' => (string)$uid];
+                if ($reason !== '') $params['message'] = kepler_text($reason);
+                $sent = rcon_send('kick_user', $params);
+                $ok = $sent; $msg = $sent ? '👢 Joueur déconnecté (s\'il était connecté).' : '❌ Émulateur injoignable (RCON).'; break;
             }
             default: $ok = false; $msg = 'Action inconnue.';
         }
@@ -3403,6 +3417,7 @@ function action_tab(string $a): string {
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
         'ban_add' => 'moderation', 'ban_remove' => 'moderation', 'bus_type' => 'bus',
         'cfh_note' => 'moderation', 'cfh_close' => 'moderation', 'cfh_reopen' => 'moderation', 'cfh_reply' => 'moderation', 'cfh_delete' => 'moderation',
+        'kick_user' => 'moderation',
         'cmd_fav_toggle' => 'commandes',
         'pwreset_do' => 'messages', 'pwreset_reject' => 'messages',
         'cmsg_handle' => 'messages', 'cmsg_delete' => 'messages', 'umsg_send' => 'users',
@@ -3439,7 +3454,7 @@ function user_log(int $uid, string $action, string $detail = ''): void {
 }
 /* Journalise une action POST si elle vise un joueur (jamais de secret). */
 function user_history_maybe(string $action): void {
-    static $watched = ['user_update' => 1, 'user_details' => 1, 'user_credits' => 1, 'user_hc' => 1, 'user_rank' => 1, 'user_password' => 1, 'badge_add' => 1, 'badge_remove' => 1, 'ban_add' => 1, 'ban_remove' => 1, 'clear_hand' => 1, 'note_add' => 1, 'umsg_send' => 1];
+    static $watched = ['user_update' => 1, 'user_details' => 1, 'user_credits' => 1, 'user_hc' => 1, 'user_rank' => 1, 'user_password' => 1, 'badge_add' => 1, 'badge_remove' => 1, 'ban_add' => 1, 'ban_remove' => 1, 'clear_hand' => 1, 'note_add' => 1, 'umsg_send' => 1, 'kick_user' => 1];
     if (!isset($watched[$action])) return;
     $uid = 0;
     if (isset($_POST['id'])) $uid = (int)$_POST['id'];
@@ -3454,6 +3469,7 @@ function user_history_maybe(string $action): void {
         case 'user_rank': $d = 'Rang → ' . (int)($_POST['rank'] ?? 0); break;
         case 'ban_add': $d = 'Banni (' . (int)($_POST['days'] ?? 0) . ' j) — ' . mb_substr(trim((string)($_POST['message'] ?? '')), 0, 80); break;
         case 'ban_remove': $d = 'Bannissement levé'; break;
+        case 'kick_user': $rk = trim((string)($_POST['reason'] ?? '')); $d = 'Déconnecté (kick)' . ($rk !== '' ? ' — ' . mb_substr($rk, 0, 80) : ''); break;
         case 'clear_hand': $d = 'Inventaire (main) vidé'; break;
         case 'badge_add': $d = 'Badge ajouté : ' . mb_substr(strtoupper(trim((string)($_POST['badge'] ?? ''))), 0, 3); break;
         case 'badge_remove': $d = 'Badge retiré'; break;
@@ -4314,7 +4330,7 @@ function page_dashboard(): void {
 
     /* --- Indicateurs utiles d'abord --- */
     echo '<div class="grid">';
-    stat_box('🟢', $online !== false ? $online : '0', 'En ligne', 'green');
+    stat_box('🟢', $online !== false ? $online : '0', 'En ligne', 'green', 'dashOnline');
     stat_box('👥', $users, 'Comptes', 'blue');
     stat_box('🏠', $priv, 'Appartements', 'blue');
     stat_box('🏛️', $rooms, 'Salles publiques', 'blue');
@@ -4324,7 +4340,7 @@ function page_dashboard(): void {
 
     /* --- Activité (large) + Actions fréquentes (côté) --- */
     echo '<div class="dcols">';
-    echo '<div class="panel"><div class="ph"><h3>🕓 Activité récente</h3><span class="muted sm" style="margin-left:auto">' . ($online !== false ? (int)$online : 0) . ' en ligne</span></div><table class="clean"><tr><th>Joueur</th><th>Rang</th><th>Dernière connexion</th></tr>';
+    echo '<div class="panel"><div class="ph"><h3>🕓 Activité récente</h3><span class="muted sm" style="margin-left:auto"><span id="dashOnline2">' . ($online !== false ? (int)$online : 0) . '</span> en ligne</span></div><table class="clean"><tr><th>Joueur</th><th>Rang</th><th>Dernière connexion</th></tr>';
     foreach ($d->query('SELECT username,rank,last_online FROM users WHERE last_online>0 ORDER BY last_online DESC LIMIT 10') as $u) {
         $ago = (int)$u['last_online']; $when = $ago > 0 ? date('d/m/Y H:i', $ago) : '—'; $recent = $ago > (time() - 300);
         echo '<tr><td><b>' . h($u['username']) . '</b>' . ($recent ? ' <span class="rk" style="background:#2bbf5b">actif</span>' : '') . '</td><td>' . rank_badge((int)$u['rank']) . '</td><td class="sm muted">' . $when . '</td></tr>';
@@ -4832,6 +4848,7 @@ function page_user(): void {
     if ($isBan) echo '<p>🚫 Banni : <b>' . h($ban['message']) . '</b> (' . ((int)$ban['banned_until'] >= BAN_PERMANENT ? '♾️ définitif' : 'jusqu\'au ' . date('d/m/Y', (int)($ban['banned_until'] / 1000))) . ') <form method="post" class="js" data-reload style="display:inline"><input type="hidden" name="action" value="ban_remove">' . csrf_field() . '<input type="hidden" name="value" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '"><button class="mini ghost">Lever le ban</button></form></p>';
     else echo '<form method="post" class="js" data-reload style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;max-width:760px"><input type="hidden" name="action" value="ban_add"><input type="hidden" name="type" value="USER_ID"><input type="hidden" name="value" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<label>Durée (j · 0 = définitif)<input type="number" name="days" value="0" style="width:150px"></label><label style="flex:1;min-width:220px">Motif<input name="message" value="Comportement inapproprié"></label><button style="background:var(--red)">🚫 Bannir</button></form>';
     echo '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:16px;border-top:1px solid var(--line2);padding-top:14px">';
+    echo '<form method="post" class="js" data-reload data-confirm="Déconnecter ' . h($u['username']) . ' du jeu ? (il pourra se reconnecter)" style="margin:0"><input type="hidden" name="action" value="kick_user"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button style="background:#c78a2a">👢 Déconnecter du jeu</button></form>';
     echo '<form method="post" class="js" data-reload data-confirm="⚠️ SUPPRIMER TOUT l\'inventaire (tous les objets non posés) de ' . h($u['username']) . ' ? Irréversible." style="margin:0">' . csrf_field() . '<input type="hidden" name="action" value="clear_hand"><input type="hidden" name="username" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '"><button style="background:#c2603a">🧹 Vider TOUT l\'inventaire</button></form>';
     echo '<form method="post" class="js" data-reload data-confirm="Supprimer définitivement le compte ' . h($u['username']) . ' ? Irréversible." style="margin:0"><input type="hidden" name="action" value="user_delete"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="?p=users">' . csrf_field() . '<button style="background:var(--red)">🗑️ Supprimer ce compte</button></form>';
     echo '</div></div>';
@@ -4846,7 +4863,23 @@ function page_user(): void {
         if (!$histRows) echo '<div class="empty">Aucune action enregistrée pour l\'instant.</div>';
         else { echo '<table class="clean"><tr><th>Quand</th><th>Par</th><th>Action</th><th>Détail</th></tr>'; foreach ($histRows as $hR) echo '<tr><td class="sm muted" style="white-space:nowrap">' . h(date('d/m/Y H:i', strtotime((string)$hR['created_at']))) . '</td><td class="sm"><b>' . h((string)$hR['author']) . '</b></td><td><code class="sm">' . h((string)$hR['action']) . '</code></td><td class="sm">' . h((string)$hR['detail']) . '</td></tr>'; echo '</table>'; }
     } catch (Throwable $e) { echo '<div class="empty">Historique indisponible.</div>'; }
-    echo '</div></section>';
+    echo '</div>';
+    // Appels à l'aide passés de ce joueur (repérer un usage abusif / un récidiviste)
+    try {
+        ensure_calls_for_help();
+        $cfhH = db()->prepare("SELECT id,category,status,message,created_at FROM calls_for_help WHERE caller_id=? ORDER BY created_at DESC LIMIT 50");
+        $cfhH->execute([$id]); $cfhRows = $cfhH->fetchAll();
+        echo '<div class="panel"><div class="ph"><h3>🆘 Appels à l\'aide passés</h3><span class="muted sm" style="margin-left:auto">' . count($cfhRows) . ' au total</span></div>';
+        if (!$cfhRows) echo '<div class="empty">Aucun appel à l\'aide de ce joueur.</div>';
+        else {
+            $stMapH = ['open' => '🔴 En attente', 'picked' => '🟡 Pris en charge', 'closed' => '✅ Clôturé'];
+            echo '<table class="clean"><tr><th>Quand</th><th>Catégorie</th><th>Statut</th><th>Message</th><th></th></tr>';
+            foreach ($cfhRows as $c) echo '<tr><td class="sm muted" style="white-space:nowrap">' . h(date('d/m/Y H:i', strtotime((string)$c['created_at']))) . '</td><td class="sm muted">' . h(cfh_cat_label((int)$c['category'])) . '</td><td class="sm">' . h($stMapH[(string)$c['status']] ?? (string)$c['status']) . '</td><td class="sm">' . h(mb_strimwidth((string)$c['message'], 0, 60, '…')) . '</td><td style="text-align:right"><a class="mini ghost" href="?p=alerts&sec=cfh&log=' . (int)$c['id'] . '" title="Journal de discussion">📜</a></td></tr>';
+            echo '</table>';
+        }
+        echo '</div>';
+    } catch (Throwable $e) {}
+    echo '</section>';
     echo '</div>'; // fin conteneur d'onglets
 }
 
@@ -5494,6 +5527,17 @@ function page_moderation(): void {
         foreach ($al as $a) echo '<tr><td class="sm muted">' . h(date('d/m H:i', strtotime((string)$a['created_at']))) . '</td><td>' . h($lbl[$a['action']] ?? $a['action']) . '</td><td>' . h((string)($a['staff'] ?? '?')) . '</td><td>' . h((string)($a['cible'] ?? '-')) . '</td><td class="muted sm">' . h((string)$a['message']) . '</td></tr>';
         echo '</table>';
     }
+    echo '</div>';
+    // --- Journal des actions admin (côté web) ---
+    echo '<div class="panel"><div class="ph"><h3>🗂️ Journal des actions (admin web)</h3><span class="muted sm" style="margin-left:auto">actions faites depuis ce panneau</span></div>';
+    try {
+        ensure_admin_log();
+        $wl = db()->query('SELECT author,action,detail,created_at FROM admin_log ORDER BY id DESC LIMIT 30')->fetchAll();
+        if (!$wl) echo '<div class="empty">Aucune action web enregistrée pour le moment.</div>';
+        else { echo '<table class="clean"><tr><th>Date</th><th>Par</th><th>Action</th><th>Détail</th></tr>';
+            foreach ($wl as $a) echo '<tr><td class="sm muted" style="white-space:nowrap">' . h(date('d/m H:i', strtotime((string)$a['created_at']))) . '</td><td class="sm"><b>' . h((string)$a['author']) . '</b></td><td><code class="sm">' . h((string)$a['action']) . '</code></td><td class="sm muted">' . h((string)$a['detail']) . '</td></tr>';
+            echo '</table>'; }
+    } catch (Throwable $e) { echo '<div class="empty">Journal web indisponible.</div>'; }
     echo '</div>';
     // --- Logs de chat ---
     $cu = trim($_GET['cu'] ?? '');
@@ -6172,8 +6216,13 @@ function alerts_sec_cfh(): void {
 
             // Répondre directement au joueur (popup en jeu via RCON) — s'il est connecté.
             echo '<form method="post" class="js" data-reload style="margin:0 0 12px"><input type="hidden" name="action" value="cfh_reply"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
-            echo '<label class="sm">💬 Répondre au joueur (dialogue « Ton appel a reçu la réponse suivante »)<textarea name="reply" rows="2" maxlength="300" style="width:100%" placeholder="Ta réponse à ' . h($caller) . '… (ℹ️ reçue seulement s\'il est connecté ; les emoji ne s\'affichent pas)"></textarea></label>';
-            echo '<div style="margin-top:4px"><button>💬 Envoyer la réponse</button></div></form>';
+            echo '<label class="sm">💬 Répondre au joueur (dialogue « Ton appel a reçu la réponse suivante »)<textarea id="cfhr' . $cid . '" name="reply" rows="2" maxlength="300" style="width:100%" placeholder="Ta réponse à ' . h($caller) . '… (ℹ️ reçue seulement s\'il est connecté ; les emoji ne s\'affichent pas)"></textarea></label>';
+            // Réponses pré-écrites : remplissent la zone de texte en 1 clic.
+            $qr = ['Bonjour, un membre du staff arrive pour t\'aider.', 'C\'est bien noté, on s\'en occupe tout de suite.', 'Ce n\'est pas une urgence pour le staff, merci de ta compréhension.', 'Problème résolu. Bon jeu sur l\'hôtel !'];
+            echo '<div class="row" style="gap:5px;flex-wrap:wrap;margin-top:5px">';
+            foreach ($qr as $qm) echo '<button type="button" class="mini ghost" data-m="' . h($qm) . '" onclick="var t=document.getElementById(\'cfhr' . $cid . '\');t.value=this.getAttribute(\'data-m\');t.focus();">' . h(mb_strimwidth($qm, 0, 30, '…')) . '</button>';
+            echo '</div>';
+            echo '<div style="margin-top:6px"><button>💬 Envoyer la réponse</button></div></form>';
 
             echo '<div class="row" style="gap:16px;flex-wrap:wrap;align-items:flex-start">';
             // Note interne
@@ -6186,6 +6235,10 @@ function alerts_sec_cfh(): void {
             echo '<button class="mini" style="margin-top:4px">Clôturer l\'appel</button></form>';
             // Voir le journal de discussion de la salle (autour de l'appel)
             echo '<a class="mini ghost" style="align-self:flex-end" href="?p=alerts&sec=cfh&log=' . $cid . '">📜 Journal de discussion</a>';
+            // Fiche joueur + préparation d'un bannissement (pré-rempli sur la page Modération)
+            if (tab_allowed('moderation') && $r['caller_name'] !== null) echo '<a class="mini ghost" style="align-self:flex-end;color:var(--red)" href="?p=moderation&ban=' . rawurlencode($caller) . '" title="Préparer un bannissement pour ce joueur">🚫 Bannir ce joueur</a>';
+            // Déconnecter (kick) le joueur du jeu — immédiat via RCON (réversible : il peut se reconnecter)
+            if (tab_allowed('moderation')) echo '<form method="post" class="js" data-reload data-confirm="Déconnecter ' . h($caller) . ' du jeu ?" style="align-self:flex-end;margin:0"><input type="hidden" name="action" value="kick_user"><input type="hidden" name="id" value="' . (int)$r['caller_id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost" title="Déconnecter ce joueur du jeu (il pourra se reconnecter)">👢 Déconnecter</button></form>';
             // Supprimer définitivement
             echo '<form method="post" class="js" data-reload data-confirm="Supprimer définitivement cet appel ? (irréversible)" style="align-self:flex-end"><input type="hidden" name="action" value="cfh_delete"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost danger" title="Supprimer définitivement">🗑️ Supprimer</button></form>';
             echo '</div>';
@@ -6611,7 +6664,7 @@ function db_backup(): bool {
     return true;
 }
 function page_title(string $t, string $sub = ''): void { echo '<div class="pagehead"><h1>' . h($t) . '</h1>' . ($sub ? '<p class="sub">' . h($sub) . '</p>' : '') . '</div>'; }
-function stat_box(string $icon, $val, string $label, string $col = 'blue'): void { echo '<div class="stat ' . $col . '"><div class="ic">' . $icon . '</div><div><div class="num">' . h((string)$val) . '</div><div class="lbl">' . h($label) . '</div></div></div>'; }
+function stat_box(string $icon, $val, string $label, string $col = 'blue', string $id = ''): void { echo '<div class="stat ' . $col . '"><div class="ic">' . $icon . '</div><div><div class="num"' . ($id !== '' ? ' id="' . h($id) . '"' : '') . '>' . h((string)$val) . '</div><div class="lbl">' . h($label) . '</div></div></div>'; }
 function rank_badge(int $r): string { $n = [1 => 'Joueur', 2 => 'Community M.', 3 => 'Guide', 4 => 'Hobba', 5 => 'Super Hobba', 6 => 'Modérateur', 7 => 'Admin']; $c = $r >= 7 ? '#ff5b5b' : ($r >= 6 ? '#ffb033' : ($r >= 3 ? '#3a7afe' : '#5a6b85')); return '<span class="rk" style="background:' . $c . '">' . h($n[$r] ?? (string)$r) . '</span>'; }
 function rank_options(int $c): string { $o = ''; foreach (RANKS as $n => $l) $o .= '<option value="' . $n . '"' . ($n === $c ? ' selected' : '') . '>' . h($l) . '</option>'; return $o; }
 function available_casts(): array { $o = []; foreach (glob(DCR_DIR . '/hh_room_*.cct') ?: [] as $f) $o[] = basename($f, '.cct'); return $o; }
@@ -7079,7 +7132,23 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
   <div class="tb-crumb"><?php if ($secLabel !== '') echo '<span class="tb-sec">' . h($secLabel) . '</span><span class="tb-sep">›</span>'; ?><b><?= h($pageLabel) ?></b></div>
   <form class="tb-search" method="get" action="?"><input type="hidden" name="p" value="search"><input name="q" placeholder="Rechercher un joueur, un mobi, une salle…" value="<?= $sq ?>"><button type="submit" title="Rechercher">🔍</button></form>
   <?php if (tab_allowed('alerts')) { $cfhN = cfh_pending_count(); ?><a id="cfhAlertBtn" class="tb-status" href="?p=alerts&sec=cfh" title="Alertes &amp; annonces — appels à l'aide des joueurs" style="margin-right:10px">📢 Alertes<span id="cfhBadge" style="background:#e5484d;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:800;margin-left:5px;<?= $cfhN > 0 ? '' : 'display:none' ?>"><?= (int)$cfhN ?></span></a>
-  <script>(function(){var el=document.getElementById('cfhBadge');if(!el)return;function tick(){fetch('?cfhcount=1',{headers:{'X-Requested-With':'fetch'}}).then(function(r){return r.json();}).then(function(d){var n=(d&&d.count)?d.count:0;el.textContent=n;el.style.display=n>0?'':'none';var dh=document.getElementById('dashCfhCount');if(dh)dh.textContent=n;}).catch(function(){});}setInterval(tick,20000);})();</script><?php } ?>
+  <script>(function(){
+    var baseTitle=document.title, prev=<?= (int)$cfhN ?>, flashTimer=null, flashOn=false;
+    function beep(){try{var C=window.AudioContext||window.webkitAudioContext;if(!C)return;var a=new C(),o=a.createOscillator(),g=a.createGain();o.type='sine';o.frequency.value=880;o.connect(g);g.connect(a.destination);g.gain.setValueAtTime(0.0001,a.currentTime);g.gain.exponentialRampToValueAtTime(0.25,a.currentTime+0.02);g.gain.exponentialRampToValueAtTime(0.0001,a.currentTime+0.5);o.start();o.stop(a.currentTime+0.55);setTimeout(function(){try{a.close();}catch(e){}},900);}catch(e){}}
+    function stopFlash(){if(flashTimer){clearInterval(flashTimer);flashTimer=null;}flashOn=false;}
+    function startFlash(){if(flashTimer)return;flashTimer=setInterval(function(){flashOn=!flashOn;document.title=flashOn?'🔴 Nouvel appel à l’aide !':baseTitle;},900);}
+    function setTitle(total){if(flashTimer)return;document.title=(total>0?'('+total+') ':'')+baseTitle;}
+    window.addEventListener('focus',stopFlash);
+    function tick(){fetch('?cfhcount=1',{headers:{'X-Requested-With':'fetch'}}).then(function(r){return r.json();}).then(function(d){
+      var n=(d&&d.count)?d.count:0, conv=(d&&d.conv)?d.conv:0, on=(d&&typeof d.online!=='undefined')?d.online:null;
+      var el=document.getElementById('cfhBadge');if(el){el.textContent=n;el.style.display=n>0?'':'none';}
+      var dh=document.getElementById('dashCfhCount');if(dh)dh.textContent=n;
+      if(on!==null){var o1=document.getElementById('dashOnline');if(o1)o1.textContent=on;var o2=document.getElementById('dashOnline2');if(o2)o2.textContent=on;}
+      if(n>prev){beep();if(document.hidden||(document.hasFocus&&!document.hasFocus()))startFlash();}
+      prev=n;setTitle(n+conv);
+    }).catch(function(){});}
+    setInterval(tick,20000);tick();
+  })();</script><?php } ?>
   <a class="tb-status <?= $emuUp ? 'up' : 'down' ?>" href="?p=server" title="État de l'émulateur — ouvrir la page Serveur"><span class="dot"></span><?= $emuUp ? 'En marche' : 'Arrêté' ?></a>
 </header><div class="content"><?php
     // Plus de barre d'onglets horizontale pour le groupe courant : ses onglets sont
