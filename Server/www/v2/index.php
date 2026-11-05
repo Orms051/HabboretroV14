@@ -564,7 +564,7 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             $nb = count($songs);
             $eq = '<div class="music-activity"><div class="tp-eq">' . str_repeat('<i></i>', 9) . '</div></div>';
             $b = '<style>'
-               . '#trax-player{position:relative;width:209px;height:66px;background:url(/web-gallery/images/traxplayer/player.png?v=4) no-repeat;font:10px Verdana,Arial,sans-serif;color:#2f3a22}'
+               . '#trax-player{position:relative;width:209px;height:66px;background:url(/web-gallery/images/traxplayer/player.png?v=5) no-repeat;font:10px Verdana,Arial,sans-serif;color:#2f3a22}'
                . '#trax-player .tp-screen{position:absolute;left:9px;top:5px;width:191px;height:23px;overflow:hidden;line-height:11px}'
                . '#trax-player .tp-screen .title{font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}'
                . '#trax-player.playing .tp-screen .title{animation:tpmq 8s linear infinite}'
@@ -572,18 +572,16 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                . '#trax-player .tp-screen .author{color:#5a6a3a}'
                . '#trax-player .tp-screen .time{position:absolute;right:2px;bottom:0;color:#2f3a22}'
                . '#trax-player .tp-screen .time .length{color:#8a9a6a;padding-left:3px}'
-               . '#trax-player .play-btn{position:absolute;left:6px;top:38px;width:34px;height:23px;padding:0;border:0;background:transparent;cursor:pointer;border-radius:3px}'
-               . '#trax-player .play-btn:hover{box-shadow:inset 0 0 0 99px rgba(255,255,255,.18)}'
-               . '#trax-player .play-btn.playing{box-shadow:inset 0 0 0 99px rgba(111,154,63,.30)}'
-               // Volume : modèle d'origine = curseur transparent + petit pouce par-dessus le graphisme de player.png.
-               . '#trax-player .volume{position:absolute;left:62px;top:45px;width:78px;height:11px;-webkit-appearance:none;appearance:none;background:transparent;outline:none;cursor:pointer;margin:0}'
+               // Bouton Lecture : aucune teinte/carré (ni survol, ni lecture, ni chargement) — juste le graphisme. Aligné sur la ligne du bas (centre y53).
+               . '#trax-player .play-btn{position:absolute;left:6px;top:41px;width:34px;height:24px;padding:0;border:0;background:transparent;cursor:pointer}'
+               // Volume : indicateur d'origine (descendu/aligné) + curseur transparent + petit pouce par-dessus. Centré y53.
+               . '#trax-player .volume{position:absolute;left:72px;top:48px;width:64px;height:11px;-webkit-appearance:none;appearance:none;background:transparent;outline:none;cursor:pointer;margin:0}'
                . '#trax-player .volume::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:6px;height:11px;border:1px solid #3c4a28;border-radius:1px;background:#8aa15e;cursor:pointer}'
                . '#trax-player .volume::-moz-range-thumb{width:6px;height:11px;border:1px solid #3c4a28;border-radius:1px;background:#8aa15e;cursor:pointer}'
-               // Égaliseur ANIMÉ (remplace celui dessiné, effacé de player.png par scripts/trax_player_png.php) : mini-fenêtre sombre + barres vertes.
-               . '#trax-player .music-activity{position:absolute;right:2px;top:40px;width:50px;height:24px;background:#26331b;border:1px solid #18220f;border-radius:2px;box-shadow:inset 0 0 3px rgba(0,0,0,.6);pointer-events:none;overflow:hidden}'
-               . '#trax-player .tp-eq{position:absolute;left:3px;right:3px;bottom:2px;height:19px;display:flex;align-items:flex-end;gap:2px}'
+               // Égaliseur ANIMÉ (remplace celui dessiné, effacé de player.png). Aligné sur la ligne du bas (y41-65, centre 53).
+               . '#trax-player .music-activity{position:absolute;right:1px;top:41px;width:52px;height:24px;background:#26331b;border:1px solid #18220f;border-radius:2px;box-shadow:inset 0 0 3px rgba(0,0,0,.6);pointer-events:none;overflow:hidden}'
+               . '#trax-player .tp-eq{position:absolute;left:3px;right:3px;bottom:2px;top:2px;display:flex;align-items:flex-end;gap:2px}'
                . '#trax-player .tp-eq i{flex:1;height:1px;background:linear-gradient(#cdef7a,#6f9a3f);border-radius:1px;transition:height .07s linear}'
-               . '#trax-player.loading .play-btn{box-shadow:inset 0 0 0 99px rgba(230,200,60,.35)}'
                . '</style>'
                . '<div id="trax-player" data-base="/web-gallery/sounds/trax/" data-trax="' . h((string)$sg['data']) . '">'
                . '<div class="tp-screen">'
