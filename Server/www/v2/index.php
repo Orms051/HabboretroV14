@@ -575,9 +575,12 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                . '#trax-player .play-btn{position:absolute;left:6px;top:38px;width:34px;height:23px;padding:0;border:0;background:transparent;cursor:pointer;border-radius:3px}'
                . '#trax-player .play-btn:hover{box-shadow:inset 0 0 0 99px rgba(255,255,255,.18)}'
                . '#trax-player .play-btn.playing{box-shadow:inset 0 0 0 99px rgba(111,154,63,.30)}'
-               . '#trax-player .volume{position:absolute;left:62px;top:45px;width:78px;height:11px;-webkit-appearance:none;appearance:none;background:transparent;outline:none;cursor:pointer;margin:0}'
-               . '#trax-player .volume::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:6px;height:11px;border:1px solid #3c4a28;border-radius:1px;background:#8aa15e;cursor:pointer}'
-               . '#trax-player .volume::-moz-range-thumb{width:6px;height:11px;border:1px solid #3c4a28;border-radius:1px;background:#8aa15e;cursor:pointer}'
+               // Volume : UN SEUL curseur (la barre témoin statique a été retirée de player.png). Piste visible + pouce.
+               . '#trax-player .volume{position:absolute;left:60px;top:44px;width:88px;height:12px;-webkit-appearance:none;appearance:none;background:transparent;outline:none;cursor:pointer;margin:0}'
+               . '#trax-player .volume::-webkit-slider-runnable-track{height:5px;background:linear-gradient(#c3d0a6,#8a9a6a);border:1px solid #3c4a28;border-radius:3px}'
+               . '#trax-player .volume::-moz-range-track{height:5px;background:#8a9a6a;border:1px solid #3c4a28;border-radius:3px}'
+               . '#trax-player .volume::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:7px;height:12px;margin-top:-5px;border:1px solid #2f3a22;border-radius:2px;background:linear-gradient(#cdef7a,#6f9a3f);cursor:pointer}'
+               . '#trax-player .volume::-moz-range-thumb{width:7px;height:12px;border:1px solid #2f3a22;border-radius:2px;background:#8aa15e;cursor:pointer}'
                // Égaliseur : mini-fenêtre sombre + barres vertes animées (remplace l'égaliseur figé de l'image).
                . '#trax-player .music-activity{position:absolute;right:6px;top:40px;width:46px;height:20px;background:#26331b;border:1px solid #18220f;border-radius:2px;box-shadow:inset 0 0 3px rgba(0,0,0,.6);pointer-events:none;overflow:hidden}'
                . '#trax-player .tp-eq{position:absolute;left:3px;right:3px;bottom:2px;height:16px;display:flex;align-items:flex-end;gap:2px}'
