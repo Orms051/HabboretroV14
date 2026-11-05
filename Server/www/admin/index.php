@@ -747,19 +747,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $up->execute(['home.title.' . $skin . '.bold', isset($_POST['bold_' . $skin]) ? '1' : '0']);
                     $al = (string)($_POST['align_' . $skin] ?? $d['align']); if (!in_array($al, ['left', 'center', 'right'], true)) $al = $d['align'];
                     $up->execute(['home.title.' . $skin . '.align', $al]);
+                    $up->execute(['home.title.' . $skin . '.show', isset($_POST['show_' . $skin]) ? '1' : '0']);
                     $up->execute(['home.skin.' . $skin . '.barh', (string) max(10, min(80, (int)($_POST['barh_' . $skin] ?? $d['barh'])))]);
                     $up->execute(['home.skin.' . $skin . '.pad', (string) max(0, min(40, (int)($_POST['pad_' . $skin] ?? $d['pad'])))]);
                     $up->execute(['home.skin.' . $skin . '.scale', (string) max(50, min(200, (int)($_POST['sscale_' . $skin] ?? $d['scale'])))]);
                 }
                 foreach (home_widget_cfg() as $type => $d)
                     $up->execute(['home.width.' . $type, (string) max(120, min(600, (int)($_POST['w_' . $type] ?? $d[1])))]);
+                $up->execute(['home.notes.max', (string) max(0, min(20, (int)($_POST['notes_max'] ?? 0)))]);
                 admin_log('home_titres', 'apply');
                 $msg = '🏠 Réglages de la Home enregistrés. Recharge ta Home pour les voir en vrai.'; break;
             }
             case 'home_titres_reset': {
-                $keys = ['home.text.size', 'home.text.lh', 'home.scale'];
+                $keys = ['home.text.size', 'home.text.lh', 'home.scale', 'home.notes.max'];
                 foreach (home_skin_cfg() as $skin => $d) {
-                    foreach (['lh', 'left', 'fs', 'color', 'font', 'bold', 'align'] as $f) $keys[] = 'home.title.' . $skin . '.' . $f;
+                    foreach (['lh', 'left', 'fs', 'color', 'font', 'bold', 'align', 'show'] as $f) $keys[] = 'home.title.' . $skin . '.' . $f;
                     foreach (['barh', 'pad', 'scale'] as $f) $keys[] = 'home.skin.' . $skin . '.' . $f;
                 }
                 foreach (home_widget_cfg() as $type => $d) $keys[] = 'home.width.' . $type;
@@ -3139,6 +3141,13 @@ function sitemgr_hometitres(): void {
     }
     echo '</table></div>';
 
+    // === PENSE-BÊTE — nombre autorisé sur la Home ===
+    $notesMax = max(0, min(20, (int) site_setting_get('home.notes.max', '0')));
+    echo '<div class="panel"><div class="ph"><h3>📝 Pense-bête — nombre sur la Home</h3><span class="muted sm" style="margin-left:auto">0 = illimité</span></div>';
+    echo '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    echo $row('<b>Nombre max de pense-bêtes</b> <span class="muted sm">(0 = illimité)</span>', $ctl('notes_max', 0, 20, $notesMax, '', 200));
+    echo '</table><p class="muted sm" style="margin-top:4px">Les autres widgets sont déjà limités à 1 par Home. Au-delà de cette limite, le joueur ne peut plus ajouter de pense-bête dans l\'éditeur (les surplus déjà posés sont retirés au prochain enregistrement). Non visible dans l\'aperçu : s\'applique dans l\'éditeur de Home.</p></div>';
+
     // === SKIN — une carte par skin (couleur/police/position du titre, cadre, zoom) ===
     echo '<p class="sm-crumb" style="margin:14px 0 4px">🎨 <b>Par SKIN</b> — un skin peut être posé sur n\'importe quel widget ; ces réglages suivent le skin.</p>';
     $fontOpts  = ['verdana' => 'Verdana', 'arial' => 'Arial', 'tahoma' => 'Tahoma', 'georgia' => 'Georgia', 'courier' => 'Courier'];
@@ -3154,9 +3163,11 @@ function sitemgr_hometitres(): void {
         $bh = max(10, min(80, (int) site_setting_get('home.skin.' . $skin . '.barh', (string) $d['barh'])));
         $pad = max(0, min(40, (int) site_setting_get('home.skin.' . $skin . '.pad', (string) $d['pad'])));
         $ss = max(50, min(200, (int) site_setting_get('home.skin.' . $skin . '.scale', (string) $d['scale'])));
+        $show = (int) site_setting_get('home.title.' . $skin . '.show', '1');
 
         echo '<div class="panel"><div class="ph"><h3 style="font-size:13px">🎨 ' . h($d['label']) . '</h3><span class="muted sm" style="margin-left:auto">.' . h($skin) . '</span></div>';
         echo '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+        echo $row('<b>Afficher le titre</b> <span class="muted sm">(décoché = titre masqué)</span>', '<label><input type="checkbox" id="show_' . h($skin) . '" name="show_' . h($skin) . '"' . ($show ? ' checked' : '') . '> afficher le titre de ce skin</label>');
         echo $row('Titre — vertical <span class="muted sm">(+ petit = + haut)</span>', $ctl('lh_' . $skin, 6, 60, $lh));
         echo $row('Titre — horizontal <span class="muted sm">(+ = à droite)</span>', $ctl('left_' . $skin, -80, 80, $lf));
         echo $row('Titre — taille', $ctl('fs_' . $skin, 7, 28, $fs));
@@ -3188,6 +3199,7 @@ function sitemgr_hometitres(): void {
        . 'var bh=v("barh_"+s),lh=v("lh_"+s),lf=v("left_"+s),fs=v("fs_"+s),col=sv("color_"+s),fk=sv("font_"+s),bold=(el("bold_"+s)&&el("bold_"+s).checked)?"bold":"normal",al=sv("align_"+s),pad=v("pad_"+s),sc=g*(v("sscale_"+s)/100),pb=PB[s]||[0,0,0,0];'
        . 'o+=".hw.w_skin_"+s+" div.widget-headline,.hw.w_skin_"+s+" div.widget-corner{height:"+bh+"px !important}";'
        . 'o+=".hw.w_skin_"+s+" div.widget-headline h3{position:relative;line-height:"+lh+"px !important;left:"+lf+"px !important;font-size:"+fs+"px !important;color:"+col+" !important;font-family:"+(FONTS[fk]||FONTS.verdana)+" !important;font-weight:"+bold+" !important;text-align:"+al+" !important}";'
+       . 'if(el("show_"+s)&&!el("show_"+s).checked)o+=".hw.w_skin_"+s+" div.widget-headline h3{display:none !important}";'
        . 'o+=".hw.w_skin_"+s+" div.widget-content{padding:"+(pb[0]+pad)+"px "+(pb[1]+pad)+"px "+(pb[2]+pad)+"px "+(pb[3]+pad)+"px !important}";'
        . 'if(Math.abs(sc-1)>0.001)o+=".hw.w_skin_"+s+"{transform:scale("+sc+") !important;transform-origin:top left}";'
        . '}return o;}'
