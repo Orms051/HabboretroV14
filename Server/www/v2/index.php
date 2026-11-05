@@ -393,7 +393,7 @@ function home_trax_js(): string {
         playBeat();
         tickT=setInterval(function(){pos++;if(pos>=steps){stop();return;}playBeat();},BLOCK*1000);
         timeT=setInterval(function(){elapsed++;setTime();if(elapsed>=total)stop();},1000);
-        eqT=setInterval(anim,60);anim();}
+        if(P()&&P().querySelector(".tp-eq i")){eqT=setInterval(anim,60);anim();}}
       function stop(){
         playing=false;
         if(tickT){clearInterval(tickT);tickT=null;}if(timeT){clearInterval(timeT);timeT=null;}if(eqT){clearInterval(eqT);eqT=null;}
@@ -562,9 +562,9 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             // Traxplayer FIDÈLE : le chrome complet est l'image player.png (209x66) = écran LCD en haut,
             // puis rangée bouton lecture / volume / égaliseur en bas. On superpose juste les éléments interactifs.
             $nb = count($songs);
-            $eq = '<div class="music-activity"><div class="tp-eq">' . str_repeat('<i></i>', 8) . '</div></div>';
+            $eq = '<div class="music-activity"></div>'; // égaliseur = celui dessiné dans player.png (pas d'overlay)
             $b = '<style>'
-               . '#trax-player{position:relative;width:209px;height:66px;background:url(/web-gallery/images/traxplayer/player.png?v=2) no-repeat;font:10px Verdana,Arial,sans-serif;color:#2f3a22}'
+               . '#trax-player{position:relative;width:209px;height:66px;background:url(/web-gallery/images/traxplayer/player.png?v=3) no-repeat;font:10px Verdana,Arial,sans-serif;color:#2f3a22}'
                . '#trax-player .tp-screen{position:absolute;left:9px;top:5px;width:191px;height:23px;overflow:hidden;line-height:11px}'
                . '#trax-player .tp-screen .title{font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}'
                . '#trax-player.playing .tp-screen .title{animation:tpmq 8s linear infinite}'
@@ -575,16 +575,12 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                . '#trax-player .play-btn{position:absolute;left:6px;top:38px;width:34px;height:23px;padding:0;border:0;background:transparent;cursor:pointer;border-radius:3px}'
                . '#trax-player .play-btn:hover{box-shadow:inset 0 0 0 99px rgba(255,255,255,.18)}'
                . '#trax-player .play-btn.playing{box-shadow:inset 0 0 0 99px rgba(111,154,63,.30)}'
-               // Volume : UN SEUL curseur (la barre témoin statique a été retirée de player.png). Piste visible + pouce.
-               . '#trax-player .volume{position:absolute;left:60px;top:44px;width:88px;height:12px;-webkit-appearance:none;appearance:none;background:transparent;outline:none;cursor:pointer;margin:0}'
-               . '#trax-player .volume::-webkit-slider-runnable-track{height:5px;background:linear-gradient(#c3d0a6,#8a9a6a);border:1px solid #3c4a28;border-radius:3px}'
-               . '#trax-player .volume::-moz-range-track{height:5px;background:#8a9a6a;border:1px solid #3c4a28;border-radius:3px}'
-               . '#trax-player .volume::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:7px;height:12px;margin-top:-5px;border:1px solid #2f3a22;border-radius:2px;background:linear-gradient(#cdef7a,#6f9a3f);cursor:pointer}'
-               . '#trax-player .volume::-moz-range-thumb{width:7px;height:12px;border:1px solid #2f3a22;border-radius:2px;background:#8aa15e;cursor:pointer}'
-               // Égaliseur : mini-fenêtre sombre + barres vertes animées (remplace l'égaliseur figé de l'image).
-               . '#trax-player .music-activity{position:absolute;right:6px;top:40px;width:46px;height:20px;background:#26331b;border:1px solid #18220f;border-radius:2px;box-shadow:inset 0 0 3px rgba(0,0,0,.6);pointer-events:none;overflow:hidden}'
-               . '#trax-player .tp-eq{position:absolute;left:3px;right:3px;bottom:2px;height:16px;display:flex;align-items:flex-end;gap:2px}'
-               . '#trax-player .tp-eq i{flex:1;height:1px;background:linear-gradient(#cdef7a,#6f9a3f);border-radius:1px;transition:height .07s linear}'
+               // Volume : modèle d'origine = curseur transparent + petit pouce par-dessus le graphisme de player.png.
+               . '#trax-player .volume{position:absolute;left:62px;top:45px;width:78px;height:11px;-webkit-appearance:none;appearance:none;background:transparent;outline:none;cursor:pointer;margin:0}'
+               . '#trax-player .volume::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:6px;height:11px;border:1px solid #3c4a28;border-radius:1px;background:#8aa15e;cursor:pointer}'
+               . '#trax-player .volume::-moz-range-thumb{width:6px;height:11px;border:1px solid #3c4a28;border-radius:1px;background:#8aa15e;cursor:pointer}'
+               // Égaliseur = celui dessiné dans player.png (en fond). Zone transparente par-dessus, sans doublon.
+               . '#trax-player .music-activity{position:absolute;right:7px;top:40px;width:45px;height:20px;pointer-events:none}'
                . '#trax-player.loading .play-btn{box-shadow:inset 0 0 0 99px rgba(230,200,60,.35)}'
                . '</style>'
                . '<div id="trax-player" data-base="/web-gallery/sounds/trax/" data-trax="' . h((string)$sg['data']) . '">'
