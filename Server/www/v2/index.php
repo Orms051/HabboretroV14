@@ -564,7 +564,7 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             $nb = count($songs);
             $eq = '<div class="music-activity"><div class="tp-eq">' . str_repeat('<i></i>', 8) . '</div></div>';
             $b = '<style>'
-               . '#trax-player{position:relative;width:209px;height:66px;background:url(/web-gallery/images/traxplayer/player.png) no-repeat;font:10px Verdana,Arial,sans-serif;color:#2f3a22}'
+               . '#trax-player{position:relative;width:209px;height:66px;background:url(/web-gallery/images/traxplayer/player.png?v=2) no-repeat;font:10px Verdana,Arial,sans-serif;color:#2f3a22}'
                . '#trax-player .tp-screen{position:absolute;left:9px;top:5px;width:191px;height:23px;overflow:hidden;line-height:11px}'
                . '#trax-player .tp-screen .title{font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}'
                . '#trax-player.playing .tp-screen .title{animation:tpmq 8s linear infinite}'
