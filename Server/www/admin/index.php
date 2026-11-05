@@ -195,6 +195,7 @@ if (isset($_GET['cfhcount'])) {
     if (tab_allowed('alerts')) { try { $out['count'] = cfh_pending_count(); } catch (Throwable $e) {} }
     if (tab_allowed('messages') && function_exists('conv_unread_staff')) { try { $out['conv'] = (int) conv_unread_staff(); } catch (Throwable $e) {} }
     try { $o = db()->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn(); $out['online'] = $o !== false ? (int) $o : 0; } catch (Throwable $e) {}
+    online_sample($out['online']); // échantillonne la courbe « en ligne » (créneaux de 5 min)
     echo json_encode($out);
     exit;
 }
@@ -1572,6 +1573,8 @@ switch ($p) {
     case 'ranks': page_ranks(); break;
     case 'games': page_games(); break;
     case 'moderation': page_moderation(); break;
+    case 'veille': page_veille(); break;
+    case 'stats': page_stats(); break;
     case 'bus': page_bus(); break;
     case 'commandes': page_commandes(); break;
     case 'settings': page_settings(); break;
@@ -1589,15 +1592,16 @@ render_footer();
 
 /* ============ ACCÈS AUX ONGLETS PAR RANG ============ */
 function admin_nav(): array {
-    return ['dashboard' => ['🏠', 'Accueil'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal en direct'], 'wordfilter' => ['🤬', 'Filtre de mots']];
+    return ['dashboard' => ['🏠', 'Accueil'], 'stats' => ['📈', 'Statistiques'], 'veille' => ['🔎', 'Veille & signalements'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal en direct'], 'wordfilter' => ['🤬', 'Filtre de mots']];
 }
 function tab_default_rank(string $tab): int {
-    $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6, 'journal' => 7];
+    $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6, 'journal' => 7, 'veille' => 6];
     return $d[$tab] ?? MIN_RANK;
 }
 function nav_groups(): array {
     return [
         '' => ['dashboard', 'search'],
+        'Pilotage' => ['stats', 'veille'],
         'Site & contenus' => ['sitemgr', 'news'],
         'Joueurs' => ['users', 'badges', 'ranks'],
         'Alertes & annonces' => ['alerts'],
@@ -4290,6 +4294,113 @@ function page_models(): void {
     echo '<table class="clean"><tr><th>Model ID</th><th>Nom</th><th>Porte</th><th>Trigger</th><th></th></tr>';
     foreach ($rows as $r) echo '<tr><td><code>' . h((string)$r['model_id']) . '</code></td><td>' . h((string)$r['model_name']) . '</td><td class="sm">' . (int)$r['door_x'] . ',' . (int)$r['door_y'] . ' dir' . (int)$r['door_dir'] . '</td><td class="sm muted">' . h((string)$r['trigger_class']) . '</td><td><a class="mini ghost" href="?p=models&edit=' . (int)$r['id'] . '">Éditer</a></td></tr>';
     echo '</table></div>';
+}
+
+/* ===================== Statistiques & Veille ===================== */
+function ensure_online_history(): void {
+    static $done = false; if ($done) return; $done = true;
+    db()->exec("CREATE TABLE IF NOT EXISTS online_history (slot DATETIME NOT NULL PRIMARY KEY, online INT NOT NULL DEFAULT 0, sampled INT NOT NULL DEFAULT 1) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+/* Enregistre le nombre de joueurs en ligne par créneau de 5 min (garde le pic du créneau). */
+function online_sample(int $n): void {
+    try {
+        ensure_online_history();
+        $slot = date('Y-m-d H:i:s', (int)(floor(time() / 300) * 300));
+        db()->prepare("INSERT INTO online_history (slot, online, sampled) VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE online = GREATEST(online, VALUES(online)), sampled = sampled + 1")->execute([$slot, $n]);
+    } catch (Throwable $e) {}
+}
+/* Mini graphe en courbe (SVG inline). $points = [[label, valeur], …] dans l'ordre. */
+function svg_line(array $points, string $color = '#2bbf5b', int $w = 820, int $h = 190): string {
+    if (!$points) return '<div class="empty">Pas encore de données.</div>';
+    $vals = array_map(fn($p) => (float)$p[1], $points); $max = max(1.0, max($vals)); $n = count($points);
+    $pad = 30; $iw = $w - $pad * 2; $ih = $h - $pad * 2;
+    $px = fn($i) => $pad + ($n <= 1 ? $iw / 2 : $iw * $i / ($n - 1));
+    $py = fn($v) => $pad + $ih - ($ih * $v / $max);
+    $d = ''; foreach ($points as $i => $p) $d .= ($i === 0 ? 'M' : 'L') . round($px($i), 1) . ' ' . round($py((float)$p[1]), 1) . ' ';
+    $area = $d . 'L' . round($px($n - 1), 1) . ' ' . round($pad + $ih, 1) . ' L' . round($px(0), 1) . ' ' . round($pad + $ih, 1) . ' Z';
+    $svg = '<svg viewBox="0 0 ' . $w . ' ' . $h . '" style="width:100%;height:auto;font-family:inherit">';
+    for ($g = 0; $g <= 2; $g++) { $gv = $max * $g / 2; $gy = round($py($gv), 1); $svg .= '<line x1="' . $pad . '" y1="' . $gy . '" x2="' . ($w - $pad) . '" y2="' . $gy . '" stroke="#2a3344" stroke-width="1"/><text x="' . ($pad - 6) . '" y="' . ($gy + 4) . '" text-anchor="end" font-size="10" fill="#8294a8">' . round($gv) . '</text>'; }
+    $svg .= '<path d="' . $area . '" fill="' . $color . '" opacity="0.13"/><path d="' . $d . '" fill="none" stroke="' . $color . '" stroke-width="2.5"/>';
+    foreach (array_unique([0, intdiv($n - 1, 2), $n - 1]) as $i) $svg .= '<text x="' . round($px($i), 1) . '" y="' . ($h - 7) . '" text-anchor="middle" font-size="10" fill="#8294a8">' . h((string)$points[$i][0]) . '</text>';
+    return $svg . '</svg>';
+}
+/* Mini graphe en barres (SVG inline). */
+function svg_bars(array $points, string $color = '#3a7afe', int $w = 820, int $h = 190): string {
+    if (!$points) return '<div class="empty">Pas encore de données.</div>';
+    $vals = array_map(fn($p) => (float)$p[1], $points); $max = max(1.0, max($vals)); $n = count($points);
+    $pad = 30; $iw = $w - $pad * 2; $ih = $h - $pad * 2; $gap = $iw / $n; $bw = $gap * 0.68;
+    $svg = '<svg viewBox="0 0 ' . $w . ' ' . $h . '" style="width:100%;height:auto;font-family:inherit">';
+    for ($g = 0; $g <= 2; $g++) { $gv = $max * $g / 2; $gy = round($pad + $ih - ($ih * $gv / $max), 1); $svg .= '<line x1="' . $pad . '" y1="' . $gy . '" x2="' . ($w - $pad) . '" y2="' . $gy . '" stroke="#2a3344" stroke-width="1"/><text x="' . ($pad - 6) . '" y="' . ($gy + 4) . '" text-anchor="end" font-size="10" fill="#8294a8">' . round($gv) . '</text>'; }
+    foreach ($points as $i => $p) { $bh = $ih * ((float)$p[1]) / $max; $bx = $pad + $gap * $i + ($gap - $bw) / 2; $by = $pad + $ih - $bh; $svg .= '<rect x="' . round($bx, 1) . '" y="' . round($by, 1) . '" width="' . round($bw, 1) . '" height="' . round(max(0, $bh), 1) . '" rx="2" fill="' . $color . '"/>'; }
+    foreach (array_unique([0, intdiv($n - 1, 2), $n - 1]) as $i) { $bx = $pad + $gap * $i + $gap / 2; $svg .= '<text x="' . round($bx, 1) . '" y="' . ($h - 7) . '" text-anchor="middle" font-size="10" fill="#8294a8">' . h((string)$points[$i][0]) . '</text>'; }
+    return $svg . '</svg>';
+}
+function page_stats(): void {
+    page_title('Statistiques', 'Fréquentation, inscriptions et activité de l\'hôtel');
+    $d = db();
+    ensure_online_history();
+    try { $d->exec("DELETE FROM online_history WHERE slot < (NOW() - INTERVAL 60 DAY)"); } catch (Throwable $e) {}
+
+    $users = (int)$d->query('SELECT COUNT(*) FROM users')->fetchColumn();
+    $hc = 0; try { $hc = (int)$d->query('SELECT COUNT(*) FROM users WHERE club_expiration > ' . time())->fetchColumn(); } catch (Throwable $e) {}
+    $eco = 0; try { $eco = (int)$d->query('SELECT COALESCE(SUM(credits),0) FROM users')->fetchColumn(); } catch (Throwable $e) {}
+    $peak = 0; $peakAt = ''; try { $pr = $d->query('SELECT online,slot FROM online_history ORDER BY online DESC, slot DESC LIMIT 1')->fetch(); if ($pr) { $peak = (int)$pr['online']; $peakAt = date('d/m H:i', strtotime((string)$pr['slot'])); } } catch (Throwable $e) {}
+    $online = $d->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn(); $online = $online !== false ? (int)$online : 0;
+    echo '<div class="grid">';
+    stat_box('🟢', $online, 'En ligne maintenant', 'green', 'dashOnline');
+    stat_box('🏆', $peak, 'Record d\'affluence' . ($peakAt ? ' (' . $peakAt . ')' : ''), 'gold');
+    stat_box('👥', number_format($users, 0, ',', ' '), 'Comptes', 'blue');
+    stat_box('⭐', $hc, 'Membres Club actifs', 'gold');
+    stat_box('💰', number_format($eco, 0, ',', ' '), 'Crédits en circulation', 'gold');
+    echo '</div>';
+
+    $pts = []; try { foreach ($d->query("SELECT DATE_FORMAT(slot,'%d/%m %Hh') lbl, online FROM online_history WHERE slot > (NOW() - INTERVAL 48 HOUR) ORDER BY slot ASC") as $r) $pts[] = [$r['lbl'], (int)$r['online']]; } catch (Throwable $e) {}
+    echo '<div class="panel"><div class="ph"><h3>📈 Joueurs en ligne (48 h)</h3><span class="muted sm" style="margin-left:auto">échantillon 5 min</span></div>' . svg_line($pts, '#2bbf5b');
+    if (!$pts) echo '<p class="hint">La courbe se remplit toute seule pendant qu\'un onglet admin est ouvert (toutes les 5 min). Pour couvrir les nuits, ajoute une tâche planifiée qui visite <code>?p=stats</code>.</p>';
+    echo '</div>';
+
+    $reg = []; try { $by = []; foreach ($d->query("SELECT DATE(created_at) dd, COUNT(*) n FROM users WHERE created_at > (NOW() - INTERVAL 30 DAY) GROUP BY DATE(created_at)") as $r) $by[(string)$r['dd']] = (int)$r['n']; for ($i = 29; $i >= 0; $i--) { $day = date('Y-m-d', time() - $i * 86400); $reg[] = [date('d/m', strtotime($day)), $by[$day] ?? 0]; } } catch (Throwable $e) {}
+    echo '<div class="panel"><div class="ph"><h3>🧑‍🚀 Inscriptions par jour (30 j)</h3></div>' . svg_bars($reg, '#3a7afe') . '</div>';
+
+    $lg = []; try { $by = []; foreach ($d->query("SELECT DATE(created_at) dd, COUNT(*) n FROM users_ip_logs WHERE created_at > (NOW() - INTERVAL 30 DAY) GROUP BY DATE(created_at)") as $r) $by[(string)$r['dd']] = (int)$r['n']; for ($i = 29; $i >= 0; $i--) { $day = date('Y-m-d', time() - $i * 86400); $lg[] = [date('d/m', strtotime($day)), $by[$day] ?? 0]; } } catch (Throwable $e) {}
+    echo '<div class="panel"><div class="ph"><h3>🔌 Connexions par jour (30 j)</h3><span class="muted sm" style="margin-left:auto">une barre = nb de connexions</span></div>' . svg_bars($lg, '#caa300') . '</div>';
+
+    echo '<div class="cols">';
+    $rk = []; try { foreach ($d->query('SELECT `rank` rr, COUNT(*) n FROM users GROUP BY `rank` ORDER BY `rank`') as $r) $rk[] = [RANKS[(int)$r['rr']] ?? ('Rang ' . (int)$r['rr']), (int)$r['n']]; } catch (Throwable $e) {}
+    echo '<div class="panel"><div class="ph"><h3>🎖️ Répartition par rang</h3></div>';
+    if (!$rk) echo '<div class="empty">—</div>'; else { echo '<table class="clean"><tr><th>Rang</th><th>Comptes</th></tr>'; foreach ($rk as $r) echo '<tr><td>' . h((string)$r[0]) . '</td><td><b>' . (int)$r[1] . '</b></td></tr>'; echo '</table>'; }
+    echo '</div>';
+    $rm = []; try { foreach ($d->query("SELECT r.name nm, COUNT(*) n FROM room_chatlogs c JOIN rooms r ON r.id=c.room_id WHERE c.timestamp > (UNIX_TIMESTAMP() - 7*86400) GROUP BY c.room_id ORDER BY n DESC LIMIT 10") as $r) $rm[] = [$r['nm'], (int)$r['n']]; } catch (Throwable $e) {}
+    echo '<div class="panel"><div class="ph"><h3>💬 Salles les plus actives (7 j)</h3><span class="muted sm" style="margin-left:auto">messages</span></div>';
+    if (!$rm) echo '<div class="empty">Aucune activité de chat récente.</div>'; else { echo '<table class="clean"><tr><th>Salle</th><th>Messages</th></tr>'; foreach ($rm as $r) echo '<tr><td>' . h((string)$r[0]) . '</td><td><b>' . (int)$r[1] . '</b></td></tr>'; echo '</table>'; }
+    echo '</div></div>';
+}
+function page_veille(): void {
+    page_title('Veille & signalements', 'Repérage automatique des comportements à surveiller');
+    $d = db();
+
+    echo '<div class="panel"><div class="ph"><h3>🆘 Appels à l\'aide répétés (7 j)</h3><span class="muted sm" style="margin-left:auto">≥ 3 appels</span></div>';
+    $spam = []; try { ensure_calls_for_help(); $spam = $d->query("SELECT c.caller_id, COUNT(*) n, MAX(c.created_at) last, u.username FROM calls_for_help c LEFT JOIN users u ON u.id=c.caller_id WHERE c.created_at > (NOW() - INTERVAL 7 DAY) GROUP BY c.caller_id HAVING n >= 3 ORDER BY n DESC LIMIT 30")->fetchAll(); } catch (Throwable $e) {}
+    if (!$spam) echo '<div class="empty">Aucun joueur ne multiplie les appels. ✨</div>';
+    else { echo '<table class="clean"><tr><th>Joueur</th><th>Appels</th><th>Dernier</th><th></th></tr>'; foreach ($spam as $s) { $nm = $s['username'] !== null ? (string)$s['username'] : ('#' . (int)$s['caller_id']); echo '<tr><td><b>' . h($nm) . '</b></td><td><span class="rk red">' . (int)$s['n'] . '</span></td><td class="sm muted">' . h(date('d/m H:i', strtotime((string)$s['last']))) . '</td><td><a class="mini ghost" href="?p=user&id=' . (int)$s['caller_id'] . '">Fiche →</a></td></tr>'; } echo '</table>'; }
+    echo '</div>';
+
+    echo '<div class="panel"><div class="ph"><h3>🤬 Chat à surveiller (3 j)</h3><span class="muted sm" style="margin-left:auto">mots de la liste « bobba »</span></div>';
+    ensure_wordfilter();
+    $words = []; try { foreach ($d->query("SELECT word FROM wordfilter WHERE enabled=1") as $r) { $w = trim(mb_strtolower((string)$r['word'])); if ($w !== '') $words[] = $w; } } catch (Throwable $e) {}
+    if (!$words) echo '<p class="hint">Aucun mot dans le <a href="?p=wordfilter">filtre de mots</a>. Ajoute des mots pour activer la détection.</p>';
+    else {
+        $hits = [];
+        try {
+            $rows = $d->query("SELECT c.message, DATE_FORMAT(FROM_UNIXTIME(c.timestamp),'%d/%m %H:%i') AS hhmm, u.username, r.name AS room FROM room_chatlogs c LEFT JOIN users u ON u.id=c.user_id LEFT JOIN rooms r ON r.id=c.room_id WHERE c.timestamp > (UNIX_TIMESTAMP() - 3*86400) ORDER BY c.timestamp DESC LIMIT 4000")->fetchAll();
+            foreach ($rows as $row) { $ml = mb_strtolower((string)$row['message']); foreach ($words as $w) { if ($w !== '' && mb_strpos($ml, $w) !== false) { $hits[] = $row; break; } } if (count($hits) >= 100) break; }
+        } catch (Throwable $e) {}
+        if (!$hits) echo '<div class="empty">Rien de signalé dans les 3 derniers jours. 👍</div>';
+        else { echo '<p class="muted sm">' . count($hits) . ' message(s) contenant un mot surveillé (les plus récents).</p><table class="clean"><tr><th>Quand</th><th>Joueur</th><th>Salle</th><th>Message</th></tr>'; foreach ($hits as $hh) echo '<tr><td class="sm muted" style="white-space:nowrap">' . h((string)$hh['hhmm']) . '</td><td class="sm"><b>' . h((string)($hh['username'] ?? '?')) . '</b></td><td class="sm muted">' . h((string)($hh['room'] ?? '-')) . '</td><td class="sm">' . h((string)$hh['message']) . '</td></tr>'; echo '</table>'; }
+    }
+    echo '</div>';
+
+    echo '<div class="panel"><div class="ph"><h3>🕵️ Multi-comptes</h3></div><p class="muted sm">La détection par IP partagée est sur la page <a href="?p=moderation">Modération</a> (section « Multi-comptes »).</p></div>';
 }
 
 function page_dashboard(): void {
