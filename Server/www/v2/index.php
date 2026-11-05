@@ -562,9 +562,9 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
             // Traxplayer FIDÈLE : le chrome complet est l'image player.png (209x66) = écran LCD en haut,
             // puis rangée bouton lecture / volume / égaliseur en bas. On superpose juste les éléments interactifs.
             $nb = count($songs);
-            $eq = '<div class="music-activity"></div>'; // égaliseur = celui dessiné dans player.png (pas d'overlay)
+            $eq = '<div class="music-activity"><div class="tp-eq">' . str_repeat('<i></i>', 9) . '</div></div>';
             $b = '<style>'
-               . '#trax-player{position:relative;width:209px;height:66px;background:url(/web-gallery/images/traxplayer/player.png?v=3) no-repeat;font:10px Verdana,Arial,sans-serif;color:#2f3a22}'
+               . '#trax-player{position:relative;width:209px;height:66px;background:url(/web-gallery/images/traxplayer/player.png?v=4) no-repeat;font:10px Verdana,Arial,sans-serif;color:#2f3a22}'
                . '#trax-player .tp-screen{position:absolute;left:9px;top:5px;width:191px;height:23px;overflow:hidden;line-height:11px}'
                . '#trax-player .tp-screen .title{font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}'
                . '#trax-player.playing .tp-screen .title{animation:tpmq 8s linear infinite}'
@@ -579,8 +579,10 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                . '#trax-player .volume{position:absolute;left:62px;top:45px;width:78px;height:11px;-webkit-appearance:none;appearance:none;background:transparent;outline:none;cursor:pointer;margin:0}'
                . '#trax-player .volume::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:6px;height:11px;border:1px solid #3c4a28;border-radius:1px;background:#8aa15e;cursor:pointer}'
                . '#trax-player .volume::-moz-range-thumb{width:6px;height:11px;border:1px solid #3c4a28;border-radius:1px;background:#8aa15e;cursor:pointer}'
-               // Égaliseur = celui dessiné dans player.png (en fond). Zone transparente par-dessus, sans doublon.
-               . '#trax-player .music-activity{position:absolute;right:7px;top:40px;width:45px;height:20px;pointer-events:none}'
+               // Égaliseur ANIMÉ (remplace celui dessiné, effacé de player.png par scripts/trax_player_png.php) : mini-fenêtre sombre + barres vertes.
+               . '#trax-player .music-activity{position:absolute;right:2px;top:40px;width:50px;height:24px;background:#26331b;border:1px solid #18220f;border-radius:2px;box-shadow:inset 0 0 3px rgba(0,0,0,.6);pointer-events:none;overflow:hidden}'
+               . '#trax-player .tp-eq{position:absolute;left:3px;right:3px;bottom:2px;height:19px;display:flex;align-items:flex-end;gap:2px}'
+               . '#trax-player .tp-eq i{flex:1;height:1px;background:linear-gradient(#cdef7a,#6f9a3f);border-radius:1px;transition:height .07s linear}'
                . '#trax-player.loading .play-btn{box-shadow:inset 0 0 0 99px rgba(230,200,60,.35)}'
                . '</style>'
                . '<div id="trax-player" data-base="/web-gallery/sounds/trax/" data-trax="' . h((string)$sg['data']) . '">'
