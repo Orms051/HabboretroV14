@@ -330,58 +330,78 @@ function home_widget_width(string $type, string $resource = ''): int {
         default: return 200;
     }
 }
-/* Lecteur Trax (Web Audio) — son de synthèse provisoire tant qu'on n'a pas les samples
-   d'origine du Sound Machine. Parse le format « 1:sample,durée;…:2:… » et joue 4 pistes. */
+/* Lecteur Trax FIDELE — joue les VRAIS samples du Sound Machine (mp3 extraits des .cct
+   d origine vers web-gallery/sounds/trax/). Meme algorithme que le traxplayer.js Habbo :
+   format « 1:sample,blocs;…:2:… », 1 bloc = 2 s, chaque piste declenche son sample a
+   chaque bloc. Egaliseur temps reel (AnalyserNode) + volume (gain maitre). */
 function home_trax_js(): string {
     static $done = false; if ($done) return ''; $done = true;
     return '<script>(function(){
       if(window.__traxInit) return; window.__traxInit=true;
-      var AC=null, master=null, filt=null, ana=null, spec=null, nodes=[], playing=false, stopT=null, tick=null, raf=null, elapsed=0, total=0, vol=0.5;
-      // Gamme pentatonique (toujours agréable quelle que soit la mélodie). index 0 = silence.
-      var scale=[0,261.6,293.7,329.6,392.0,440.0,523.3,587.3,659.3,784.0,880.0];
-      var waves=["triangle","square","sawtooth","sine"], oct=[0.5,1,1,0.75];
+      var BLOCK=2; // secondes par bloc
+      var AC=null, master=null, ana=null, spec=null;
+      var buffers={}, playlists=[[],[],[],[]], steps=0, loaded=false, loading=false;
+      var playing=false, pos=0, tickT=null, timeT=null, eqT=null, elapsed=0, total=0, vol=0.5, srcs=[];
       function P(){return document.getElementById("trax-player");}
       function parse(d){var tr=[[],[],[],[]];var m=(d||"").match(/([1-4]):([^:]*)/g)||[];
         m.forEach(function(seg){var i=parseInt(seg[0],10)-1;if(i<0||i>3)return;
-          seg.slice(2).split(";").forEach(function(ev){if(!ev)return;var p=ev.split(",");tr[i].push([parseInt(p[0],10)||0,parseInt(p[1],10)||0]);});});
+          seg.slice(2).split(";").forEach(function(ev){if(!ev)return;var p=ev.split(",");tr[i].push({piece:(p[0]||"0"),blocks:parseInt(p[1],10)||0});});});
         return tr;}
-      function fmt(s){var m=Math.floor(s/60),x=s%60;return m+":"+(x<10?"0":"")+x;}
+      function sampleBlocks(dur){var ms=dur*1000;if(ms<2100)return 1;if(ms<4100)return 2;if(ms<6100)return 3;return 4;}
+      function fmt(s){s=Math.max(0,Math.round(s));var m=Math.floor(s/60),x=s%60;return m+":"+(x<10?"0":"")+x;}
       function setTime(){var p=P();if(!p)return;var t=p.querySelector(".time");if(t&&t.firstChild)t.firstChild.nodeValue=fmt(elapsed);}
+      function setTotal(){var p=P();if(!p)return;var l=p.querySelector(".time .length");if(l)l.textContent="("+fmt(total)+")";}
       function setVol(v){vol=v/100;if(master&&AC)master.gain.setTargetAtTime(vol,AC.currentTime,0.02);}
       function bars(p){return p?p.querySelectorAll(".tp-eq i"):[];}
       // Egaliseur pilote par setInterval (et non requestAnimationFrame) : fiable meme en onglet masque.
       function anim(){var p=P();if(!p||!ana){return;}ana.getByteFrequencyData(spec);
         var bb=bars(p),n=bb.length;for(var i=0;i<n;i++){var v=spec[1+i]/255;bb[i].style.height=Math.max(1,Math.round(Math.pow(v,0.6)*16))+"px";}}
       function flat(){var bb=bars(P());for(var i=0;i<bb.length;i++)bb[i].style.height="1px";}
-      function stop(){playing=false;if(stopT){clearTimeout(stopT);stopT=null;}clearInterval(tick);if(raf){clearInterval(raf);raf=null;}
-        nodes.forEach(function(o){try{o.stop();}catch(e){}});nodes=[];elapsed=0;setTime();flat();
-        var p=P();if(p){p.classList.remove("playing");var b=p.querySelector(".play-btn");if(b)b.classList.remove("playing");}}
-      function play(){
-        var p=P();if(!p)return; if(playing){stop();return;}
-        try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();}catch(e){return;}
-        if(AC.state==="suspended"){try{AC.resume();}catch(e){}}
-        if(!master){master=AC.createGain();master.gain.value=vol;
-          filt=AC.createBiquadFilter();filt.type="lowpass";filt.frequency.value=2600;filt.Q.value=0.7;
+      function ensureAC(){if(!AC){AC=new (window.AudioContext||window.webkitAudioContext)();master=AC.createGain();master.gain.value=vol;
           ana=AC.createAnalyser();ana.fftSize=64;ana.smoothingTimeConstant=0.6;spec=new Uint8Array(ana.frequencyBinCount);
-          filt.connect(master);master.connect(ana);master.connect(AC.destination);}
-        var tr=parse(p.getAttribute("data-trax")); var pulse=0.16; nodes=[]; playing=true;
-        p.classList.add("playing");var pb=p.querySelector(".play-btn");if(pb)pb.classList.add("playing");
-        var t0=AC.currentTime+0.06, maxEnd=t0;
-        tr.forEach(function(track,ti){var t=t0;
-          track.forEach(function(ev){var s=ev[0],d=ev[1];var dur=d*pulse;
-            if(s>0&&scale[s]){var osc=AC.createOscillator(),g=AC.createGain();
-              osc.type=waves[ti%4];osc.frequency.value=scale[s]*oct[ti%4];
-              g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.26,t+0.015);
-              g.gain.exponentialRampToValueAtTime(0.0001,t+Math.max(0.06,dur*0.92));
-              osc.connect(g);g.connect(filt);osc.start(t);osc.stop(t+dur+0.03);nodes.push(osc);}
-            t+=dur;});
-          if(t>maxEnd)maxEnd=t;});
-        total=Math.max(1,Math.ceil(maxEnd-t0)); elapsed=0; setTime();
-        tick=setInterval(function(){elapsed++;setTime();if(elapsed>=total)stop();},1000);
-        if(raf)clearInterval(raf); raf=setInterval(anim,60); anim();
-        stopT=setTimeout(stop,(maxEnd-AC.currentTime)*1000+250);
-      }
-      document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("#trax-player .play-btn");if(b){e.preventDefault();play();}});
+          master.connect(ana);ana.connect(AC.destination);}
+        if(AC.state==="suspended"){try{AC.resume();}catch(e){}}}
+      function buildPlaylists(tr){
+        for(var i=0;i<4;i++){var pl=[],evs=tr[i]||[];
+          for(var t=0;t<evs.length;t++){var e=evs[t],b=buffers[e.piece],bl=Math.max(1,e.blocks);
+            if(e.piece==="0"||!b){for(var z=0;z<bl;z++)pl.push("0");continue;}
+            var sl=b.blocks||1,rep=Math.max(1,Math.ceil(bl/sl));
+            for(var x=0;x<rep;x++){pl.push(e.piece);for(var l=0;l<sl-1;l++)pl.push("0");}}
+          playlists[i]=pl;}
+        steps=0;for(var k=0;k<4;k++)if(playlists[k].length>steps)steps=playlists[k].length;
+        total=steps*BLOCK;setTotal();}
+      function load(cb){
+        var p=P();if(!p)return; if(loaded){cb();return;} if(loading)return; loading=true;
+        var base=p.getAttribute("data-base")||"/web-gallery/sounds/trax/";
+        var tr=parse(p.getAttribute("data-trax"));
+        var ids={};tr.forEach(function(t){t.forEach(function(e){if(e.piece!=="0")ids[e.piece]=1;});});
+        var list=Object.keys(ids),pend=list.length;
+        if(pend===0){buildPlaylists(tr);loaded=true;loading=false;cb();return;}
+        p.classList.add("loading");
+        list.forEach(function(id){
+          fetch(base+"sound_machine_sample_"+id+".mp3").then(function(r){return r.ok?r.arrayBuffer():Promise.reject();})
+            .then(function(ab){return AC.decodeAudioData(ab);})
+            .then(function(buf){buffers[id]={buffer:buf,blocks:sampleBlocks(buf.duration)};})
+            .catch(function(){buffers[id]=null;})
+            .then(function(){if(--pend<=0){buildPlaylists(tr);loaded=true;loading=false;p.classList.remove("loading");cb();}});
+        });}
+      function playBeat(){if(!AC)return;for(var i=0;i<4;i++){var id=playlists[i][pos];
+        if(id&&id!=="0"&&buffers[id]){var s=AC.createBufferSource();s.buffer=buffers[id].buffer;s.connect(master);try{s.start();}catch(e){}srcs.push(s);}}}
+      function start(){
+        playing=true;pos=0;elapsed=0;setTime();
+        var p=P();if(p){p.classList.add("playing");var b=p.querySelector(".play-btn");if(b)b.classList.add("playing");}
+        playBeat();
+        tickT=setInterval(function(){pos++;if(pos>=steps){stop();return;}playBeat();},BLOCK*1000);
+        timeT=setInterval(function(){elapsed++;setTime();if(elapsed>=total)stop();},1000);
+        eqT=setInterval(anim,60);anim();}
+      function stop(){
+        playing=false;
+        if(tickT){clearInterval(tickT);tickT=null;}if(timeT){clearInterval(timeT);timeT=null;}if(eqT){clearInterval(eqT);eqT=null;}
+        srcs.forEach(function(s){try{s.stop();}catch(e){}});srcs=[];
+        elapsed=0;setTime();flat();
+        var p=P();if(p){p.classList.remove("playing");var b=p.querySelector(".play-btn");if(b)b.classList.remove("playing");}}
+      function toggle(){var p=P();if(!p)return;if(playing){stop();return;}ensureAC();load(function(){if(!playing)start();});}
+      document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("#trax-player .play-btn");if(b){e.preventDefault();toggle();}});
       document.addEventListener("input",function(e){if(e.target&&e.target.classList&&e.target.classList.contains("volume"))setVol(e.target.value);});
       function boot(){setVol(50);}
       if(document.readyState!=="loading")boot(); else document.addEventListener("DOMContentLoaded",boot);
@@ -562,8 +582,9 @@ function home_widget_html(string $type, array $owner, int $oid, string $resource
                . '#trax-player .music-activity{position:absolute;right:6px;top:40px;width:46px;height:20px;background:#26331b;border:1px solid #18220f;border-radius:2px;box-shadow:inset 0 0 3px rgba(0,0,0,.6);pointer-events:none;overflow:hidden}'
                . '#trax-player .tp-eq{position:absolute;left:3px;right:3px;bottom:2px;height:16px;display:flex;align-items:flex-end;gap:2px}'
                . '#trax-player .tp-eq i{flex:1;height:1px;background:linear-gradient(#cdef7a,#6f9a3f);border-radius:1px;transition:height .07s linear}'
+               . '#trax-player.loading .play-btn{box-shadow:inset 0 0 0 99px rgba(230,200,60,.35)}'
                . '</style>'
-               . '<div id="trax-player" data-trax="' . h((string)$sg['data']) . '">'
+               . '<div id="trax-player" data-base="/web-gallery/sounds/trax/" data-trax="' . h((string)$sg['data']) . '">'
                . '<div class="tp-screen">'
                . '<div class="title">' . h($title) . '</div>'
                . '<div class="author">' . h((string)$owner['username']) . '</div>'
