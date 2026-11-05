@@ -3067,8 +3067,19 @@ function home_widget_cfg(): array {
     ];
 }
 function sitemgr_hometitres(): void {
-    page_title('Réglages de la Home', 'Taille et position de tout ce qui s\'affiche sur la Habbo Home : agrandissement des widgets, taille du texte, largeur de chaque widget, position/taille des titres. Aperçu en direct, puis « Appliquer ».');
+    page_title('Réglages de la Home', 'Taille et position de tout ce qui s\'affiche sur la Habbo Home : agrandissement des widgets, taille du texte, largeur de chaque widget, position/taille des titres. Curseur OU boutons −/+ OU valeur tapée au pixel. Aperçu en direct, puis « Appliquer ».');
     $home = preg_replace('/[^A-Za-z0-9_\-=?!@:.,]/', '', (string)($_GET['home'] ?? 'Orms')); if ($home === '') $home = 'Orms';
+
+    // Un contrôle = curseur + boutons −/+ + champ au pixel (tout synchronisé). Le <input range> porte le name POST.
+    $ctl = function (string $id, int $min, int $max, int $val, string $unit = 'px', int $rw = 150): string {
+        $id = h($id);
+        return '<span class="htp-ctl" style="white-space:nowrap;display:inline-flex;align-items:center;gap:4px">'
+            . '<button type="button" class="sm-btn htp-step" data-t="' . $id . '" data-d="-1" tabindex="-1" style="padding:0 8px">−</button>'
+            . '<input type="range" min="' . $min . '" max="' . $max . '" value="' . $val . '" id="' . $id . '" name="' . $id . '" style="width:' . $rw . 'px;vertical-align:middle">'
+            . '<button type="button" class="sm-btn htp-step" data-t="' . $id . '" data-d="1" tabindex="-1" style="padding:0 8px">+</button>'
+            . '<input type="number" min="' . $min . '" max="' . $max . '" value="' . $val . '" id="' . $id . '_n" class="htp-num mono" style="width:60px">'
+            . '<span class="muted sm">' . h($unit) . '</span></span>';
+    };
 
     echo '<form method="post" class="js" data-reload id="htpform">' . csrf_field() . '<input type="hidden" name="action" value="home_titres_apply">';
 
@@ -3077,16 +3088,16 @@ function sitemgr_hometitres(): void {
        . '<span class="muted sm" style="margin-left:auto">Home affichée : <input type="text" id="htphome" value="' . h($home) . '" style="width:120px"> '
        . '<button type="button" class="sm-btn" onclick="htpSetHome()">Changer</button></span></div>';
     echo '<iframe id="htpframe" src="/?p=home/' . h(rawurlencode($home)) . '" style="width:100%;height:480px;border:1px solid var(--line2);border-radius:6px;background:#2b3a44"></iframe>';
-    echo '<p class="muted sm" style="margin-top:4px">La vraie page. Les curseurs la modifient en direct ; la <b>largeur des widgets</b> ne s\'affiche qu\'après « Appliquer ». Rien n\'est enregistré avant.</p></div>';
+    echo '<p class="muted sm" style="margin-top:4px">La vraie page. Curseur / −/+ / valeur tapée modifient l\'aperçu en direct ; la <b>largeur des widgets</b> ne s\'affiche qu\'après « Appliquer ». Rien n\'est enregistré avant.</p></div>';
 
     // --- Global : agrandissement + taille du texte ---
     $scale = max(60, min(180, (int) site_setting_get('home.scale', '100')));
     $tsize = max(8, min(20, (int) site_setting_get('home.text.size', '11')));
     echo '<div class="panel"><div class="ph"><h3>🔍 Agrandissement &amp; texte</h3><span class="muted sm" style="margin-left:auto">s\'applique à tous les widgets</span></div>';
-    echo '<div class="row" style="gap:26px;flex-wrap:wrap">';
-    echo '<label>Agrandissement des widgets<br><input type="range" min="60" max="180" value="' . $scale . '" id="scale" name="scale" style="width:200px;vertical-align:middle"> <span id="scale_o" class="mono">' . $scale . '</span>%</label>';
-    echo '<label>Taille du texte (contenu)<br><input type="range" min="8" max="20" value="' . $tsize . '" id="text_size" name="text_size" style="width:200px;vertical-align:middle"> <span id="text_size_o" class="mono">' . $tsize . '</span>px</label>';
-    echo '</div><p class="muted sm" style="margin-top:4px">⚠️ Au-delà de 100 %, les widgets grossissent vers le bas/droite (leur coin ne bouge pas) et peuvent se chevaucher. 100 % = taille d\'origine.</p></div>';
+    echo '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    echo '<tr style="border-top:1px solid var(--line2)"><td style="padding:6px 4px;width:200px"><b>Agrandissement des widgets</b></td><td style="padding:6px 4px">' . $ctl('scale', 60, 180, $scale, '%', 200) . '</td></tr>';
+    echo '<tr style="border-top:1px solid var(--line2)"><td style="padding:6px 4px"><b>Taille du texte (contenu)</b></td><td style="padding:6px 4px">' . $ctl('text_size', 8, 20, $tsize, 'px', 200) . '</td></tr>';
+    echo '</table><p class="muted sm" style="margin-top:4px">⚠️ Au-delà de 100 %, les widgets grossissent vers le bas/droite (leur coin ne bouge pas) et peuvent se chevaucher. 100 % = taille d\'origine.</p></div>';
 
     // --- Largeur des widgets (par type) ---
     echo '<div class="panel"><div class="ph"><h3>↔️ Largeur des widgets</h3><span class="muted sm" style="margin-left:auto">par type · visible après « Appliquer »</span></div>';
@@ -3094,7 +3105,7 @@ function sitemgr_hometitres(): void {
     foreach (home_widget_cfg() as $type => $d) {
         $w = max(120, min(600, (int) site_setting_get('home.width.' . $type, (string) $d[1])));
         echo '<tr style="border-top:1px solid var(--line2)"><td style="padding:6px 4px;width:170px"><b>' . h($d[0]) . '</b></td>';
-        echo '<td style="padding:6px 4px"><input type="range" min="120" max="600" value="' . $w . '" id="w_' . h($type) . '" name="w_' . h($type) . '" style="width:260px;vertical-align:middle"> <span id="w_' . h($type) . '_o" class="mono">' . $w . '</span>px</td></tr>';
+        echo '<td style="padding:6px 4px">' . $ctl('w_' . $type, 120, 600, $w, 'px', 230) . '</td></tr>';
     }
     echo '</table></div>';
 
@@ -3108,9 +3119,9 @@ function sitemgr_hometitres(): void {
         $fs = max(7, min(28, (int) site_setting_get('home.title.' . $skin . '.fs', (string) $d[3])));
         echo '<tr style="border-top:1px solid var(--line2)">';
         echo '<td style="padding:6px 4px"><b>' . h($d[0]) . '</b><br><span class="muted sm">.' . h($skin) . '</span></td>';
-        echo '<td style="padding:6px 4px"><input type="range" min="6" max="60" value="' . $lh . '" id="lh_' . h($skin) . '" name="lh_' . h($skin) . '" style="width:120px;vertical-align:middle"> <span id="lh_' . h($skin) . '_o" class="mono">' . $lh . '</span></td>';
-        echo '<td style="padding:6px 4px"><input type="range" min="-80" max="80" value="' . $lf . '" id="left_' . h($skin) . '" name="left_' . h($skin) . '" style="width:120px;vertical-align:middle"> <span id="left_' . h($skin) . '_o" class="mono">' . $lf . '</span></td>';
-        echo '<td style="padding:6px 4px"><input type="range" min="7" max="28" value="' . $fs . '" id="fs_' . h($skin) . '" name="fs_' . h($skin) . '" style="width:110px;vertical-align:middle"> <span id="fs_' . h($skin) . '_o" class="mono">' . $fs . '</span></td>';
+        echo '<td style="padding:6px 4px">' . $ctl('lh_' . $skin, 6, 60, $lh, 'px', 110) . '</td>';
+        echo '<td style="padding:6px 4px">' . $ctl('left_' . $skin, -80, 80, $lf, 'px', 110) . '</td>';
+        echo '<td style="padding:6px 4px">' . $ctl('fs_' . $skin, 7, 28, $fs, 'px', 100) . '</td>';
         echo '</tr>';
     }
     echo '</table></div>';
@@ -3119,7 +3130,7 @@ function sitemgr_hometitres(): void {
 
     echo '<form method="post" class="js" data-reload style="margin-top:8px" onsubmit="return confirm(\'Rétablir TOUS les réglages de la Home aux valeurs par défaut ?\')">' . csrf_field() . '<input type="hidden" name="action" value="home_titres_reset"><button class="sm-btn" type="submit">🧹 Tout rétablir par défaut</button></form>';
 
-    // JS : aperçu en direct (injection CSS dans l\'iframe même origine)
+    // JS : aperçu en direct (injection CSS dans l\'iframe même origine) + synchro curseur/−/+/champ
     $keys = json_encode(array_keys(home_title_cfg()));
     echo '<script>(function(){var SK=' . $keys . ';'
        . 'function v(id){var e=document.getElementById(id);return e?parseFloat(e.value):0;}'
@@ -3127,7 +3138,10 @@ function sitemgr_hometitres(): void {
        . 'var sc=v("scale");if(sc&&sc!=100)o+=".hw{transform:scale("+(sc/100)+") !important;transform-origin:top left}";'
        . 'for(var i=0;i<SK.length;i++){var s=SK[i];o+=".hw.w_skin_"+s+" div.widget-headline h3{position:relative;line-height:"+v("lh_"+s)+"px !important;left:"+v("left_"+s)+"px !important;font-size:"+v("fs_"+s)+"px !important}";}return o;}'
        . 'function inj(){var f=document.getElementById("htpframe");if(!f)return;try{var d=f.contentDocument||f.contentWindow.document;if(!d||!d.head)return;var st=d.getElementById("htp-live");if(!st){st=d.createElement("style");st.id="htp-live";d.head.appendChild(st);}st.textContent=css();}catch(e){}}'
-       . 'document.addEventListener("input",function(e){var t=e.target;if(!t||!t.id)return;if(/^(lh|left|fs|w|scale|text)/.test(t.id)){var o=document.getElementById(t.id+"_o");if(o)o.textContent=t.value;inj();}});'
+       . 'function clampEl(el,x){var mn=parseFloat(el.min),mx=parseFloat(el.max);if(isNaN(x))x=parseFloat(el.value)||0;if(x<mn)x=mn;if(x>mx)x=mx;return Math.round(x);}'
+       . 'function setVal(id,x){var r=document.getElementById(id),n=document.getElementById(id+"_n");if(!r)return;x=clampEl(r,x);r.value=x;if(n)n.value=x;inj();}'
+       . 'document.addEventListener("input",function(e){var t=e.target;if(!t||!t.id)return;if(/_n$/.test(t.id)){var base=t.id.slice(0,-2);if(document.getElementById(base))setVal(base,parseFloat(t.value));}else if(document.getElementById(t.id+"_n")){var n=document.getElementById(t.id+"_n");n.value=t.value;inj();}});'
+       . 'document.addEventListener("click",function(e){var b=e.target.closest?e.target.closest(".htp-step"):null;if(!b)return;e.preventDefault();var id=b.getAttribute("data-t"),d=parseFloat(b.getAttribute("data-d"))||0,r=document.getElementById(id);if(r)setVal(id,parseFloat(r.value)+d);});'
        . 'var f=document.getElementById("htpframe");if(f)f.addEventListener("load",inj);'
        . 'window.htpSetHome=function(){var n=(document.getElementById("htphome").value||"Orms").trim();document.getElementById("htpframe").src="/?p=home/"+encodeURIComponent(n);};'
        . '})();</script>';
