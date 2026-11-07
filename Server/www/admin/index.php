@@ -7247,9 +7247,11 @@ function diag_checks(): array {
     $d = diag_disk();
     $out[] = ['Espace disque', $d['pct'] < 90 ? 'ok' : ($d['pct'] < 97 ? 'warn' : 'bad'), $d['total'] > 0 ? mysql_human_size((int)$d['free']) . ' libres · ' . $d['pct'] . '% utilisé' : 'Inconnu'];
     $out[] = ['Version PHP', PHP_VERSION_ID >= 80000 ? 'ok' : 'warn', PHP_VERSION];
-    foreach (['pdo_mysql', 'mbstring', 'sockets', 'gd', 'curl', 'openssl'] as $ext) {
+    // pdo_mysql + mbstring = critiques ; gd/curl/openssl = confort (warn si absents).
+    // NB : fsockopen (ping ému/RCON/Minerva) fait partie du cœur, pas de l'extension « sockets ».
+    foreach (['pdo_mysql', 'mbstring', 'gd', 'curl', 'openssl'] as $ext) {
         $has = extension_loaded($ext);
-        $crit = in_array($ext, ['pdo_mysql', 'mbstring', 'sockets'], true);
+        $crit = in_array($ext, ['pdo_mysql', 'mbstring'], true);
         $out[] = ['Extension ' . $ext, $has ? 'ok' : ($crit ? 'bad' : 'warn'), $has ? 'chargée' : 'absente'];
     }
     return $out;
@@ -7265,8 +7267,22 @@ function diag_log_sources(): array {
     $s['php'] = ['🐘 Erreurs PHP', $php];
     foreach (glob('C:/laragon/bin/apache/*/logs/error_log') ?: [] as $f) { $s['apache_err'] = ['🌐 Apache — erreurs', $f]; break; }
     foreach (glob('C:/laragon/bin/apache/*/logs/access_log') ?: [] as $f) { $s['apache_acc'] = ['🌐 Apache — accès', $f]; break; }
-    foreach ([glob('C:/laragon/bin/mysql/*/data/*.err'), glob('C:/laragon/data/*.err'), glob('C:/laragon/data/mysql/*.err')] as $g) { if ($g) { $s['mysql'] = ['🗄️ MySQL/MariaDB — erreurs', $g[0]]; break; } }
+    foreach ([glob('C:/laragon/bin/mysql/*/data/*.err'), glob('C:/laragon/data/*.err'), glob('C:/laragon/data/mysql/*.err'), glob('C:/laragon/bin/mysql/*/*.err'), glob('C:/laragon/bin/mariadb/*/data/*.err')] as $g) { if ($g) { $s['mysql'] = ['🗄️ MySQL/MariaDB — erreurs', $g[0]]; break; } }
     return $s;
+}
+/* Nombre d'erreurs JS collectées sur les dernières 24 h (lecture de la fin du log). */
+function diag_js_errors_24h(): int {
+    $f = dirname(__DIR__) . '/_runtime/js_errors.log';
+    if (!is_file($f)) return 0;
+    $sz = (int)filesize($f); $fp = @fopen($f, 'rb'); if (!$fp) return 0;
+    fseek($fp, max(0, $sz - 400000)); $data = (string)fread($fp, 400000); fclose($fp);
+    $cut = date('Y-m-d H:i:s', time() - 86400); $n = 0;
+    foreach (preg_split('/\r\n|\n/', $data) ?: [] as $l) {
+        if (trim($l) === '') continue;
+        $o = json_decode($l, true);
+        if (is_array($o) && isset($o['time']) && $o['time'] >= $cut) $n++;
+    }
+    return $n;
 }
 function diag_log_level(string $l): string {
     if (preg_match('/\b(ERROR|FATAL|SEVERE|Exception|Caused by|PHP (Parse|Fatal|Warning))\b/i', $l)) return 'err';
@@ -7318,12 +7334,13 @@ function page_journal(): void {
         . '.dg-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:820px){.dg-cols{grid-template-columns:1fr}}</style>';
 
     // Santé + services
+    $jsErr = diag_js_errors_24h();
     echo '<div class="grid">';
     echo '<div class="stat ' . $scoreCol . '"><div class="ic">❤️</div><div><div class="num">' . $score . '%</div><div class="lbl">Score de santé</div></div></div>';
     echo '<div class="stat ' . ($up ? 'green' : 'red') . '"><div class="ic">' . ($up ? '🟢' : '🔴') . '</div><div><div class="num" style="font-size:16px">' . ($up ? 'En marche' : 'Arrêté') . '</div><div class="lbl">Émulateur · 12321</div></div></div>';
     echo '<div class="stat green"><div class="ic">🗄️</div><div><div class="num" style="font-size:14px">' . h($dbShort) . '</div><div class="lbl">Base · 3306</div></div></div>';
-    echo '<div class="stat green"><div class="ic">🌐</div><div><div class="num" style="font-size:15px">PHP ' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '</div><div class="lbl">Apache · 80</div></div></div>';
     echo '<div class="stat ' . ($mav ? 'green' : 'red') . '"><div class="ic">' . ($mav ? '🎨' : '🔴') . '</div><div><div class="num" style="font-size:16px">' . ($mav ? 'En marche' : 'Arrêté') . '</div><div class="lbl">Avatars · 5123</div></div></div>';
+    echo '<div class="stat ' . ($jsErr > 0 ? 'red' : 'green') . '"><div class="ic">⚡</div><div><div class="num">' . $jsErr . '</div><div class="lbl">Erreurs JS · 24 h</div></div></div>';
     echo '</div>';
 
     // Tests système
