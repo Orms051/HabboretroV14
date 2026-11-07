@@ -6303,7 +6303,7 @@ function alerts_css(): string {
 .cfh-ctable{width:100%;border-collapse:collapse;font-size:13px}
 .cfh-ctable th{text-align:left;color:var(--mut);font-weight:600;padding-bottom:6px}
 .cfh-ctable td{border-top:1px solid var(--line2);padding:6px 8px 6px 0;vertical-align:top}
-.cfh-modal-ov{position:fixed;inset:0;background:rgba(8,12,18,.6);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:1000;padding:22px}
+.cfh-modal-ov{position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:transparent;display:none;align-items:center;justify-content:center;z-index:1000;padding:22px}
 .cfh-modal-ov.on{display:flex;animation:cfhfade .14s ease}
 @keyframes cfhfade{from{opacity:0}to{opacity:1}}
 .cfh-modal-win{background:var(--panel);border:1px solid var(--line2);border-radius:16px;width:100%;max-width:780px;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,.55)}
