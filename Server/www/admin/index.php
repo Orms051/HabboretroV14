@@ -6320,6 +6320,33 @@ function alerts_css(): string {
 .cfh-log-u{white-space:nowrap}
 .cfh-log-m{white-space:pre-wrap}
 .cfh-loading{padding:26px;text-align:center;color:var(--mut)}
+.al-online{display:inline-flex;align-items:center;gap:6px;background:var(--soft);border:1px solid var(--line2);border-radius:20px;padding:3px 11px;font-size:12.5px;font-weight:600;color:var(--acc)}
+.al-field{display:block;margin-bottom:12px}
+.al-field>span{display:block;font-size:12.5px;font-weight:600;color:var(--mut);margin-bottom:5px}
+.al-field input,.al-field select,.al-field textarea{width:100%}
+.al-count{float:right;font-weight:400;color:var(--mut);font-size:11.5px}
+.al-prevbox{background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:0;overflow:hidden;margin-bottom:12px}
+.al-prevcap{font-size:11px;font-weight:700;color:var(--mut);background:var(--soft);padding:5px 11px;border-bottom:1px solid var(--line2);text-transform:uppercase;letter-spacing:.04em}
+.al-prev{padding:14px;min-height:34px;font-size:14px;line-height:1.5;white-space:pre-wrap}
+.al-prev .ph-empty{color:var(--mut);font-style:italic}
+.al-modes{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.al-mode{flex:1;min-width:190px;border:1px solid var(--line2);border-radius:11px;padding:11px 13px;cursor:pointer;transition:.12s}
+.al-mode:hover{border-color:var(--acc)}
+.al-mode.on{border-color:var(--acc);background:var(--soft);box-shadow:0 0 0 1px var(--acc) inset}
+.al-mode b{display:block;font-size:13.5px}
+.al-mode span{font-size:12px;color:var(--mut)}
+.al-mode input{margin-right:7px}
+.al-filters{display:flex;gap:6px;flex-wrap:wrap;margin:-2px 0 12px}
+.al-fchip{font-size:12.5px;padding:4px 12px;border-radius:16px;border:1px solid var(--line2);background:var(--panel);color:var(--mut);cursor:pointer;font-weight:600}
+.al-fchip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.al-htable{width:100%;border-collapse:collapse;font-size:13px}
+.al-htable th{text-align:left;color:var(--mut);font-weight:600;padding:0 10px 7px 0;border-bottom:1px solid var(--line2)}
+.al-htable td{padding:7px 10px 7px 0;border-top:1px solid var(--line2);vertical-align:top}
+.al-chan{font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:14px;white-space:nowrap}
+.al-chan.jeu{background:rgba(18,168,90,.15);color:var(--green)}
+.al-chan.msg{background:var(--soft);color:var(--acc)}
+.al-res-ok{color:var(--green);font-weight:600}
+.al-res-ko{color:var(--red);font-weight:600}
 ';
 }
 function page_alerts(): void {
@@ -6493,47 +6520,93 @@ function alerts_sec_cfh(): void {
         . 'fetch("?cfhlog="+id,{headers:{"X-Requested-With":"fetch"}}).then(function(r){return r.text();}).then(function(t){b.innerHTML=t;}).catch(function(){b.innerHTML="<div class=\'empty\'>Erreur de chargement du journal.</div>";});}'
         . 'function cfhCloseLog(){document.getElementById("cfhModal").classList.remove("on");document.body.style.overflow="";}'
         . 'document.addEventListener("keydown",function(e){if(e.key==="Escape")cfhCloseLog();});'
+        . '(function(){var m=document.getElementById("cfhModal");if(m&&m.parentNode!==document.body)document.body.appendChild(m);})();'
         . '</script>';
 }
 function alerts_sec_send(): void {
     if (!tab_allowed('server')) { echo '<div class="panel"><div class="empty">🔒 Ton rang n\'autorise pas l\'envoi d\'alertes en jeu.</div></div>'; return; }
     $up = emu_running();
-    echo '<div class="panel"><div class="ph"><h3>📢 Alerte en jeu</h3><span class="rk' . ($up ? '' : ' red') . '" style="margin-left:auto">' . ($up ? '🟢 Émulateur en ligne' : '🔴 Émulateur hors ligne') . '</span></div>';
-    echo '<p class="sub">Message pop-up envoyé aux <b>joueurs actuellement connectés</b> (éphémère, non conservé). Seule destination prise en charge aujourd\'hui : <b>tout l\'hôtel</b>. Les alertes par appartement ou par joueur se font en jeu (<code>:alert</code>). ℹ️ Les <b>emoji ne sont pas affichés</b> par le client (retirés automatiquement) ; les accents, eux, passent bien.</p>';
-    if (!$up) echo '<div class="note" style="margin:0 0 10px">🔴 Émulateur hors ligne : l\'envoi <b>échouera</b> (aucune mise en file automatique). Démarre-le d\'abord.</div>';
-    $presetOpts = '<option value="">— Message prédéfini —</option>';
-    foreach (hotel_alert_presets() as $pm) $presetOpts .= '<option value="' . h($pm) . '">' . h(mb_strlen($pm) > 64 ? mb_substr($pm, 0, 64) . '…' : $pm) . '</option>';
+    $online = 0; try { $o = db()->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn(); $online = $o !== false ? (int)$o : 0; } catch (Throwable $e) {}
+
+    echo '<div class="panel"><div class="ph"><h3>📢 Alerte en jeu</h3>';
+    echo '<span class="rk' . ($up ? '' : ' red') . '" style="margin-left:auto">' . ($up ? '🟢 Émulateur en ligne' : '🔴 Émulateur hors ligne') . '</span></div>';
+    echo '<p class="sub" style="margin-top:0">Pop-up envoyée aux <b>joueurs connectés</b> (éphémère, non conservée). Destination : <b>tout l\'hôtel</b>. Les alertes par appartement/joueur se font en jeu (<code>:alert</code>). ℹ️ Les <b>emoji ne sont pas affichés</b> par le client (retirés automatiquement) ; les accents passent.</p>';
+    echo '<div style="margin:2px 0 14px"><span class="al-online" id="alOnline">👥 ' . $online . ' joueur' . ($online > 1 ? 's' : '') . ' en ligne — destinataires potentiels</span></div>';
+    if (!$up) echo '<div class="note" style="margin:0 0 14px">🔴 Émulateur hors ligne : l\'envoi <b>échouera</b> (pas de mise en file). Démarre-le d\'abord.</div>';
+
+    $presetOpts = '<option value="">— Choisir un message prédéfini —</option>';
+    foreach (hotel_alert_presets() as $pm) $presetOpts .= '<option value="' . h($pm) . '">' . h(mb_strlen($pm) > 70 ? mb_substr($pm, 0, 70) . '…' : $pm) . '</option>';
+
     echo '<form method="post" class="js" data-reload onsubmit="var b=this.querySelector(\'button[type=submit]\');if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return confirm(\'Envoyer cette alerte à TOUS les joueurs connectés ?\');">' . csrf_field()
        . '<input type="hidden" name="action" value="hotel_alert">'
-       . '<div class="row" style="margin-bottom:8px"><label style="flex:1">📋 Modèles<select onchange="if(this.value){document.getElementById(\'ha_msg\').value=this.value;}">' . $presetOpts . '</select></label></div>'
-       . '<div class="row"><label style="flex:2">Message<input id="ha_msg" name="message" maxlength="200" placeholder="Ex. Maintenance dans 10 minutes !" required></label><label style="flex:1">Signature (option)<input name="sender" placeholder="L\'équipe"></label></div>'
-       . '<div style="margin-top:8px"><button>📢 Envoyer à tout l\'hôtel</button> <span class="muted sm">Portée : joueurs connectés · résultat tracé dans l\'historique</span></div></form>';
+       . '<label class="al-field"><span>📋 Modèle (facultatif)</span><select id="ha_preset">' . $presetOpts . '</select></label>'
+       . '<label class="al-field"><span>Message <span class="al-count"><b id="ha_n">0</b>/200</span></span><input id="ha_msg" name="message" maxlength="200" placeholder="Ex. Maintenance dans 10 minutes !" required></label>'
+       . '<label class="al-field"><span>Signature (facultatif)</span><input id="ha_sig" name="sender" maxlength="60" placeholder="L\'équipe"></label>'
+       . '<div class="al-prevbox"><div class="al-prevcap">Aperçu de la pop-up</div><div class="al-prev" id="ha_prev"><span class="ph-empty">Le message apparaîtra ici…</span></div></div>'
+       . '<div><button>📢 Envoyer à tout l\'hôtel</button> <span class="muted sm">Portée : joueurs connectés · résultat tracé dans l\'historique</span></div></form>';
+    // Aperçu live + compteur + remplissage par modèle.
+    echo '<script>(function(){var m=document.getElementById("ha_msg"),s=document.getElementById("ha_sig"),p=document.getElementById("ha_prev"),n=document.getElementById("ha_n"),pre=document.getElementById("ha_preset");'
+       . 'function esc(t){return t.replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}'
+       . 'function up(){var t=m.value,sig=s.value.trim();if(n)n.textContent=t.length;'
+       . 'if(!t){p.innerHTML="<span class=\'ph-empty\'>Le message apparaîtra ici…</span>";return;}'
+       . 'p.innerHTML=esc(t)+(sig?"<br><span style=\'opacity:.65;font-size:12px\'>— "+esc(sig)+"</span>":"");}'
+       . 'm.addEventListener("input",up);s.addEventListener("input",up);'
+       . 'if(pre)pre.addEventListener("change",function(){if(this.value){m.value=this.value;up();m.focus();}});})();</script>';
     echo '</div>';
 }
 function alerts_sec_announce(): void {
     if (!tab_allowed('messages')) { echo '<div class="panel"><div class="empty">🔒 Ton rang n\'autorise pas les annonces de messagerie.</div></div>'; return; }
-    echo '<div class="panel"><div class="ph"><h3>📨 Annonce dans la messagerie</h3><span class="muted sm" style="margin-left:auto">persistant</span></div>';
-    echo '<p class="sub">Crée une conversation par destinataire : <b>conservée et consultable</b> ensuite par le joueur (contrairement à l\'alerte en jeu). Le joueur peut répondre ; sa réponse est <b>privée</b> (jamais transmise aux autres destinataires).</p>';
-    echo '<form method="post" class="js" data-reload data-confirm="Envoyer cette annonce (une conversation par destinataire) ?" onsubmit="var b=this.querySelector(\'button[type=submit]\');if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return true;"><input type="hidden" name="action" value="conv_broadcast">' . csrf_field()
-       . '<div class="sm" style="margin-bottom:4px"><label style="margin-right:12px"><input type="radio" name="mode" value="list" checked> Liste de pseudos</label><label><input type="radio" name="mode" value="rank"> Par rang minimum</label></div>'
-       . '<textarea name="usernames" rows="2" placeholder="Pseudos séparés par virgule ou espace (max 500)" style="width:100%"></textarea>'
-       . '<label class="sm" style="display:block;margin-top:4px">Rang minimum (si « par rang ») <input type="number" name="min_rank" value="5" min="1" max="7" style="width:70px"></label>'
-       . '<input name="subject" maxlength="150" placeholder="Sujet" style="width:100%;margin-top:6px">'
-       . '<textarea name="body" rows="3" maxlength="4000" required placeholder="Texte de l\'annonce…" style="width:100%;margin-top:6px"></textarea>'
-       . '<button style="margin-top:8px">📨 Envoyer l\'annonce</button> <span class="muted sm">Cible + nombre de destinataires affichés dans le résultat</span></form>';
+    echo '<div class="panel"><div class="ph"><h3>📨 Annonce dans la messagerie</h3><span class="al-online" style="margin-left:auto;color:var(--green)">💾 persistant</span></div>';
+    echo '<p class="sub" style="margin-top:0">Crée <b>une conversation par destinataire</b>, conservée et consultable ensuite par le joueur (contrairement à l\'alerte en jeu). Le joueur peut répondre ; sa réponse est <b>privée</b> (jamais transmise aux autres).</p>';
+
+    echo '<form method="post" class="js" data-reload data-confirm="Envoyer cette annonce (une conversation par destinataire) ?" onsubmit="var b=this.querySelector(\'button[type=submit]\');if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return true;"><input type="hidden" name="action" value="conv_broadcast">' . csrf_field();
+    // Choix de la cible (deux cartes radio).
+    echo '<label class="al-field"><span>Destinataires</span></label>';
+    echo '<div class="al-modes">';
+    echo '<label class="al-mode on" id="alm_list"><input type="radio" name="mode" value="list" checked><b>📝 Liste de pseudos</b><span>Tu saisis les joueurs un par un.</span></label>';
+    echo '<label class="al-mode" id="alm_rank"><input type="radio" name="mode" value="rank"><b>🎖️ Par rang minimum</b><span>Tous les comptes d\'un rang ≥ seuil.</span></label>';
+    echo '</div>';
+    echo '<label class="al-field" id="alf_list"><span>Pseudos <span class="muted" style="font-weight:400">(séparés par virgule ou espace · max 500)</span></span><textarea name="usernames" rows="2" placeholder="Orms, Pixel, Bobba…"></textarea></label>';
+    echo '<label class="al-field" id="alf_rank" style="display:none"><span>Rang minimum</span><input type="number" name="min_rank" value="5" min="1" max="7" style="width:90px"></label>';
+    echo '<label class="al-field"><span>Sujet</span><input name="subject" maxlength="150" placeholder="Ex. Événement ce week-end"></label>';
+    echo '<label class="al-field"><span>Message <span class="al-count"><b id="an_n">0</b>/4000</span></span><textarea id="an_body" name="body" rows="4" maxlength="4000" required placeholder="Texte de l\'annonce…"></textarea></label>';
+    echo '<div><button>📨 Envoyer l\'annonce</button> <span class="muted sm">Cible + nombre de destinataires affichés dans le résultat</span></div></form>';
+    // Bascule liste/rang + compteur.
+    echo '<script>(function(){var rl=document.getElementById("alm_list"),rr=document.getElementById("alm_rank"),fl=document.getElementById("alf_list"),fr=document.getElementById("alf_rank"),b=document.getElementById("an_body"),n=document.getElementById("an_n");'
+       . 'function sync(){var rank=rr.querySelector("input").checked;rl.classList.toggle("on",!rank);rr.classList.toggle("on",rank);fl.style.display=rank?"none":"";fr.style.display=rank?"":"none";}'
+       . 'rl.querySelector("input").addEventListener("change",sync);rr.querySelector("input").addEventListener("change",sync);'
+       . 'if(b&&n)b.addEventListener("input",function(){n.textContent=b.value.length;});})();</script>';
     echo '</div>';
 }
 function alerts_sec_history(): void {
     ensure_alert_log();
     $rows = []; try { $rows = db()->query('SELECT * FROM alert_log ORDER BY id DESC LIMIT 100')->fetchAll(); } catch (Throwable $e) {}
-    echo '<div class="panel"><div class="ph"><h3>🕑 Historique des diffusions</h3></div>';
-    echo '<p class="muted sm" style="margin:-2px 0 8px">⚠️ Un envoi RCON « accepté » signifie « transmis au serveur », pas que tous les joueurs l\'ont lu.</p>';
-    if (!$rows) echo '<div class="empty">Aucune diffusion enregistrée pour l\'instant.</div>';
-    else {
-        echo '<table class="clean"><tr><th>Quand</th><th>Par</th><th>Canal</th><th>Cible</th><th>Message</th><th>Résultat</th></tr>';
-        foreach ($rows as $r) echo '<tr><td class="sm muted">' . h(date('d/m H:i', strtotime((string)$r['created_at']))) . '</td><td class="sm">' . h((string)$r['author']) . '</td><td class="sm">' . h((string)$r['channel']) . '</td><td class="sm">' . h((string)$r['target']) . '</td><td class="sm">' . h(mb_strimwidth((string)$r['content'], 0, 80, '…')) . '</td><td class="sm">' . h((string)$r['result']) . '</td></tr>';
-        echo '</table>';
+    $nJeu = 0; $nMsg = 0;
+    foreach ($rows as $r) { if (stripos((string)$r['channel'], 'jeu') !== false) $nJeu++; else $nMsg++; }
+
+    echo '<div class="panel"><div class="ph"><h3>🕑 Historique des diffusions</h3><span class="muted sm" style="margin-left:auto">' . count($rows) . ' entrée' . (count($rows) > 1 ? 's' : '') . ' (100 max)</span></div>';
+    echo '<p class="muted sm" style="margin:-2px 0 10px">⚠️ Un envoi RCON « accepté » = « transmis au serveur », pas que tous les joueurs l\'ont lu.</p>';
+    if (!$rows) { echo '<div class="empty">Aucune diffusion enregistrée pour l\'instant.</div></div>'; return; }
+
+    echo '<div class="al-filters"><button type="button" class="al-fchip on" data-f="all">Tout (' . count($rows) . ')</button><button type="button" class="al-fchip" data-f="jeu">📢 Jeu (' . $nJeu . ')</button><button type="button" class="al-fchip" data-f="msg">📨 Messagerie (' . $nMsg . ')</button></div>';
+    echo '<table class="al-htable" id="alHist"><tr><th>Quand</th><th>Par</th><th>Canal</th><th>Cible</th><th>Message</th><th>Résultat</th></tr>';
+    foreach ($rows as $r) {
+        $isJeu = stripos((string)$r['channel'], 'jeu') !== false;
+        $res = (string)$r['result'];
+        $ko = (stripos($res, 'échec') !== false || stripos($res, 'injoignable') !== false);
+        echo '<tr data-chan="' . ($isJeu ? 'jeu' : 'msg') . '">';
+        echo '<td class="sm muted" style="white-space:nowrap">' . h(date('d/m H:i', strtotime((string)$r['created_at']))) . '</td>';
+        echo '<td class="sm">' . h((string)$r['author']) . '</td>';
+        echo '<td><span class="al-chan ' . ($isJeu ? 'jeu' : 'msg') . '">' . ($isJeu ? '📢 Jeu' : '📨 Msg') . '</span></td>';
+        echo '<td class="sm">' . h((string)$r['target']) . '</td>';
+        echo '<td class="sm">' . h(mb_strimwidth((string)$r['content'], 0, 80, '…')) . '</td>';
+        echo '<td class="sm ' . ($ko ? 'al-res-ko' : 'al-res-ok') . '">' . h($res) . '</td>';
+        echo '</tr>';
     }
+    echo '</table>';
+    echo '<script>(function(){var chips=document.querySelectorAll(".al-fchip"),rows=document.querySelectorAll("#alHist tr[data-chan]");'
+       . 'chips.forEach(function(c){c.addEventListener("click",function(){chips.forEach(function(x){x.classList.remove("on");});c.classList.add("on");var f=c.getAttribute("data-f");'
+       . 'rows.forEach(function(r){r.style.display=(f==="all"||r.getAttribute("data-chan")===f)?"":"none";});});});})();</script>';
     echo '</div>';
 }
 
