@@ -6336,8 +6336,12 @@ function alerts_css(): string {
 .atab.on{background:var(--acc);border-color:var(--acc);color:#fff;box-shadow:0 4px 14px var(--glow)}
 .atab-ic{font-size:15px;line-height:1}
 .atab-badge{background:var(--red);color:#fff;border-radius:9px;padding:1px 7px;font-size:11px;font-weight:800;margin-left:2px}
-.cfh-sum{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.cfh-sum .big{font-size:26px;font-weight:800;line-height:1}
+.cfh-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.cfh-stat{background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:14px 12px;text-align:center}
+.cfh-stat .n{font-size:26px;font-weight:800;line-height:1.05}
+.cfh-stat .n small{font-size:14px;font-weight:600;color:var(--mut)}
+.cfh-stat .l{font-size:12px;color:var(--mut);margin-top:5px;text-transform:uppercase;letter-spacing:.03em}
+.cfh-topcall{margin-top:12px;background:var(--soft);border:1px solid var(--line2);border-radius:10px;padding:9px 13px;font-size:13px}
 .cfh-card{position:relative;overflow:hidden}
 .cfh-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--mut)}
 .cfh-card.is-open::before{background:var(--red)}
@@ -6492,16 +6496,17 @@ function alerts_sec_cfh(): void {
     try { $a = db()->query("SELECT AVG(TIMESTAMPDIFF(SECOND, created_at, closed_at)) FROM calls_for_help WHERE status='closed' AND closed_at IS NOT NULL AND closed_at >= (NOW() - INTERVAL 30 DAY)")->fetchColumn(); if ($a !== null && $a !== false) $avgMin = max(0, (int) round(((float)$a) / 60)); } catch (Throwable $e) {}
     try { foreach (db()->query("SELECT u.username, COUNT(*) AS n FROM calls_for_help c LEFT JOIN users u ON u.id=c.caller_id WHERE c.created_at >= (NOW() - INTERVAL 7 DAY) GROUP BY c.caller_id ORDER BY n DESC LIMIT 3") as $r) { if ((int)$r['n'] >= 2) $topCallers[] = ($r['username'] !== null ? (string)$r['username'] : '#?') . ' (' . (int)$r['n'] . ')'; } } catch (Throwable $e) {}
 
-    // --- Bandeau de synthèse ---
+    // --- Bandeau de synthèse (tuiles) ---
     echo '<div class="panel"><div class="ph"><h3>🆘 Appels à l\'aide</h3><span class="rk' . ($up ? '' : ' red') . '" style="margin-left:auto">' . ($up ? '🟢 Émulateur en ligne' : '🔴 Émulateur hors ligne') . '</span></div>';
-    echo '<div class="cfh-sum"><div><span class="big" style="color:' . ($open > 0 ? 'var(--red)' : 'var(--mut)') . '">' . $open . '</span> <span class="muted">en attente</span></div>';
-    echo '<div><span class="big">' . count($active) . '</span> <span class="muted">actif' . (count($active) > 1 ? 's' : '') . '</span></div>';
-    echo '<div><span class="big">' . $stToday . '</span> <span class="muted">aujourd\'hui</span></div>';
-    echo '<div><span class="big">' . $stWeek . '</span> <span class="muted">7 jours</span></div>';
-    if ($avgMin !== null) echo '<div><span class="big">' . $avgMin . '</span> <span class="muted">min. délai moyen*</span></div>';
-    echo '<div style="flex:1"></div></div>';
-    echo '<p class="sub" style="margin:10px 0 0">Le <b>traitement live se fait en jeu</b> (prise en charge, réponse au joueur) avec ton compte modérateur ; cet écran apporte la <b>persistance, l\'historique et une note interne</b>. Une prise en charge en jeu apparaît ici automatiquement.' . ($avgMin !== null ? ' <span class="muted sm">(*ouverture → clôture, 30 j.)</span>' : '') . '</p>';
-    if ($topCallers) echo '<p class="muted sm" style="margin:8px 0 0">📈 Appellent le plus (7 j) : <b>' . implode('</b> · <b>', array_map('h', $topCallers)) . '</b> — à surveiller si abus du bouton d\'aide.</p>';
+    echo '<div class="cfh-stats">';
+    echo '<div class="cfh-stat"><div class="n" style="color:' . ($open > 0 ? 'var(--red)' : 'var(--txt)') . '">' . $open . '</div><div class="l">En attente</div></div>';
+    echo '<div class="cfh-stat"><div class="n">' . count($active) . '</div><div class="l">Actif' . (count($active) > 1 ? 's' : '') . '</div></div>';
+    echo '<div class="cfh-stat"><div class="n">' . $stToday . '</div><div class="l">Aujourd\'hui</div></div>';
+    echo '<div class="cfh-stat"><div class="n">' . $stWeek . '</div><div class="l">7 jours</div></div>';
+    if ($avgMin !== null) echo '<div class="cfh-stat"><div class="n">' . $avgMin . ' <small>min</small></div><div class="l">Délai moyen*</div></div>';
+    echo '</div>';
+    echo '<p class="sub" style="margin:12px 0 0">Le <b>traitement live se fait en jeu</b> (prise en charge, réponse au joueur) avec ton compte modérateur ; cet écran apporte la <b>persistance, l\'historique et une note interne</b>. Une prise en charge en jeu apparaît ici automatiquement.' . ($avgMin !== null ? ' <span class="muted sm">(*délai ouverture → clôture, 30 j.)</span>' : '') . '</p>';
+    if ($topCallers) echo '<div class="cfh-topcall">📈 <b>Appellent le plus</b> (7 j) : ' . implode(' · ', array_map('h', $topCallers)) . ' <span class="muted sm">— à surveiller si abus du bouton d\'aide.</span></div>';
     echo '</div>';
 
     // Bandeau « nouvel appel » : apparaît si le nombre d'appels en attente augmente (poll 15 s), sans recharger toute la page.
