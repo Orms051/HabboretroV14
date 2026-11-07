@@ -5751,81 +5751,132 @@ function page_messages(): void {
     else conv_assistance_view($vue);
 }
 
+function mod_css(): string {
+    return '
+.atabs{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 16px}
+.atab{display:inline-flex;align-items:center;gap:7px;padding:9px 15px;border-radius:11px;border:1px solid var(--line2);background:var(--panel);color:var(--mut);font-weight:600;font-size:13.5px;text-decoration:none;transition:.12s}
+.atab:hover{color:var(--txt);border-color:var(--acc)}
+.atab.on{background:var(--acc);border-color:var(--acc);color:#fff;box-shadow:0 4px 14px var(--glow)}
+.atab-ic{font-size:15px;line-height:1}
+.atab-badge{background:var(--red);color:#fff;border-radius:9px;padding:1px 7px;font-size:11px;font-weight:800;margin-left:2px}
+.mod-av{width:30px;height:30px;border-radius:7px;background:var(--panel2);image-rendering:pixelated;vertical-align:middle;margin-right:8px;flex:none}
+.mod-cible{display:inline-flex;align-items:center}
+.mod-ipbadge{font-weight:700;color:var(--red)}
+';
+}
 function page_moderation(): void {
-    page_title('Modération', 'Bannissements et journal des actions');
+    page_title('Modération', 'Bannissements, surveillance et journaux');
+    $sec = (string)($_GET['sec'] ?? 'bans');
+    if (!in_array($sec, ['bans', 'watch', 'logs', 'journal', 'tools'], true)) $sec = 'bans';
+    if (trim((string)($_GET['ban'] ?? '')) !== '') $sec = 'bans'; // lien « Bannir » depuis un appel CFH
+    $nowMs = time() * 1000;
+    $nBans = 0; try { $s = db()->prepare('SELECT COUNT(*) FROM users_bans WHERE banned_until > ?'); $s->execute([$nowMs]); $nBans = (int)$s->fetchColumn(); } catch (Throwable $e) {}
+    $nAlts = 0; try { $nAlts = (int)db()->query('SELECT COUNT(*) FROM (SELECT ip_address FROM users_ip_logs GROUP BY ip_address HAVING COUNT(DISTINCT user_id) > 1) t')->fetchColumn(); } catch (Throwable $e) {}
+
+    echo '<style>' . mod_css() . '</style>';
+    $tabs = ['bans' => ['🚫', 'Bannissements', $nBans], 'watch' => ['🕵️', 'Multi-comptes', $nAlts], 'logs' => ['💬', 'Logs de chat', 0], 'journal' => ['📜', 'Journaux', 0], 'tools' => ['🧰', 'Outils', 0]];
+    echo '<div class="atabs">';
+    foreach ($tabs as $k => $t) {
+        $b = ((int)$t[2] > 0) ? '<span class="atab-badge">' . (int)$t[2] . '</span>' : '';
+        echo '<a class="atab' . ($sec === $k ? ' on' : '') . '" href="?p=moderation&sec=' . $k . '"><span class="atab-ic">' . $t[0] . '</span>' . h($t[1]) . $b . '</a>';
+    }
+    echo '</div>';
+    if ($sec === 'watch') mod_sec_watch();
+    elseif ($sec === 'logs') mod_sec_logs();
+    elseif ($sec === 'journal') mod_sec_journal();
+    elseif ($sec === 'tools') mod_sec_tools();
+    else mod_sec_bans();
+}
+function mod_sec_bans(): void {
     $prefill = trim($_GET['ban'] ?? '');
-    echo '<div class="panel"><div class="ph"><h3>🚫 Bannir</h3></div><form method="post" class="js row" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="ban_add">
+    echo '<div class="panel"><div class="ph"><h3>🚫 Nouveau bannissement</h3></div><form method="post" class="js row" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="ban_add">
         <label>Type<select name="type"><option value="USER_ID">Joueur (nom)</option><option value="IP_ADDRESS">Adresse IP</option><option value="MACHINE_ID">Machine ID</option></select></label>
         <label style="flex:1">Cible (nom ou IP)<input name="value" list="dl_pseudos" autocomplete="off" value="' . h($prefill) . '" required></label>
-        <label>Durée (jours · 0 = définitif)<input type="number" name="days" value="0" style="width:110px"></label>
+        <label>Durée (jours · 0 = définitif)<input type="number" name="days" value="0" style="width:120px"></label>
         <label style="flex:1">Motif<input name="message" value="Comportement inapproprié"></label><button>🚫 Bannir</button></form></div>';
-    echo '<div class="panel"><div class="ph"><h3>Bannissements actifs</h3></div>';
-    // Actifs = échéance encore dans le futur (banned_until en millisecondes). Les bans
-    // expirés ne sont plus listés ici comme « actifs ».
+
+    echo '<div class="panel"><div class="ph"><h3>Bannissements actifs</h3><span class="muted sm" style="margin-left:auto">échéance future uniquement</span></div>';
     $nowMs = time() * 1000;
-    $st = db()->prepare('SELECT b.ban_type,b.banned_value,b.message,b.banned_until,u.username FROM users_bans b LEFT JOIN users u ON (b.ban_type=\'USER_ID\' AND u.id=b.banned_value) WHERE b.banned_until > ? ORDER BY b.banned_until DESC');
+    $st = db()->prepare('SELECT b.ban_type,b.banned_value,b.message,b.banned_until,u.id AS uid,u.username FROM users_bans b LEFT JOIN users u ON (b.ban_type=\'USER_ID\' AND u.id=b.banned_value) WHERE b.banned_until > ? ORDER BY b.banned_until DESC');
     $st->execute([$nowMs]); $rows = $st->fetchAll();
     if (!$rows) echo '<div class="empty">Aucun bannissement actif 🎉</div>';
-    else { echo '<table class="clean"><tr><th>Type</th><th>Cible</th><th>Motif</th><th>Jusqu\'à</th><th></th></tr>';
-        foreach ($rows as $b) { $until = (int)$b['banned_until'] >= BAN_PERMANENT ? '♾️ Définitif' : date('d/m/Y H:i', (int)($b['banned_until'] / 1000)); $cible = $b['ban_type'] === 'USER_ID' ? ('👤 ' . h($b['username'] ?? ('#' . $b['banned_value']))) : h($b['banned_value']);
-            echo '<tr><td class="muted sm">' . h($b['ban_type']) . '</td><td>' . $cible . '</td><td class="muted">' . h($b['message']) . '</td><td class="sm">' . $until . '</td><td><form method="post" class="js" data-reload data-confirm="Lever ce bannissement ?"><input type="hidden" name="action" value="ban_remove">' . csrf_field() . '<input type="hidden" name="value" value="' . h($b['banned_value']) . '"><button class="mini ghost">Lever</button></form></td></tr>'; }
-        echo '</table>'; }
+    else {
+        echo '<table class="clean"><tr><th>Cible</th><th>Type</th><th>Motif</th><th>Jusqu\'à</th><th></th></tr>';
+        foreach ($rows as $b) {
+            $until = (int)$b['banned_until'] >= BAN_PERMANENT ? '♾️ Définitif' : date('d/m/Y H:i', (int)($b['banned_until'] / 1000));
+            if ($b['ban_type'] === 'USER_ID') {
+                $nm = $b['username'] ?? ('#' . $b['banned_value']);
+                $av = $b['username'] !== null ? '<img class="mod-av" src="/avatar.php?user=' . h(rawurlencode((string)$b['username'])) . '&size=s&direction=2&v=2" alt="" loading="lazy">' : '';
+                $link = $b['uid'] ? '<a href="?p=user&id=' . (int)$b['uid'] . '"><b>' . h((string)$nm) . '</b></a>' : '<b>' . h((string)$nm) . '</b>';
+                $cible = '<span class="mod-cible">' . $av . $link . '</span>';
+                $type = '👤 Joueur';
+            } else {
+                $cible = '<span class="mod-ipbadge">' . h((string)$b['banned_value']) . '</span>';
+                $type = $b['ban_type'] === 'IP_ADDRESS' ? '🌐 IP' : '💻 Machine';
+            }
+            echo '<tr><td>' . $cible . '</td><td class="sm muted">' . $type . '</td><td class="muted">' . h((string)$b['message']) . '</td><td class="sm">' . $until . '</td><td><form method="post" class="js" data-reload data-confirm="Lever ce bannissement ?"><input type="hidden" name="action" value="ban_remove">' . csrf_field() . '<input type="hidden" name="value" value="' . h((string)$b['banned_value']) . '"><button class="mini ghost">Lever</button></form></td></tr>';
+        }
+        echo '</table>';
+    }
     echo '</div>';
-    echo '<div class="panel"><div class="ph"><h3>📜 Journal des actions (en jeu)</h3></div>';
-    $al = db()->query('SELECT a.action,a.message,a.created_at,s.username AS staff,t.username AS cible FROM housekeeping_audit_log a LEFT JOIN users s ON s.id=a.user_id LEFT JOIN users t ON t.id=a.target_id ORDER BY a.created_at DESC LIMIT 25')->fetchAll();
+}
+function mod_sec_watch(): void {
+    echo '<div class="panel"><div class="ph"><h3>🕵️ Multi-comptes (même IP)</h3></div>';
+    echo '<p class="muted sm" style="margin:-2px 0 8px">Plusieurs comptes ayant utilisé la même adresse IP — indice possible de multi-comptes (pas une preuve : box partagée, cybercafé…).</p>';
+    $alts = db()->query('SELECT l.ip_address, COUNT(DISTINCT l.user_id) n, GROUP_CONCAT(DISTINCT u.username ORDER BY u.username SEPARATOR ", ") AS users FROM users_ip_logs l JOIN users u ON u.id=l.user_id GROUP BY l.ip_address HAVING n>1 ORDER BY n DESC LIMIT 60')->fetchAll();
+    if (!$alts) echo '<div class="empty">Aucun multi-compte détecté.</div>';
+    else {
+        echo '<table class="clean"><tr><th>Adresse IP</th><th>Nb</th><th>Comptes concernés</th><th></th></tr>';
+        foreach ($alts as $a) echo '<tr><td class="sm"><b>' . h((string)$a['ip_address']) . '</b></td><td><span class="rk' . ((int)$a['n'] >= 4 ? ' red' : '') . '">' . (int)$a['n'] . '</span></td><td class="sm">' . h((string)$a['users']) . '</td><td><form method="post" class="js row" data-reload data-confirm="Bannir cette IP ?" style="margin:0;gap:4px"><input type="hidden" name="action" value="ban_add"><input type="hidden" name="type" value="IP_ADDRESS"><input type="hidden" name="value" value="' . h((string)$a['ip_address']) . '"><input type="hidden" name="days" value="0"><input type="hidden" name="message" value="Multi-comptes">' . csrf_field() . '<button class="mini ghost danger">🚫 Bannir l\'IP</button></form></td></tr>';
+        echo '</table>';
+    }
+    echo '</div>';
+}
+function mod_sec_logs(): void {
+    $cu = trim($_GET['cu'] ?? '');
+    echo '<div class="panel"><div class="ph"><h3>💬 Logs de chat</h3><form method="get" class="srch" style="margin-left:auto"><input type="hidden" name="p" value="moderation"><input type="hidden" name="sec" value="logs"><input name="cu" list="dl_pseudos" autocomplete="off" value="' . h($cu) . '" placeholder="🔍 Filtrer par joueur..."><button class="mini">OK</button></form></div>';
+    if ($cu !== '') echo '<p class="muted sm" style="margin:-2px 0 8px">Filtré sur « <b>' . h($cu) . '</b> » · <a class="lnk" href="?p=moderation&sec=logs">tout afficher</a></p>';
+    $sql = 'SELECT c.timestamp,c.chat_type,c.message,u.username,r.name AS room FROM room_chatlogs c LEFT JOIN users u ON u.id=c.user_id LEFT JOIN rooms r ON r.id=c.room_id';
+    if ($cu !== '') { $st = db()->prepare($sql . ' WHERE u.username LIKE ? ORDER BY c.timestamp DESC LIMIT 150'); $st->execute(['%' . $cu . '%']); $logs = $st->fetchAll(); }
+    else { $logs = db()->query($sql . ' ORDER BY c.timestamp DESC LIMIT 150')->fetchAll(); }
+    if (!$logs) echo '<div class="empty">Aucun message enregistré' . ($cu !== '' ? ' pour ce joueur' : '') . '.</div>';
+    else {
+        $ct = [1 => '🗣️', 2 => '🤫'];
+        echo '<table class="clean"><tr><th>Quand</th><th>Joueur</th><th>Salle</th><th>Message</th></tr>';
+        foreach ($logs as $l) { $ts = (int)$l['timestamp']; $d = $ts > 0 ? date('d/m H:i', (int)($ts > 2000000000 ? $ts / 1000 : $ts)) : '—';
+            echo '<tr><td class="sm muted" style="white-space:nowrap">' . $d . '</td><td class="sm"><b>' . h((string)($l['username'] ?? '?')) . '</b></td><td class="sm muted">' . h((string)($l['room'] ?? '-')) . '</td><td>' . ($ct[(int)$l['chat_type']] ?? '') . ' ' . h((string)$l['message']) . '</td></tr>'; }
+        echo '</table>';
+    }
+    echo '</div>';
+}
+function mod_sec_journal(): void {
+    echo '<div class="panel"><div class="ph"><h3>📜 Actions de modération (en jeu)</h3><span class="muted sm" style="margin-left:auto">compte modérateur in-game</span></div>';
+    $al = db()->query('SELECT a.action,a.message,a.created_at,s.username AS staff,t.username AS cible FROM housekeeping_audit_log a LEFT JOIN users s ON s.id=a.user_id LEFT JOIN users t ON t.id=a.target_id ORDER BY a.created_at DESC LIMIT 40')->fetchAll();
     if (!$al) echo '<div class="empty">Aucune action enregistrée pour le moment.</div>';
     else {
         $lbl = ['alert_user' => '💬 Alerte', 'kick_user' => '👢 Kick', 'ban_user' => '🚫 Ban', 'room_alert' => '📢 Alerte salle', 'room_kick' => '👢 Kick salle'];
         echo '<table class="clean"><tr><th>Date</th><th>Action</th><th>Staff</th><th>Cible</th><th>Message</th></tr>';
-        foreach ($al as $a) echo '<tr><td class="sm muted">' . h(date('d/m H:i', strtotime((string)$a['created_at']))) . '</td><td>' . h($lbl[$a['action']] ?? $a['action']) . '</td><td>' . h((string)($a['staff'] ?? '?')) . '</td><td>' . h((string)($a['cible'] ?? '-')) . '</td><td class="muted sm">' . h((string)$a['message']) . '</td></tr>';
+        foreach ($al as $a) echo '<tr><td class="sm muted" style="white-space:nowrap">' . h(date('d/m H:i', strtotime((string)$a['created_at']))) . '</td><td class="sm">' . h($lbl[$a['action']] ?? $a['action']) . '</td><td class="sm"><b>' . h((string)($a['staff'] ?? '?')) . '</b></td><td class="sm">' . h((string)($a['cible'] ?? '-')) . '</td><td class="muted sm">' . h((string)$a['message']) . '</td></tr>';
         echo '</table>';
     }
     echo '</div>';
-    // --- Journal des actions admin (côté web) ---
-    echo '<div class="panel"><div class="ph"><h3>🗂️ Journal des actions (admin web)</h3><span class="muted sm" style="margin-left:auto">actions faites depuis ce panneau</span></div>';
+    echo '<div class="panel"><div class="ph"><h3>🗂️ Actions depuis l\'admin web</h3><span class="muted sm" style="margin-left:auto">ce panneau</span></div>';
     try {
         ensure_admin_log();
-        $wl = db()->query('SELECT author,action,detail,created_at FROM admin_log ORDER BY id DESC LIMIT 30')->fetchAll();
+        $wl = db()->query('SELECT author,action,detail,created_at FROM admin_log ORDER BY id DESC LIMIT 40')->fetchAll();
         if (!$wl) echo '<div class="empty">Aucune action web enregistrée pour le moment.</div>';
         else { echo '<table class="clean"><tr><th>Date</th><th>Par</th><th>Action</th><th>Détail</th></tr>';
             foreach ($wl as $a) echo '<tr><td class="sm muted" style="white-space:nowrap">' . h(date('d/m H:i', strtotime((string)$a['created_at']))) . '</td><td class="sm"><b>' . h((string)$a['author']) . '</b></td><td><code class="sm">' . h((string)$a['action']) . '</code></td><td class="sm muted">' . h((string)$a['detail']) . '</td></tr>';
             echo '</table>'; }
     } catch (Throwable $e) { echo '<div class="empty">Journal web indisponible.</div>'; }
     echo '</div>';
-    // --- Logs de chat ---
-    $cu = trim($_GET['cu'] ?? '');
-    echo '<div class="panel"><div class="ph"><h3>💬 Logs de chat</h3><form method="get" class="srch"><input type="hidden" name="p" value="moderation"><input name="cu" list="dl_pseudos" autocomplete="off" value="' . h($cu) . '" placeholder="🔍 Filtrer par joueur..."><button class="mini">OK</button></form></div>';
-    $sql = 'SELECT c.timestamp,c.chat_type,c.message,u.username,r.name AS room FROM room_chatlogs c LEFT JOIN users u ON u.id=c.user_id LEFT JOIN rooms r ON r.id=c.room_id';
-    if ($cu !== '') { $st = db()->prepare($sql . ' WHERE u.username LIKE ? ORDER BY c.timestamp DESC LIMIT 100'); $st->execute(['%' . $cu . '%']); $logs = $st->fetchAll(); }
-    else { $logs = db()->query($sql . ' ORDER BY c.timestamp DESC LIMIT 100')->fetchAll(); }
-    if (!$logs) echo '<div class="empty">Aucun message enregistré' . ($cu !== '' ? ' pour ce joueur' : '') . '.</div>';
-    else {
-        $ct = [1 => '🗣️', 2 => '🤫'];
-        echo '<table class="clean"><tr><th>Quand</th><th>Joueur</th><th>Salle</th><th>Message</th></tr>';
-        foreach ($logs as $l) { $ts = (int)$l['timestamp']; $d = $ts > 0 ? date('d/m H:i', (int)($ts > 2000000000 ? $ts / 1000 : $ts)) : '—';
-            echo '<tr><td class="sm muted">' . $d . '</td><td>' . h((string)($l['username'] ?? '?')) . '</td><td class="sm muted">' . h((string)($l['room'] ?? '-')) . '</td><td>' . ($ct[(int)$l['chat_type']] ?? '') . ' ' . h((string)$l['message']) . '</td></tr>'; }
-        echo '</table>';
-    }
-    echo '</div>';
-
-    // --- Multi-comptes (même IP) ---
-    echo '<div class="panel"><div class="ph"><h3>🕵️ Multi-comptes (même IP)</h3></div>';
-    $alts = db()->query('SELECT l.ip_address, COUNT(DISTINCT l.user_id) n, GROUP_CONCAT(DISTINCT u.username ORDER BY u.username SEPARATOR ", ") AS users FROM users_ip_logs l JOIN users u ON u.id=l.user_id GROUP BY l.ip_address HAVING n>1 ORDER BY n DESC LIMIT 40')->fetchAll();
-    if (!$alts) echo '<div class="empty">Aucun multi-compte détecté.</div>';
-    else {
-        echo '<p class="muted sm">Plusieurs comptes ayant utilisé la même adresse IP — indice possible de multi-comptes.</p>';
-        echo '<table class="clean"><tr><th>Adresse IP</th><th>Comptes concernés</th><th>Nb</th></tr>';
-        foreach ($alts as $a) echo '<tr><td class="sm">' . h((string)$a['ip_address']) . '</td><td>' . h((string)$a['users']) . '</td><td><b>' . (int)$a['n'] . '</b></td></tr>';
-        echo '</table>';
-    }
-    echo '</div>';
-
-    // --- Débloquer l'inventaire ---
+}
+function mod_sec_tools(): void {
     echo '<div class="panel"><div class="ph"><h3>🧹 Débloquer un inventaire</h3></div>';
-    echo '<p class="muted sm">⚠️ Attention : cette action <b>SUPPRIME TOUT l\'inventaire</b> du joueur (tous les objets non posés, pas seulement l\'objet coincé) et est <b>irréversible</b>. À n\'utiliser qu\'en dernier recours ; le joueur devra <b>se reconnecter</b> ensuite. <i>(Une suppression ciblée objet par objet est prévue — voir l\'inventaire du joueur.)</i></p>';
+    echo '<p class="muted sm">⚠️ Cette action <b>SUPPRIME TOUT l\'inventaire</b> du joueur (tous les objets non posés, pas seulement l\'objet coincé) et est <b>irréversible</b>. À n\'utiliser qu\'en dernier recours ; le joueur devra <b>se reconnecter</b> ensuite. <i>(Une suppression ciblée objet par objet est possible via l\'inventaire du joueur.)</i></p>';
     echo '<form method="post" class="js row" data-reload data-confirm="⚠️ SUPPRIMER TOUT l\'inventaire (tous les objets non posés) de ce joueur ? Irréversible."><input type="hidden" name="action" value="clear_hand">' . csrf_field() . '<label style="flex:1">Nom du joueur<input name="username" list="dl_pseudos" autocomplete="off" required></label><button class="mini warn">🧹 Vider TOUT l\'inventaire</button></form></div>';
 
-    echo '<div class="panel"><div class="ph"><h3>💬 Alertes en jeu</h3></div><p class="muted">Les annonces aux joueurs connectés se font <b>en jeu</b> avec ton compte admin : tape <code>:alert Ton message</code> dans le chat, ou utilise l\'outil de modération intégré.</p></div>';
+    echo '<div class="panel"><div class="ph"><h3>💬 Alertes en jeu</h3></div><p class="muted">Pour alerter un joueur ou une salle, utilise l\'onglet <a class="lnk" href="?p=alerts&sec=send">📢 Alerte en jeu</a> (tout l\'hôtel / un joueur / le staff), ou en jeu avec ton compte admin : <code>:alert Ton message</code>.</p></div>';
 }
 
 function page_settings(): void {
