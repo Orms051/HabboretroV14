@@ -7694,7 +7694,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
       if(n>prev){beep();if(document.hidden||(document.hasFocus&&!document.hasFocus()))startFlash();}
       prev=n;setTitle(n+conv);
     }).catch(function(){});}
-    setInterval(tick,8000);tick();
+    setInterval(tick,3000);tick();
   })();</script><?php } ?>
   <a class="tb-status <?= $emuUp ? 'up' : 'down' ?>" href="?p=server" title="État de l'émulateur — ouvrir la page Serveur"><span class="dot"></span><?= $emuUp ? 'En marche' : 'Arrêté' ?></a>
 </header><div class="content"><?php
