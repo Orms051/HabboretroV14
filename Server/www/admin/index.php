@@ -201,6 +201,20 @@ if (isset($_GET['cfhcount'])) {
     exit;
 }
 
+/* ---------- Indicateur santé/problèmes (AJAX, badge 🩺 auto-rafraîchi) ---------- */
+if (isset($_GET['diagcount'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    $out = ['problems' => 0, 'lockdown' => false, 'jsErr' => 0];
+    if (tab_allowed('journal')) {
+        try { $out['lockdown'] = (bool) db()->query("SELECT COUNT(*) FROM security_lockdown WHERE actif=1")->fetchColumn(); } catch (Throwable $e) {}
+        try { $out['jsErr'] = diag_js_errors_recent(15); } catch (Throwable $e) {}
+        $out['problems'] = (int)$out['jsErr'] + ($out['lockdown'] ? 1 : 0);
+    }
+    echo json_encode($out);
+    exit;
+}
+
 /* ---------- Journal de discussion CFH en fragment HTML (fenêtre modale, chargé en AJAX) ---------- */
 if (isset($_GET['cfhlog'])) {
     header('Content-Type: text/html; charset=utf-8');
@@ -4634,6 +4648,28 @@ function page_dashboard(): void {
     stat_box($emu ? '🟢' : '🔴', $emu ? 'En marche' : 'Arrêté', 'Émulateur', $emu ? 'green' : 'red');
     echo '</div>';
 
+    /* --- Santé du site (technicien) : carte compacte vers Journal & diagnostics --- */
+    if (tab_allowed('journal')) {
+        $hs = diag_health_summary();
+        $prob = [];
+        if ($hs['lockdown']) $prob[] = '🔒 Site verrouillé (lockdown actif)';
+        if ((int)$hs['jsErr'] > 0) $prob[] = '⚡ ' . (int)$hs['jsErr'] . ' erreur' . ($hs['jsErr'] > 1 ? 's' : '') . ' JS (24 h)';
+        if (!$hs['emu']) $prob[] = '🔴 Émulateur arrêté';
+        if (!$hs['minerva']) $prob[] = '🎨 Avatars (Minerva) arrêtés';
+        if ((int)$hs['bad'] > 0) $prob[] = '⚠️ ' . (int)$hs['bad'] . ' test(s) en échec';
+        $hcol = $hs['col'] === 'red' ? 'var(--red)' : ($hs['col'] === 'blue' ? 'var(--acc)' : 'var(--green)');
+        $hbg  = $hs['col'] === 'red' ? 'rgba(229,72,77,.08)' : 'var(--panel2)';
+        echo '<a href="?p=journal" class="panel" style="display:flex;align-items:center;gap:14px;text-decoration:none;color:inherit;margin-top:14px;border-left:4px solid ' . $hcol . ';background:' . $hbg . '">';
+        echo '<div style="font-size:26px;line-height:1">' . ($hs['col'] === 'red' ? '🩺' : ($hs['col'] === 'blue' ? '🩺' : '💚')) . '</div>';
+        echo '<div style="flex:1;min-width:0">';
+        echo '<div style="font-weight:800;font-size:15px">Santé du site — <span style="color:' . $hcol . '">' . (int)$hs['score'] . '%</span></div>';
+        if ($prob) echo '<div class="muted sm" style="margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' . h(implode(' · ', $prob)) . '</div>';
+        else echo '<div class="muted sm" style="margin-top:3px">✅ Tous les services répondent, aucune erreur récente.</div>';
+        echo '</div>';
+        echo '<span class="rk" style="background:' . $hcol . ';white-space:nowrap">Journal & diagnostics →</span>';
+        echo '</a>';
+    }
+
     /* --- Appels à l'aide : tuiles (si activité) --- */
     if (tab_allowed('alerts')) {
         $cfhOpen = 0; $cfhToday = 0; $cfhWeek = 0; $cfhAvg = null;
@@ -7256,6 +7292,24 @@ function diag_checks(): array {
     }
     return $out;
 }
+/* Synthèse santé partagée (dashboard + page journal). */
+function diag_health_summary(): array {
+    $checks = diag_checks();
+    $nok = 0; $nwarn = 0; $nbad = 0;
+    foreach ($checks as $c) { if ($c[1] === 'ok') $nok++; elseif ($c[1] === 'warn') $nwarn++; else $nbad++; }
+    $tot = max(1, count($checks));
+    $score = (int)round(100 * ($nok + 0.5 * $nwarn) / $tot);
+    $lock = false; try { $lock = (bool) db()->query("SELECT COUNT(*) FROM security_lockdown WHERE actif=1")->fetchColumn(); } catch (Throwable $e) {}
+    return [
+        'score'    => $score,
+        'col'      => $score >= 90 ? 'green' : ($score >= 70 ? 'blue' : 'red'),
+        'ok'       => $nok, 'warn' => $nwarn, 'bad' => $nbad,
+        'emu'      => emu_running(),
+        'minerva'  => minerva_running(),
+        'jsErr'    => diag_js_errors_24h(),
+        'lockdown' => $lock,
+    ];
+}
 /* Sources de logs découvertes (émulateur, JS collectées, PHP, Apache, MySQL). */
 function diag_log_sources(): array {
     $root = dirname(__DIR__); // Server/www
@@ -7270,19 +7324,51 @@ function diag_log_sources(): array {
     foreach ([glob('C:/laragon/bin/mysql/*/data/*.err'), glob('C:/laragon/data/*.err'), glob('C:/laragon/data/mysql/*.err'), glob('C:/laragon/bin/mysql/*/*.err'), glob('C:/laragon/bin/mariadb/*/data/*.err')] as $g) { if ($g) { $s['mysql'] = ['🗄️ MySQL/MariaDB — erreurs', $g[0]]; break; } }
     return $s;
 }
-/* Nombre d'erreurs JS collectées sur les dernières 24 h (lecture de la fin du log). */
-function diag_js_errors_24h(): int {
+/* Nombre d'erreurs JS collectées depuis N secondes (lecture de la fin du log). */
+function diag_js_errors_since(int $seconds, int $readBytes = 400000): int {
     $f = dirname(__DIR__) . '/_runtime/js_errors.log';
     if (!is_file($f)) return 0;
     $sz = (int)filesize($f); $fp = @fopen($f, 'rb'); if (!$fp) return 0;
-    fseek($fp, max(0, $sz - 400000)); $data = (string)fread($fp, 400000); fclose($fp);
-    $cut = date('Y-m-d H:i:s', time() - 86400); $n = 0;
+    fseek($fp, max(0, $sz - $readBytes)); $data = (string)fread($fp, $readBytes); fclose($fp);
+    $cut = date('Y-m-d H:i:s', time() - $seconds); $n = 0;
     foreach (preg_split('/\r\n|\n/', $data) ?: [] as $l) {
         if (trim($l) === '') continue;
         $o = json_decode($l, true);
         if (is_array($o) && isset($o['time']) && $o['time'] >= $cut) $n++;
     }
     return $n;
+}
+function diag_js_errors_24h(): int { return diag_js_errors_since(86400, 400000); }
+/* Léger (barre du haut) : erreurs JS des 15 dernières min, petit tail. */
+function diag_js_errors_recent(int $minutes = 15): int { return diag_js_errors_since($minutes * 60, 120000); }
+/* Agrégation : top messages + top pages sur une fenêtre (défaut 24h). */
+function diag_js_aggregate(int $seconds = 86400, int $readBytes = 600000): array {
+    $f = dirname(__DIR__) . '/_runtime/js_errors.log';
+    $out = ['total' => 0, 'msgs' => [], 'pages' => [], 'types' => []];
+    if (!is_file($f)) return $out;
+    $sz = (int)filesize($f); $fp = @fopen($f, 'rb'); if (!$fp) return $out;
+    fseek($fp, max(0, $sz - $readBytes)); $data = (string)fread($fp, $readBytes); fclose($fp);
+    $cut = date('Y-m-d H:i:s', time() - $seconds);
+    $msgs = []; $pages = []; $types = [];
+    foreach (preg_split('/\r\n|\n/', $data) ?: [] as $l) {
+        if (trim($l) === '') continue;
+        $o = json_decode($l, true);
+        if (!is_array($o) || !isset($o['time']) || $o['time'] < $cut) continue;
+        $out['total']++;
+        $m = trim((string)($o['message'] ?? '')); if ($m === '') $m = '(sans message)';
+        $m = preg_replace('/\s+/', ' ', $m); $m = mb_substr($m, 0, 160);
+        $p = trim((string)($o['page_name'] ?? $o['page_url'] ?? '')); if ($p === '') $p = '(inconnue)';
+        $p = mb_substr($p, 0, 80);
+        $t = trim((string)($o['type'] ?? '')); if ($t === '') $t = 'JS_ERROR';
+        $msgs[$m] = ($msgs[$m] ?? 0) + 1;
+        $pages[$p] = ($pages[$p] ?? 0) + 1;
+        $types[$t] = ($types[$t] ?? 0) + 1;
+    }
+    arsort($msgs); arsort($pages); arsort($types);
+    $out['msgs'] = array_slice($msgs, 0, 8, true);
+    $out['pages'] = array_slice($pages, 0, 8, true);
+    $out['types'] = $types;
+    return $out;
 }
 function diag_log_level(string $l): string {
     if (preg_match('/\b(ERROR|FATAL|SEVERE|Exception|Caused by|PHP (Parse|Fatal|Warning))\b/i', $l)) return 'err';
@@ -7380,6 +7466,29 @@ function page_journal(): void {
         echo '<table class="clean"><tr><th>Table</th><th>Lignes (≈)</th><th>Taille</th></tr>';
         foreach ($tbls as $t) echo '<tr><td><code>' . h((string)$t['n']) . '</code></td><td class="sm muted">' . number_format((int)$t['r'], 0, ',', ' ') . '</td><td class="sm">' . mysql_human_size((int)$t['sz']) . '</td></tr>';
         echo '</table>';
+    }
+    echo '</div>';
+
+    // ── Agrégation des erreurs JS (top messages + top pages, 24 h) ──
+    $agg = diag_js_aggregate(86400);
+    echo '<div class="panel"><div class="ph"><h3>⚡ Erreurs JS — synthèse 24 h</h3><span class="muted sm" style="margin-left:auto">' . (int)$agg['total'] . ' sur 24 h</span></div>';
+    if ((int)$agg['total'] === 0) {
+        echo '<div class="empty">✅ Aucune erreur JS capturée sur les dernières 24 h.</div>';
+    } else {
+        if ($agg['types']) {
+            echo '<div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">';
+            foreach ($agg['types'] as $tp => $c) echo '<span class="rk">' . h((string)$tp) . ' · ' . (int)$c . '</span>';
+            echo '</div>';
+        }
+        echo '<div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
+        echo '<div><div class="muted sm" style="margin-bottom:6px;font-weight:700">Messages les plus fréquents</div><table class="clean">';
+        foreach ($agg['msgs'] as $m => $c) echo '<tr><td class="sm" style="word-break:break-word">' . h((string)$m) . '</td><td class="sm" style="text-align:right;white-space:nowrap">× ' . (int)$c . '</td></tr>';
+        echo '</table></div>';
+        echo '<div><div class="muted sm" style="margin-bottom:6px;font-weight:700">Pages les plus touchées</div><table class="clean">';
+        foreach ($agg['pages'] as $p => $c) echo '<tr><td class="sm" style="word-break:break-word">' . h((string)$p) . '</td><td class="sm" style="text-align:right;white-space:nowrap">× ' . (int)$c . '</td></tr>';
+        echo '</table></div>';
+        echo '</div>';
+        echo '<p class="hint">💡 Regroupé depuis <code>_runtime/js_errors.log</code>. Le détail ligne par ligne est dans la visionneuse ci-dessous (source « Erreurs JS »).</p>';
     }
     echo '</div>';
 
@@ -8212,6 +8321,19 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
       prev=n;setTitle(n+conv);
     }).catch(function(){});}
     setInterval(tick,3000);tick();
+  })();</script><?php } ?>
+  <?php if (tab_allowed('journal')) {
+      $dlock = false; try { $dlock = (bool) db()->query("SELECT COUNT(*) FROM security_lockdown WHERE actif=1")->fetchColumn(); } catch (Throwable $e) {}
+      $dje = 0; try { $dje = diag_js_errors_recent(15); } catch (Throwable $e) {}
+      $dprob = (int)$dje + ($dlock ? 1 : 0);
+  ?><a id="diagBtn" class="tb-status<?= $dprob > 0 ? ' alert' : '' ?>" href="?p=journal" title="Journal &amp; diagnostics — santé du site (lockdown, erreurs JS récentes)" style="margin-right:10px">🩺<span id="diagBadge" style="background:#e5484d;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:800;margin-left:5px;<?= $dprob > 0 ? '' : 'display:none' ?>"><?= $dprob ?></span></a>
+  <script>(function(){
+    function dtick(){fetch('?diagcount=1',{headers:{'X-Requested-With':'fetch'}}).then(function(r){return r.json();}).then(function(d){
+      var n=(d&&d.problems)?d.problems:0;
+      var el=document.getElementById('diagBadge');if(el){el.textContent=n;el.style.display=n>0?'':'none';}
+      var b=document.getElementById('diagBtn');if(b)b.classList.toggle('alert',n>0);
+    }).catch(function(){});}
+    setInterval(dtick,10000);dtick();
   })();</script><?php } ?>
   <a class="tb-status <?= $emuUp ? 'up' : 'down' ?>" href="?p=server" title="État de l'émulateur — ouvrir la page Serveur"><span class="dot"></span><?= $emuUp ? 'En marche' : 'Arrêté' ?></a>
 </header><div class="content"><?php
