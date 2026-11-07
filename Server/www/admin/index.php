@@ -7204,8 +7204,115 @@ function page_wordfilter(): void {
     echo '<p class="hint">ℹ️ Le filtre s\'exécute côté <b>serveur de jeu (kepler.jar)</b> : il agit seulement une fois le jar « filtre » déployé. Sinon la liste est juste stockée ici.</p></div>';
 }
 
+/* ---- Diagnostic du site (façon Debug Center) ---- */
+function diag_disk(): array {
+    $root = dirname(__DIR__, 3);
+    $free = @disk_free_space($root); $total = @disk_total_space($root);
+    if (!$free || !$total) { $free = @disk_free_space(__DIR__); $total = @disk_total_space(__DIR__); }
+    $free = (float)$free; $total = (float)$total; $used = $total > 0 ? $total - $free : 0;
+    return ['free' => $free, 'total' => $total, 'used' => $used, 'pct' => $total > 0 ? (int)round($used / $total * 100) : 0];
+}
+function diag_db_tables(int $limit = 12): array {
+    try {
+        return db()->query("SELECT TABLE_NAME n, TABLE_ROWS r, (DATA_LENGTH+INDEX_LENGTH) sz FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE' ORDER BY sz DESC LIMIT " . (int)$limit)->fetchAll();
+    } catch (Throwable $e) { return []; }
+}
+function diag_checks(): array {
+    $root = dirname(__DIR__); $out = [];
+    $t0 = microtime(true); $dbok = false; try { db()->query('SELECT 1'); $dbok = true; } catch (Throwable $e) {}
+    $ms = (int)round((microtime(true) - $t0) * 1000);
+    $out[] = ['Base de données', $dbok ? ($ms < 200 ? 'ok' : 'warn') : 'bad', $dbok ? "Connexion OK · {$ms} ms" : 'Connexion impossible'];
+    $emu = emu_running();
+    $out[] = ['Émulateur (jeu)', $emu ? 'ok' : 'warn', $emu ? 'En marche · port 12321' : 'Arrêté — à démarrer dans Serveur'];
+    $rc = @fsockopen('127.0.0.1', 12309, $e, $s, 0.6); $rcok = (bool)$rc; if ($rc) fclose($rc);
+    $out[] = ['RCON (admin → jeu)', $rcok ? 'ok' : 'warn', $rcok ? 'Port 12309 ouvert' : 'Fermé (émulateur arrêté ?)'];
+    $mv = minerva_running();
+    $out[] = ['Avatars (Minerva)', $mv ? 'ok' : 'warn', $mv ? 'En marche · port 5123' : 'Arrêté — avatars en repli'];
+    $cache = $root . '/cache'; $wc = is_dir($cache) && is_writable($cache);
+    $out[] = ['Dossier cache', $wc ? 'ok' : 'warn', $wc ? 'Accessible en écriture' : (is_dir($cache) ? 'Non inscriptible' : 'Absent')];
+    $wm = is_writable($root);
+    $out[] = ['Écriture site (maintenance)', $wm ? 'ok' : 'warn', $wm ? 'Racine du site inscriptible' : 'Racine non inscriptible'];
+    $log = $root . '/server.log';
+    $out[] = ['Log émulateur', is_file($log) ? 'ok' : 'warn', is_file($log) ? 'server.log présent (' . mysql_human_size((int)@filesize($log)) . ')' : 'server.log absent'];
+    $out[] = ['Fichiers client (dcr)', is_dir(DCR_DIR) ? 'ok' : 'bad', is_dir(DCR_DIR) ? 'Présents' : 'Dossier dcr manquant'];
+    $d = diag_disk();
+    $out[] = ['Espace disque', $d['pct'] < 90 ? 'ok' : ($d['pct'] < 97 ? 'warn' : 'bad'), $d['total'] > 0 ? mysql_human_size((int)$d['free']) . ' libres · ' . $d['pct'] . '% utilisé' : 'Inconnu'];
+    $out[] = ['Version PHP', PHP_VERSION_ID >= 80000 ? 'ok' : 'warn', PHP_VERSION];
+    foreach (['pdo_mysql', 'mbstring', 'sockets', 'gd', 'curl', 'openssl'] as $ext) {
+        $has = extension_loaded($ext);
+        $crit = in_array($ext, ['pdo_mysql', 'mbstring', 'sockets'], true);
+        $out[] = ['Extension ' . $ext, $has ? 'ok' : ($crit ? 'bad' : 'warn'), $has ? 'chargée' : 'absente'];
+    }
+    return $out;
+}
 function page_journal(): void {
-    page_title('Journal & diagnostics', 'Activité du site en temps réel + dernières erreurs de l\'émulateur');
+    page_title('Journal & diagnostics', 'Santé du site, services, base de données + activité en temps réel');
+
+    // ── Diagnostic ──
+    $checks = diag_checks();
+    $nok = 0; $nwarn = 0; $nbad = 0;
+    foreach ($checks as $c) { if ($c[1] === 'ok') $nok++; elseif ($c[1] === 'warn') $nwarn++; else $nbad++; }
+    $tot = max(1, count($checks));
+    $score = (int)round(100 * ($nok + 0.5 * $nwarn) / $tot);
+    $scoreCol = $score >= 90 ? 'green' : ($score >= 70 ? 'blue' : 'red');
+    $up = emu_running(); $mav = minerva_running();
+    $dbver = ''; try { $dbver = (string)db()->query('SELECT VERSION()')->fetchColumn(); } catch (Throwable $e) {}
+    $dbShort = $dbver !== '' ? (stripos($dbver, 'maria') !== false ? 'MariaDB' : 'MySQL') . ' ' . preg_replace('/[-+].*$/', '', $dbver) : '—';
+
+    echo '<style>.dg-tests{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}@media(max-width:760px){.dg-tests{grid-template-columns:1fr}}'
+        . '.dg-t{display:flex;align-items:center;gap:9px;padding:8px 11px;background:var(--panel2);border:1px solid var(--line);border-radius:10px}'
+        . '.dg-dot{width:9px;height:9px;border-radius:50%;flex:none}.dg-ok{background:var(--green)}.dg-warn{background:#e08a00}.dg-bad{background:var(--red)}'
+        . '.dg-t .l{font-weight:600;font-size:13px}.dg-t .d{color:var(--mut);font-size:11.5px;margin-top:1px}'
+        . '.dg-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:820px){.dg-cols{grid-template-columns:1fr}}</style>';
+
+    // Santé + services
+    echo '<div class="grid">';
+    echo '<div class="stat ' . $scoreCol . '"><div class="ic">❤️</div><div><div class="num">' . $score . '%</div><div class="lbl">Score de santé</div></div></div>';
+    echo '<div class="stat ' . ($up ? 'green' : 'red') . '"><div class="ic">' . ($up ? '🟢' : '🔴') . '</div><div><div class="num" style="font-size:16px">' . ($up ? 'En marche' : 'Arrêté') . '</div><div class="lbl">Émulateur · 12321</div></div></div>';
+    echo '<div class="stat green"><div class="ic">🗄️</div><div><div class="num" style="font-size:14px">' . h($dbShort) . '</div><div class="lbl">Base · 3306</div></div></div>';
+    echo '<div class="stat green"><div class="ic">🌐</div><div><div class="num" style="font-size:15px">PHP ' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '</div><div class="lbl">Apache · 80</div></div></div>';
+    echo '<div class="stat ' . ($mav ? 'green' : 'red') . '"><div class="ic">' . ($mav ? '🎨' : '🔴') . '</div><div><div class="num" style="font-size:16px">' . ($mav ? 'En marche' : 'Arrêté') . '</div><div class="lbl">Avatars · 5123</div></div></div>';
+    echo '</div>';
+
+    // Tests système
+    echo '<div class="panel"><div class="ph"><h3>🔧 Tests système</h3><span class="muted sm" style="margin-left:auto">' . $nok . ' OK · ' . $nwarn . ' à surveiller · ' . $nbad . ' en erreur</span></div>';
+    echo '<div class="dg-tests">';
+    foreach ($checks as $c) {
+        $cls = $c[1] === 'ok' ? 'dg-ok' : ($c[1] === 'warn' ? 'dg-warn' : 'dg-bad');
+        echo '<div class="dg-t"><span class="dg-dot ' . $cls . '"></span><div><div class="l">' . h($c[0]) . '</div><div class="d">' . h($c[2]) . '</div></div></div>';
+    }
+    echo '</div></div>';
+
+    // PHP env + espace disque
+    $d = diag_disk();
+    echo '<div class="dg-cols">';
+    echo '<div class="panel"><div class="ph"><h3>⚙️ Environnement PHP</h3></div><table class="clean">'
+        . '<tr><td>Version</td><td><b>' . PHP_VERSION . '</b></td></tr>'
+        . '<tr><td>Limite mémoire</td><td>' . h((string)ini_get('memory_limit')) . '</td></tr>'
+        . '<tr><td>Temps max d\'exécution</td><td>' . h((string)ini_get('max_execution_time')) . ' s</td></tr>'
+        . '<tr><td>Upload max</td><td>' . h((string)ini_get('upload_max_filesize')) . '</td></tr>'
+        . '<tr><td>POST max</td><td>' . h((string)ini_get('post_max_size')) . '</td></tr>'
+        . '<tr><td>SAPI</td><td>' . h(PHP_SAPI) . '</td></tr>'
+        . '</table></div>';
+    $diskPctCol = $d['pct'] < 90 ? 'var(--green)' : ($d['pct'] < 97 ? '#e08a00' : 'var(--red)');
+    echo '<div class="panel"><div class="ph"><h3>💾 Espace disque</h3></div>';
+    if ($d['total'] > 0) {
+        echo '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px"><span class="muted">' . mysql_human_size((int)$d['used']) . ' utilisés</span><span><b>' . mysql_human_size((int)$d['free']) . '</b> libres</span></div>';
+        echo '<div style="height:12px;border-radius:7px;background:var(--line2);overflow:hidden"><span style="display:block;height:100%;width:' . min(100, $d['pct']) . '%;background:' . $diskPctCol . '"></span></div>';
+        echo '<p class="hint" style="margin-top:7px">' . $d['pct'] . '% utilisé sur ' . mysql_human_size((int)$d['total']) . ' (disque du projet).</p>';
+    } else echo '<div class="empty">Information disque indisponible.</div>';
+    echo '</div></div>';
+
+    // Tables & tailles BDD
+    $tbls = diag_db_tables(14);
+    echo '<div class="panel"><div class="ph"><h3>🗃️ Tables & tailles — base <code>' . h(DB_NAME) . '</code></h3><span class="muted sm" style="margin-left:auto">14 plus grosses</span></div>';
+    if (!$tbls) echo '<div class="empty">Impossible de lire les tables.</div>';
+    else {
+        echo '<table class="clean"><tr><th>Table</th><th>Lignes (≈)</th><th>Taille</th></tr>';
+        foreach ($tbls as $t) echo '<tr><td><code>' . h((string)$t['n']) . '</code></td><td class="sm muted">' . number_format((int)$t['r'], 0, ',', ' ') . '</td><td class="sm">' . mysql_human_size((int)$t['sz']) . '</td></tr>';
+        echo '</table>';
+    }
+    echo '</div>';
 
     /* --- Diagnostics : dernières erreurs de l'émulateur (server.log) --- */
     $errs = server_log_errors(20);
