@@ -11,6 +11,12 @@ if (!function_exists('error_tracker_html')) {
 (function(){
   'use strict';
   var EP='/log_js.php', PAGE=document.title||location.pathname.split('/').pop(), URL=location.href;
+  // Requêtes internes de supervision à NE PAS tracer (sinon boucle : leur annulation
+  // au changement de page remonte comme "erreur JS" et fait clignoter le badge).
+  var SKIP=/(log_js\.php|[?&](cfhcount|diagcount|logview|jstail|ajax)=)/i;
+  var leaving=false; // vrai pendant la navigation / fermeture : on ignore les fetch annulés
+  window.addEventListener('beforeunload',function(){leaving=true;});
+  window.addEventListener('pagehide',function(){leaving=true;});
   function send(p){
     try{
       var d=JSON.stringify(p);
@@ -27,11 +33,12 @@ if (!function_exists('error_tracker_html')) {
     track('UNHANDLED_PROMISE', r instanceof Error?r.message:String(r), '',0,0, r instanceof Error?r.stack:''); });
   var _f=window.fetch;
   if(_f){ window.fetch=function(url,opts){
-    if(String(url).indexOf(EP)!==-1) return _f.apply(this,arguments);
+    var u=String(url);
+    if(u.indexOf(EP)!==-1 || SKIP.test(u)) return _f.apply(this,arguments);
     return _f.apply(this,arguments).then(function(res){
-      if(res && !res.ok && res.status>=400) track('FETCH_HTTP_ERROR','HTTP '+res.status+' '+res.statusText,String(url),0,0,'');
+      if(res && !res.ok && res.status>=400) track('FETCH_HTTP_ERROR','HTTP '+res.status+' '+res.statusText,u,0,0,'');
       return res;
-    }).catch(function(err){ track('FETCH_NETWORK_ERROR',err&&err.message?err.message:String(err),String(url),0,0,err&&err.stack?err.stack:''); throw err; });
+    }).catch(function(err){ if(!leaving && !document.hidden) track('FETCH_NETWORK_ERROR',err&&err.message?err.message:String(err),u,0,0,err&&err.stack?err.stack:''); throw err; });
   }; }
   var _ce=console.error;
   console.error=function(){ _ce.apply(console,arguments);
