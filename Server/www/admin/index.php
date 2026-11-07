@@ -200,6 +200,15 @@ if (isset($_GET['cfhcount'])) {
     exit;
 }
 
+/* ---------- Journal de discussion CFH en fragment HTML (fenêtre modale, chargé en AJAX) ---------- */
+if (isset($_GET['cfhlog'])) {
+    header('Content-Type: text/html; charset=utf-8');
+    header('Cache-Control: no-store');
+    if (!tab_allowed('alerts')) { http_response_code(403); echo '<div class="empty">🔒 Accès refusé.</div>'; exit; }
+    echo cfh_chatlog_fragment((int)$_GET['cfhlog']);
+    exit;
+}
+
 /* ---------- Téléchargement d'une sauvegarde (rang 7) ---------- */
 if (isset($_GET['dlbackup']) && (int)($_SESSION['admin']['rank'] ?? 0) >= 7) {
     $name = basename((string)$_GET['dlbackup']);
@@ -6251,51 +6260,115 @@ function cfh_cat_label(int $cat): string {
 }
 
 /* ===== Hub « Alertes & annonces » ===== */
+function alerts_css(): string {
+    return '
+.atabs{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 16px}
+.atab{display:inline-flex;align-items:center;gap:7px;padding:9px 15px;border-radius:11px;border:1px solid var(--line2);background:var(--panel);color:var(--mut);font-weight:600;font-size:13.5px;text-decoration:none;transition:.12s}
+.atab:hover{color:var(--txt);border-color:var(--acc)}
+.atab.on{background:var(--acc);border-color:var(--acc);color:#fff;box-shadow:0 4px 14px var(--glow)}
+.atab-ic{font-size:15px;line-height:1}
+.atab-badge{background:var(--red);color:#fff;border-radius:9px;padding:1px 7px;font-size:11px;font-weight:800;margin-left:2px}
+.cfh-sum{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.cfh-sum .big{font-size:26px;font-weight:800;line-height:1}
+.cfh-card{position:relative;overflow:hidden}
+.cfh-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--mut)}
+.cfh-card.is-open::before{background:var(--red)}
+.cfh-card.is-picked::before{background:#e0a92b}
+.cfh-top{display:flex;gap:12px;align-items:flex-start;margin-bottom:10px}
+.cfh-av{border-radius:10px;background:var(--panel2);flex:none;image-rendering:pixelated}
+.cfh-name{font-size:16px;font-weight:700}
+.cfh-name a{text-decoration:none}
+.cfh-meta{margin-top:3px;display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.cfh-pill{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:20px}
+.cfh-pill.open{background:rgba(229,72,77,.16);color:var(--red)}
+.cfh-pill.picked{background:rgba(224,169,43,.18);color:#d79b1f}
+.cfh-tag{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:20px;background:var(--soft);color:var(--acc)}
+.cfh-msg{background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:10px 12px;white-space:pre-wrap;line-height:1.5;margin-bottom:12px}
+.cfh-replybox{background:var(--soft);border:1px solid var(--line2);border-radius:10px;padding:12px;margin-bottom:12px}
+.cfh-replybox textarea{width:100%;resize:vertical}
+.cfh-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+.cfh-chip{font-size:12px;padding:4px 10px;border-radius:16px;border:1px solid var(--line2);background:var(--panel);color:var(--mut);cursor:pointer;transition:.12s}
+.cfh-chip:hover{color:var(--txt);border-color:var(--acc)}
+.cfh-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;padding-top:12px;border-top:1px solid var(--line2)}
+.cfh-tools form{margin:0}
+.cfh-closef{display:flex;gap:6px;align-items:center}
+.cfh-closef input{width:150px}
+.cfh-spacer{flex:1}
+.cfh-note{margin-top:10px}
+.cfh-note>summary{cursor:pointer;font-size:13px;color:var(--mut);font-weight:600;list-style:none}
+.cfh-note>summary::-webkit-details-marker{display:none}
+.cfh-note>summary:before{content:"▸ ";color:var(--acc)}
+.cfh-note[open]>summary:before{content:"▾ "}
+.cfh-note textarea{width:100%;margin-top:6px;resize:vertical}
+.cfh-ctable{width:100%;border-collapse:collapse;font-size:13px}
+.cfh-ctable th{text-align:left;color:var(--mut);font-weight:600;padding-bottom:6px}
+.cfh-ctable td{border-top:1px solid var(--line2);padding:6px 8px 6px 0;vertical-align:top}
+.cfh-modal-ov{position:fixed;inset:0;background:rgba(8,12,18,.6);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:1000;padding:22px}
+.cfh-modal-ov.on{display:flex;animation:cfhfade .14s ease}
+@keyframes cfhfade{from{opacity:0}to{opacity:1}}
+.cfh-modal-win{background:var(--panel);border:1px solid var(--line2);border-radius:16px;width:100%;max-width:780px;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+.cfh-modal-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line2)}
+.cfh-modal-head h3{margin:0;font-size:15px}
+.cfh-modal-x{margin-left:auto;background:none;border:0;color:var(--mut);font-size:24px;line-height:1;cursor:pointer;padding:0 4px}
+.cfh-modal-x:hover{color:var(--txt)}
+.cfh-modal-body{padding:16px 18px;overflow:auto}
+.cfh-log-sub{margin:0 0 12px;line-height:1.5}
+.cfh-logtbl{width:100%;border-collapse:collapse;font-size:13px}
+.cfh-logtbl th{text-align:left;padding-bottom:6px}
+.cfh-logtbl td{border-top:1px solid var(--line2);padding:5px 10px 5px 0;vertical-align:top}
+.cfh-log-t{white-space:nowrap;color:var(--mut)}
+.cfh-log-u{white-space:nowrap}
+.cfh-log-m{white-space:pre-wrap}
+.cfh-loading{padding:26px;text-align:center;color:var(--mut)}
+';
+}
 function page_alerts(): void {
     page_title('Alertes & annonces', 'Appels à l\'aide, alertes en jeu et annonces — regroupés');
     $sec = (string)($_GET['sec'] ?? 'send');
     if (!in_array($sec, ['cfh', 'send', 'announce', 'history'], true)) $sec = 'send';
-    $tabs = ['cfh' => '🆘 Appels à l\'aide', 'send' => '📢 Alerte en jeu', 'announce' => '📨 Annonce messagerie', 'history' => '🕑 Historique'];
-    echo '<div class="row" style="gap:4px;flex-wrap:wrap;margin-bottom:12px;border-bottom:2px solid var(--line2);padding-bottom:6px">';
-    foreach ($tabs as $k => $lbl) echo '<a class="mini' . ($sec === $k ? '' : ' ghost') . '" href="?p=alerts&sec=' . $k . '">' . $lbl . '</a>';
+    $openN = 0; if (tab_allowed('alerts')) { try { $openN = cfh_pending_count(); } catch (Throwable $e) {} }
+    echo '<style>' . alerts_css() . '</style>';
+    $tabs = ['cfh' => ['🆘', 'Appels à l\'aide'], 'send' => ['📢', 'Alerte en jeu'], 'announce' => ['📨', 'Annonce messagerie'], 'history' => ['🕑', 'Historique']];
+    echo '<div class="atabs">';
+    foreach ($tabs as $k => $t) {
+        $badge = ($k === 'cfh' && $openN > 0) ? '<span class="atab-badge">' . (int)$openN . '</span>' : '';
+        echo '<a class="atab' . ($sec === $k ? ' on' : '') . '" href="?p=alerts&sec=' . $k . '"><span class="atab-ic">' . $t[0] . '</span>' . h($t[1]) . $badge . '</a>';
+    }
     echo '</div>';
     if ($sec === 'cfh') alerts_sec_cfh();
     elseif ($sec === 'announce') alerts_sec_announce();
     elseif ($sec === 'history') alerts_sec_history();
     else alerts_sec_send();
 }
-function alerts_cfh_chatlog(int $id): void {
+/* Fragment HTML du journal de discussion d'un appel (réutilisé par la modale AJAX et le fallback). */
+function cfh_chatlog_fragment(int $id): string {
     ensure_calls_for_help();
     $a = null;
     try { $s = db()->prepare("SELECT c.*, u.username AS caller_name FROM calls_for_help c LEFT JOIN users u ON u.id=c.caller_id WHERE c.id=?"); $s->execute([$id]); $a = $s->fetch(); } catch (Throwable $e) {}
-    echo '<div style="margin-bottom:10px"><a class="mini ghost" href="?p=alerts&sec=cfh">← Retour aux appels</a></div>';
-    if (!$a) { echo '<div class="panel"><div class="empty">Appel introuvable.</div></div>'; return; }
+    if (!$a) return '<div class="empty">Appel introuvable.</div>';
     $caller = $a['caller_name'] !== null ? (string)$a['caller_name'] : ('#' . (int)$a['caller_id']);
     $roomId = (int)$a['room_id'];
-    echo '<div class="panel"><div class="ph"><h3>📜 Journal de discussion — salle « ' . h((string)$a['room_name']) . ' »</h3></div>';
-    echo '<p class="sub">Appel de <a href="?p=user&id=' . (int)$a['caller_id'] . '">' . h($caller) . '</a> le ' . h(substr((string)$a['created_at'], 0, 16)) . '. Chat de la salle autour de l\'appel (30 min avant → 15 min après).</p>';
-    if ($roomId <= 0) { echo '<div class="empty">Salle inconnue pour cet appel.</div></div>'; return; }
+    $out = '<p class="cfh-log-sub">Salle <b>« ' . h((string)$a['room_name']) . ' »</b> · appel de <a href="?p=user&id=' . (int)$a['caller_id'] . '">' . h($caller) . '</a> le ' . h(substr((string)$a['created_at'], 0, 16)) . '.<br><span class="muted sm">Chat de la salle, de 30 min avant → 15 min après l\'appel.</span></p>';
+    if ($roomId <= 0) return $out . '<div class="empty">Salle inconnue pour cet appel.</div>';
     $rows = [];
     try {
-        $st = db()->prepare("SELECT c.user_id, DATE_FORMAT(FROM_UNIXTIME(c.timestamp), '%d/%m %H:%i:%s') AS hhmm, c.chat_type, c.message, u.username
-            FROM room_chatlogs c LEFT JOIN users u ON u.id = c.user_id
-            WHERE c.room_id = ? AND c.timestamp BETWEEN (UNIX_TIMESTAMP(?) - 1800) AND (UNIX_TIMESTAMP(?) + 900)
-            ORDER BY c.timestamp ASC LIMIT 500");
+        $st = db()->prepare("SELECT c.user_id, DATE_FORMAT(FROM_UNIXTIME(c.timestamp), '%d/%m %H:%i:%s') AS hhmm, c.chat_type, c.message, u.username FROM room_chatlogs c LEFT JOIN users u ON u.id = c.user_id WHERE c.room_id = ? AND c.timestamp BETWEEN (UNIX_TIMESTAMP(?) - 1800) AND (UNIX_TIMESTAMP(?) + 900) ORDER BY c.timestamp ASC LIMIT 500");
         $st->execute([$roomId, $a['created_at'], $a['created_at']]);
         $rows = $st->fetchAll();
     } catch (Throwable $e) {}
-    if (!$rows) {
-        echo '<div class="note">Aucun message enregistré pour cette salle sur cette période. <span class="muted sm">(Le chat est journalisé côté jeu toutes les 60 s ; une salle sans discussion n\'a rien à afficher.)</span></div>';
-    } else {
-        echo '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr class="muted sm"><th style="text-align:left">Heure</th><th style="text-align:left">Joueur</th><th style="text-align:left">Message</th></tr>';
-        foreach ($rows as $r) {
-            $who = $r['username'] !== null ? h((string)$r['username']) : ('#' . (int)$r['user_id']);
-            $shout = ((int)$r['chat_type'] === 1) ? ' <span class="muted sm">(cri)</span>' : '';
-            echo '<tr style="border-top:1px solid var(--line2)"><td style="padding:4px 8px 4px 0;white-space:nowrap;color:var(--mut)">' . h((string)$r['hhmm']) . '</td><td style="white-space:nowrap"><b>' . $who . '</b></td><td style="white-space:pre-wrap">' . h((string)$r['message']) . $shout . '</td></tr>';
-        }
-        echo '</table>';
+    if (!$rows) return $out . '<div class="note">Aucun message enregistré pour cette salle sur cette période. <span class="muted sm">(Chat journalisé côté jeu toutes les 60 s ; une salle sans discussion n\'a rien à afficher.)</span></div>';
+    $out .= '<div class="cfh-log"><table class="cfh-logtbl"><tr class="muted sm"><th>Heure</th><th>Joueur</th><th>Message</th></tr>';
+    foreach ($rows as $r) {
+        $who = $r['username'] !== null ? h((string)$r['username']) : ('#' . (int)$r['user_id']);
+        $shout = ((int)$r['chat_type'] === 1) ? ' <span class="muted sm">(cri)</span>' : '';
+        $out .= '<tr><td class="cfh-log-t">' . h((string)$r['hhmm']) . '</td><td class="cfh-log-u"><b>' . $who . '</b></td><td class="cfh-log-m">' . h((string)$r['message']) . $shout . '</td></tr>';
     }
-    echo '</div>';
+    return $out . '</table></div>';
+}
+/* Fallback sans JS : page dédiée (les boutons ouvrent sinon la modale). */
+function alerts_cfh_chatlog(int $id): void {
+    echo '<div style="margin-bottom:10px"><a class="mini ghost" href="?p=alerts&sec=cfh">← Retour aux appels</a></div>';
+    echo '<div class="panel"><div class="ph"><h3>📜 Journal de discussion</h3></div>' . cfh_chatlog_fragment($id) . '</div>';
 }
 function alerts_sec_cfh(): void {
     ensure_calls_for_help();
@@ -6317,54 +6390,71 @@ function alerts_sec_cfh(): void {
     $back = '?p=alerts&sec=cfh';
     $age = function ($dt) { $t = strtotime((string)$dt); if (!$t) return ''; $s = max(0, time() - $t); if ($s < 60) return $s . ' s'; if ($s < 3600) return floor($s / 60) . ' min'; if ($s < 86400) return floor($s / 3600) . ' h'; return floor($s / 86400) . ' j'; };
 
-    echo '<div class="panel"><div class="ph"><h3>🆘 Appels à l\'aide (jeu)</h3><span class="rk' . ($up ? '' : ' red') . '" style="margin-left:auto">' . ($up ? '🟢 Émulateur en ligne' : '🔴 Émulateur hors ligne') . '</span></div>';
-    echo '<p class="sub"><b>' . $open . '</b> appel' . ($open > 1 ? 's' : '') . ' en attente · <b>' . count($active) . '</b> actif' . (count($active) > 1 ? 's' : '') . '. Le <b>traitement live se fait en jeu</b> (prise en charge, réponse au joueur) avec ton compte modérateur ; cet écran apporte la <b>persistance, l\'historique et une note interne</b>. Une prise en charge en jeu apparaît ici automatiquement.</p>';
+    // --- Bandeau de synthèse ---
+    echo '<div class="panel"><div class="ph"><h3>🆘 Appels à l\'aide</h3><span class="rk' . ($up ? '' : ' red') . '" style="margin-left:auto">' . ($up ? '🟢 Émulateur en ligne' : '🔴 Émulateur hors ligne') . '</span></div>';
+    echo '<div class="cfh-sum"><div><span class="big" style="color:' . ($open > 0 ? 'var(--red)' : 'var(--mut)') . '">' . $open . '</span> <span class="muted">en attente</span></div>';
+    echo '<div><span class="big">' . count($active) . '</span> <span class="muted">actif' . (count($active) > 1 ? 's' : '') . '</span></div>';
+    echo '<div style="flex:1"></div></div>';
+    echo '<p class="sub" style="margin:10px 0 0">Le <b>traitement live se fait en jeu</b> (prise en charge, réponse au joueur) avec ton compte modérateur ; cet écran apporte la <b>persistance, l\'historique et une note interne</b>. Une prise en charge en jeu apparaît ici automatiquement.</p>';
     echo '</div>';
 
     // --- Appels actifs ---
     if (!$active) {
         echo '<div class="panel"><div class="empty">Aucun appel à l\'aide en cours. ✨</div></div>';
     } else {
+        $qr = ['Bonjour, un membre du staff arrive pour t\'aider.', 'C\'est bien noté, on s\'en occupe tout de suite.', 'Ce n\'est pas une urgence pour le staff, merci de ta compréhension.', 'Problème résolu. Bon jeu sur l\'hôtel !'];
         foreach ($active as $r) {
             $cid = (int)$r['id'];
             $isOpen = $r['status'] === 'open';
             $caller = $r['caller_name'] !== null ? (string)$r['caller_name'] : ('#' . (int)$r['caller_id']);
-            echo '<div class="panel">';
-            echo '<div class="ph"><h3 style="font-size:15px">' . ($isOpen ? '🔴 En attente' : '🟡 Pris en charge') . '</h3>';
-            echo '<span class="muted sm" style="margin-left:auto">' . h(cfh_cat_label((int)$r['category'])) . ' · il y a ' . $age($r['created_at']) . '</span></div>';
-            echo '<p style="margin:0 0 6px"><span class="muted">Joueur :</span> <a href="?p=user&id=' . (int)$r['caller_id'] . '"><b>' . h($caller) . '</b></a>';
-            if ((string)$r['room_name'] !== '') echo ' <span class="muted">· Salle :</span> ' . h((string)$r['room_name']);
-            if (!$isOpen && $r['mod_name'] !== null) echo ' <span class="muted">· Pris par :</span> ' . h((string)$r['mod_name']);
-            echo '</p>';
-            echo '<div class="note" style="margin:0 0 10px;white-space:pre-wrap">' . ($r['message'] !== '' ? h((string)$r['message']) : '<span class="muted">(sans message)</span>') . '</div>';
+            $hasAv = $r['caller_name'] !== null;
 
-            // Répondre directement au joueur (popup en jeu via RCON) — s'il est connecté.
-            echo '<form method="post" class="js" data-reload style="margin:0 0 12px"><input type="hidden" name="action" value="cfh_reply"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
-            echo '<label class="sm">💬 Répondre au joueur (dialogue « Ton appel a reçu la réponse suivante »)<textarea id="cfhr' . $cid . '" name="reply" rows="2" maxlength="300" style="width:100%" placeholder="Ta réponse à ' . h($caller) . '… (ℹ️ reçue seulement s\'il est connecté ; les emoji ne s\'affichent pas)"></textarea></label>';
-            // Réponses pré-écrites : remplissent la zone de texte en 1 clic.
-            $qr = ['Bonjour, un membre du staff arrive pour t\'aider.', 'C\'est bien noté, on s\'en occupe tout de suite.', 'Ce n\'est pas une urgence pour le staff, merci de ta compréhension.', 'Problème résolu. Bon jeu sur l\'hôtel !'];
-            echo '<div class="row" style="gap:5px;flex-wrap:wrap;margin-top:5px">';
-            foreach ($qr as $qm) echo '<button type="button" class="mini ghost" data-m="' . h($qm) . '" onclick="var t=document.getElementById(\'cfhr' . $cid . '\');t.value=this.getAttribute(\'data-m\');t.focus();">' . h(mb_strimwidth($qm, 0, 30, '…')) . '</button>';
+            echo '<div class="panel cfh-card ' . ($isOpen ? 'is-open' : 'is-picked') . '">';
+            // En-tête : avatar + identité + méta
+            echo '<div class="cfh-top">';
+            if ($hasAv) echo '<img class="cfh-av" src="/avatar.php?user=' . h(rawurlencode($caller)) . '&size=s&direction=2&v=2" alt="" width="50" loading="lazy">';
+            echo '<div style="flex:1;min-width:0">';
+            echo '<div class="cfh-name"><a href="?p=user&id=' . (int)$r['caller_id'] . '">' . h($caller) . '</a></div>';
+            echo '<div class="cfh-meta">';
+            echo '<span class="cfh-pill ' . ($isOpen ? 'open' : 'picked') . '">' . ($isOpen ? '🔴 En attente' : '🟡 Pris en charge') . '</span>';
+            echo '<span class="cfh-tag">' . h(cfh_cat_label((int)$r['category'])) . '</span>';
+            if ((string)$r['room_name'] !== '') echo '<span class="muted sm">🚪 ' . h((string)$r['room_name']) . '</span>';
+            echo '<span class="muted sm">⏱️ il y a ' . $age($r['created_at']) . '</span>';
+            if (!$isOpen && $r['mod_name'] !== null) echo '<span class="muted sm">👮 ' . h((string)$r['mod_name']) . '</span>';
+            echo '</div></div></div>';
+
+            // Message du joueur
+            echo '<div class="cfh-msg">' . ($r['message'] !== '' ? h((string)$r['message']) : '<span class="muted">(sans message)</span>') . '</div>';
+
+            // Répondre au joueur (popup en jeu via RCON — s'il est connecté)
+            echo '<form method="post" class="js cfh-replybox" data-reload><input type="hidden" name="action" value="cfh_reply"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
+            echo '<label class="sm" style="font-weight:600">💬 Répondre au joueur <span class="muted" style="font-weight:400">— dialogue « Ton appel a reçu la réponse suivante »</span></label>';
+            echo '<textarea id="cfhr' . $cid . '" name="reply" rows="2" maxlength="300" placeholder="Ta réponse à ' . h($caller) . '… (reçue seulement s\'il est connecté ; les emoji ne s\'affichent pas)"></textarea>';
+            echo '<div class="cfh-chips">';
+            foreach ($qr as $qm) echo '<button type="button" class="cfh-chip" data-m="' . h($qm) . '" onclick="var t=document.getElementById(\'cfhr' . $cid . '\');t.value=this.getAttribute(\'data-m\');t.focus();">' . h(mb_strimwidth($qm, 0, 32, '…')) . '</button>';
             echo '</div>';
-            echo '<div style="margin-top:6px"><button>💬 Envoyer la réponse</button></div></form>';
+            echo '<div style="margin-top:8px"><button>💬 Envoyer la réponse</button></div></form>';
 
-            echo '<div class="row" style="gap:16px;flex-wrap:wrap;align-items:flex-start">';
-            // Note interne
-            echo '<form method="post" class="js" data-reload style="flex:1;min-width:240px"><input type="hidden" name="action" value="cfh_note"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
-            echo '<label class="sm">📝 Note interne<textarea name="note" rows="2" maxlength="1000" style="width:100%" placeholder="Visible par le staff uniquement">' . h((string)$r['staff_note']) . '</textarea></label>';
-            echo '<button class="mini" style="margin-top:4px">💾 Enregistrer la note</button></form>';
-            // Clôture
-            echo '<form method="post" class="js" data-reload data-confirm="Clôturer cet appel ?" style="flex:1;min-width:240px"><input type="hidden" name="action" value="cfh_close"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
-            echo '<label class="sm">✅ Clôturer (motif, optionnel)<input name="reason" maxlength="255" placeholder="Résolu, hors-sujet…"></label>';
-            echo '<button class="mini" style="margin-top:4px">Clôturer l\'appel</button></form>';
-            // Voir le journal de discussion de la salle (autour de l'appel)
-            echo '<a class="mini ghost" style="align-self:flex-end" href="?p=alerts&sec=cfh&log=' . $cid . '">📜 Journal de discussion</a>';
-            // Fiche joueur + préparation d'un bannissement (pré-rempli sur la page Modération)
-            if (tab_allowed('moderation') && $r['caller_name'] !== null) echo '<a class="mini ghost" style="align-self:flex-end;color:var(--red)" href="?p=moderation&ban=' . rawurlencode($caller) . '" title="Préparer un bannissement pour ce joueur">🚫 Bannir ce joueur</a>';
-            // Déconnecter (kick) le joueur du jeu — immédiat via RCON (réversible : il peut se reconnecter)
-            if (tab_allowed('moderation')) echo '<form method="post" class="js" data-reload data-confirm="Déconnecter ' . h($caller) . ' du jeu ?" style="align-self:flex-end;margin:0"><input type="hidden" name="action" value="kick_user"><input type="hidden" name="id" value="' . (int)$r['caller_id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost" title="Déconnecter ce joueur du jeu (il pourra se reconnecter)">👢 Déconnecter</button></form>';
+            // Note interne (repliée)
+            echo '<details class="cfh-note"' . ((string)$r['staff_note'] !== '' ? ' open' : '') . '><summary>📝 Note interne' . ((string)$r['staff_note'] !== '' ? ' (renseignée)' : '') . '</summary>';
+            echo '<form method="post" class="js" data-reload><input type="hidden" name="action" value="cfh_note"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
+            echo '<textarea name="note" rows="2" maxlength="1000" placeholder="Visible par le staff uniquement">' . h((string)$r['staff_note']) . '</textarea>';
+            echo '<div style="margin-top:6px"><button class="mini">💾 Enregistrer la note</button></div></form></details>';
+
+            // Barre d'actions
+            echo '<div class="cfh-tools">';
+            // Clôturer (motif optionnel, inline)
+            echo '<form method="post" class="js cfh-closef" data-reload data-confirm="Clôturer cet appel ?"><input type="hidden" name="action" value="cfh_close"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field();
+            echo '<input name="reason" maxlength="255" placeholder="Motif (optionnel)"><button class="mini">✅ Clôturer</button></form>';
+            echo '<div class="cfh-spacer"></div>';
+            // Journal de discussion → modale (fallback : page dédiée sans JS)
+            echo '<a class="mini ghost" href="?p=alerts&sec=cfh&log=' . $cid . '" onclick="cfhOpenLog(' . $cid . ');return false;">📜 Journal</a>';
+            // Bannissement (pré-rempli page Modération)
+            if (tab_allowed('moderation') && $hasAv) echo '<a class="mini ghost" style="color:var(--red)" href="?p=moderation&ban=' . rawurlencode($caller) . '" title="Préparer un bannissement pour ce joueur">🚫 Bannir</a>';
+            // Déconnecter (kick RCON — réversible)
+            if (tab_allowed('moderation')) echo '<form method="post" class="js" data-reload data-confirm="Déconnecter ' . h($caller) . ' du jeu ?"><input type="hidden" name="action" value="kick_user"><input type="hidden" name="id" value="' . (int)$r['caller_id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost" title="Déconnecter ce joueur du jeu (il pourra se reconnecter)">👢 Déconnecter</button></form>';
             // Supprimer définitivement
-            echo '<form method="post" class="js" data-reload data-confirm="Supprimer définitivement cet appel ? (irréversible)" style="align-self:flex-end"><input type="hidden" name="action" value="cfh_delete"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost danger" title="Supprimer définitivement">🗑️ Supprimer</button></form>';
+            echo '<form method="post" class="js" data-reload data-confirm="Supprimer définitivement cet appel ? (irréversible)"><input type="hidden" name="action" value="cfh_delete"><input type="hidden" name="id" value="' . $cid . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost danger" title="Supprimer définitivement">🗑️</button></form>';
             echo '</div>';
             echo '</div>';
         }
@@ -6375,22 +6465,35 @@ function alerts_sec_cfh(): void {
     if (!$closed) {
         echo '<p class="muted" style="padding:4px 0">Aucun appel clôturé.</p>';
     } else {
-        echo '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr class="muted sm"><th style="text-align:left">Date</th><th style="text-align:left">Joueur</th><th style="text-align:left">Catégorie</th><th style="text-align:left">Message</th><th style="text-align:left">Motif / note</th><th></th></tr>';
+        echo '<table class="cfh-ctable"><tr><th>Date</th><th>Joueur</th><th>Catégorie</th><th>Message</th><th>Motif / note</th><th></th></tr>';
         foreach (array_slice($closed, 0, 40) as $r) {
             $caller = $r['caller_name'] !== null ? (string)$r['caller_name'] : ('#' . (int)$r['caller_id']);
             $extra = trim(((string)$r['close_reason'] !== '' ? (string)$r['close_reason'] : '') . ((string)$r['staff_note'] !== '' ? ' · ' . (string)$r['staff_note'] : ''));
-            echo '<tr style="border-top:1px solid var(--line2)">';
-            echo '<td style="padding:5px 6px 5px 0;white-space:nowrap">' . h(substr((string)($r['closed_at'] ?: $r['created_at']), 0, 16)) . '</td>';
+            echo '<tr>';
+            echo '<td style="white-space:nowrap">' . h(substr((string)($r['closed_at'] ?: $r['created_at']), 0, 16)) . '</td>';
             echo '<td><a href="?p=user&id=' . (int)$r['caller_id'] . '">' . h($caller) . '</a></td>';
             echo '<td class="muted sm">' . h(cfh_cat_label((int)$r['category'])) . '</td>';
             echo '<td class="muted sm">' . h(mb_strimwidth((string)$r['message'], 0, 60, '…')) . '</td>';
             echo '<td class="muted sm">' . h(mb_strimwidth($extra, 0, 60, '…')) . '</td>';
-            echo '<td style="text-align:right;white-space:nowrap"><a class="mini ghost" href="?p=alerts&sec=cfh&log=' . (int)$r['id'] . '" title="Journal de discussion">📜</a> <form method="post" class="js" data-reload onsubmit="return confirm(\'Rouvrir cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_reopen"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost">↩️ Rouvrir</button></form> <form method="post" class="js" data-reload onsubmit="return confirm(\'Supprimer définitivement cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost danger">🗑️</button></form></td>';
+            echo '<td style="text-align:right;white-space:nowrap"><a class="mini ghost" href="?p=alerts&sec=cfh&log=' . (int)$r['id'] . '" onclick="cfhOpenLog(' . (int)$r['id'] . ');return false;" title="Journal de discussion">📜</a> <form method="post" class="js" data-reload onsubmit="return confirm(\'Rouvrir cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_reopen"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost">↩️ Rouvrir</button></form> <form method="post" class="js" data-reload onsubmit="return confirm(\'Supprimer définitivement cet appel ?\');" style="display:inline"><input type="hidden" name="action" value="cfh_delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost danger">🗑️</button></form></td>';
             echo '</tr>';
         }
         echo '</table>';
     }
     echo '</div>';
+
+    // --- Modale « Journal de discussion » (chargée en AJAX via ?cfhlog=) ---
+    echo '<div id="cfhModal" class="cfh-modal-ov" onclick="if(event.target===this)cfhCloseLog()">'
+        . '<div class="cfh-modal-win"><div class="cfh-modal-head"><h3>📜 Journal de discussion</h3>'
+        . '<button type="button" class="cfh-modal-x" onclick="cfhCloseLog()" aria-label="Fermer">×</button></div>'
+        . '<div class="cfh-modal-body" id="cfhModalBody"></div></div></div>';
+    echo '<script>'
+        . 'function cfhOpenLog(id){var ov=document.getElementById("cfhModal"),b=document.getElementById("cfhModalBody");'
+        . 'b.innerHTML="<div class=\'cfh-loading\'>Chargement du journal…</div>";ov.classList.add("on");document.body.style.overflow="hidden";'
+        . 'fetch("?cfhlog="+id,{headers:{"X-Requested-With":"fetch"}}).then(function(r){return r.text();}).then(function(t){b.innerHTML=t;}).catch(function(){b.innerHTML="<div class=\'empty\'>Erreur de chargement du journal.</div>";});}'
+        . 'function cfhCloseLog(){document.getElementById("cfhModal").classList.remove("on");document.body.style.overflow="";}'
+        . 'document.addEventListener("keydown",function(e){if(e.key==="Escape")cfhCloseLog();});'
+        . '</script>';
 }
 function alerts_sec_send(): void {
     if (!tab_allowed('server')) { echo '<div class="panel"><div class="empty">🔒 Ton rang n\'autorise pas l\'envoi d\'alertes en jeu.</div></div>'; return; }
