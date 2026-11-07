@@ -7325,6 +7325,15 @@ function diag_log_sources(): array {
     return $s;
 }
 /* Nombre d'erreurs JS collectées depuis N secondes (lecture de la fin du log). */
+/* Bruit de supervision : erreur réseau/HTTP sur nos propres endpoints de polling
+   (cfhcount/diagcount/logview/jstail/log_js) — à ne JAMAIS compter comme problème.
+   Filet de sécurité côté serveur même si un vieux client en cache en envoie encore. */
+function diag_js_is_noise(array $o): bool {
+    $t = (string)($o['type'] ?? '');
+    if ($t !== 'FETCH_NETWORK_ERROR' && $t !== 'FETCH_HTTP_ERROR') return false;
+    $s = (string)($o['source'] ?? '') . ' ' . (string)($o['message'] ?? '');
+    return (bool) preg_match('/(cfhcount|diagcount|logview|jstail|log_js)/i', $s);
+}
 function diag_js_errors_since(int $seconds, int $readBytes = 400000): int {
     $f = dirname(__DIR__) . '/_runtime/js_errors.log';
     if (!is_file($f)) return 0;
@@ -7334,7 +7343,7 @@ function diag_js_errors_since(int $seconds, int $readBytes = 400000): int {
     foreach (preg_split('/\r\n|\n/', $data) ?: [] as $l) {
         if (trim($l) === '') continue;
         $o = json_decode($l, true);
-        if (is_array($o) && isset($o['time']) && $o['time'] >= $cut) $n++;
+        if (is_array($o) && isset($o['time']) && $o['time'] >= $cut && !diag_js_is_noise($o)) $n++;
     }
     return $n;
 }
@@ -7354,6 +7363,7 @@ function diag_js_aggregate(int $seconds = 86400, int $readBytes = 600000): array
         if (trim($l) === '') continue;
         $o = json_decode($l, true);
         if (!is_array($o) || !isset($o['time']) || $o['time'] < $cut) continue;
+        if (diag_js_is_noise($o)) continue;
         $out['total']++;
         $m = trim((string)($o['message'] ?? '')); if ($m === '') $m = '(sans message)';
         $m = preg_replace('/\s+/', ' ', $m); $m = mb_substr($m, 0, 160);
