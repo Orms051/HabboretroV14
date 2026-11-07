@@ -50,6 +50,7 @@ function db(): PDO {
 function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 $__cv = dirname(__DIR__, 2) . '/inc/conversations.php'; if (is_file($__cv)) require_once $__cv; // modèle conversation partagé (messagerie)
 $__sec = dirname(__DIR__, 2) . '/inc/security.php'; if (is_file($__sec)) require_once $__sec; // système de sécurité du site (lockdown / bans IP)
+$__et = dirname(__DIR__, 2) . '/inc/error_tracker.php'; if (is_file($__et)) require_once $__et; // traqueur d'erreurs JS (envoi vers /log_js.php)
 function redirect(string $to) { header('Location: ' . $to); exit; }
 function me(): ?array { return $_SESSION['site_user'] ?? null; }
 /** URL du bouton « Entre dans l'Hôtel ».

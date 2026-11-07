@@ -1651,6 +1651,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($ip !== '') sec_unban_ip($ip);
                 $msg = "✅ IP $ip débannie."; break;
             }
+            case 'log_clear': {
+                $srcs = diag_log_sources(); $key = (string)($_POST['src'] ?? '');
+                if (!isset($srcs[$key]) || $srcs[$key][1] === '' || !is_file($srcs[$key][1])) { $ok = false; $msg = '❌ Log introuvable.'; break; }
+                $ok = (@file_put_contents($srcs[$key][1], '') !== false);
+                $msg = $ok ? '🗑️ Log vidé : ' . strip_tags($srcs[$key][0]) : '❌ Impossible de vider (fichier verrouillé par le service ?).'; break;
+            }
             case 'sec_clear_events': {
                 try { db()->exec("DELETE FROM security_events WHERE cree_le < DATE_SUB(NOW(), INTERVAL 30 DAY)"); } catch (Throwable $e) {}
                 $msg = '🗑️ Événements de plus de 30 jours supprimés.'; break;
@@ -1703,6 +1709,8 @@ if (!tab_allowed($p)) { flash('🔒 Ton rang n\'a pas accès à « ' . $p . ' »
 
 /* ---------- Journal en direct : endpoint AJAX (polling) ---------- */
 if ($p === 'journal' && isset($_GET['tail'])) { journal_ajax(); exit; }
+/* ---------- Visionneuse de logs : lecture d'un log (AJAX) ---------- */
+if ($p === 'journal' && isset($_GET['logview'])) { diag_logview(); exit; }
 
 /* ---------- Rendu ---------- */
 render_header($p);
@@ -3599,6 +3607,7 @@ function action_tab(string $a): string {
         // Sécurité du site (rang 7)
         'sec_lockdown' => 'security', 'sec_unlock' => 'security', 'sec_ban_ip' => 'security', 'sec_unban_ip' => 'security',
         'sec_clear_events' => 'security', 'sec_config_save' => 'security',
+        'log_clear' => 'journal',
     ];
     return $map[$a] ?? '';
 }
@@ -7245,8 +7254,51 @@ function diag_checks(): array {
     }
     return $out;
 }
+/* Sources de logs découvertes (émulateur, JS collectées, PHP, Apache, MySQL). */
+function diag_log_sources(): array {
+    $root = dirname(__DIR__); // Server/www
+    $s = [];
+    $s['emulateur'] = ['🎮 Émulateur (server.log)', $root . '/server.log'];
+    $s['js']        = ['⚡ Erreurs JS (site + admin)', $root . '/_runtime/js_errors.log'];
+    $php = (string)ini_get('error_log');
+    if ($php === '' || !is_file($php)) { foreach (['C:/laragon/tmp/php_errors.log'] as $c) if (is_file($c)) { $php = $c; break; } }
+    $s['php'] = ['🐘 Erreurs PHP', $php];
+    foreach (glob('C:/laragon/bin/apache/*/logs/error_log') ?: [] as $f) { $s['apache_err'] = ['🌐 Apache — erreurs', $f]; break; }
+    foreach (glob('C:/laragon/bin/apache/*/logs/access_log') ?: [] as $f) { $s['apache_acc'] = ['🌐 Apache — accès', $f]; break; }
+    foreach ([glob('C:/laragon/bin/mysql/*/data/*.err'), glob('C:/laragon/data/*.err'), glob('C:/laragon/data/mysql/*.err')] as $g) { if ($g) { $s['mysql'] = ['🗄️ MySQL/MariaDB — erreurs', $g[0]]; break; } }
+    return $s;
+}
+function diag_log_level(string $l): string {
+    if (preg_match('/\b(ERROR|FATAL|SEVERE|Exception|Caused by|PHP (Parse|Fatal|Warning))\b/i', $l)) return 'err';
+    if (preg_match('/\bWARN(ING)?\b/i', $l)) return 'warn';
+    if (preg_match('/"[A-Z]+ [^"]*" (4\d\d|5\d\d) /', $l)) return 'err'; // accès Apache 4xx/5xx
+    return '';
+}
+/* Endpoint AJAX : lit la fin d'un log (filtrable). GET ?p=journal&logview=1&src=&lines=&filter= */
+function diag_logview(): void {
+    header('Content-Type: application/json');
+    $srcs = diag_log_sources();
+    $key = (string)($_GET['src'] ?? '');
+    $lines = max(10, min(1000, (int)($_GET['lines'] ?? 150)));
+    $filter = trim((string)($_GET['filter'] ?? ''));
+    if (!isset($srcs[$key])) { echo json_encode(['ok' => false, 'error' => 'source inconnue']); return; }
+    $path = $srcs[$key][1];
+    if ($path === '' || !is_file($path)) { echo json_encode(['ok' => true, 'lines' => [], 'missing' => true, 'path' => $path, 'size' => 0]); return; }
+    $sz = (int)filesize($path); $fp = @fopen($path, 'rb');
+    if (!$fp) { echo json_encode(['ok' => false, 'error' => 'lecture impossible (fichier verrouillé ?)']); return; }
+    fseek($fp, max(0, $sz - 500000)); $data = (string)fread($fp, 500000); fclose($fp);
+    $all = array_values(array_filter(preg_split('/\r\n|\n/', $data) ?: [], fn($l) => trim($l) !== ''));
+    if ($filter !== '') $all = array_values(array_filter($all, fn($l) => stripos($l, $filter) !== false));
+    $slice = array_slice($all, -$lines);
+    $out = [];
+    foreach ($slice as $l) {
+        if ($key === 'js') { $o = json_decode($l, true); if (is_array($o)) { $out[] = ['js' => $o]; continue; } }
+        $out[] = ['raw' => mb_substr($l, 0, 600), 'lvl' => diag_log_level($l)];
+    }
+    echo json_encode(['ok' => true, 'lines' => array_reverse($out), 'total' => count($all), 'size' => $sz, 'mtime' => @filemtime($path), 'path' => $path], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
 function page_journal(): void {
-    page_title('Journal & diagnostics', 'Santé du site, services, base de données + activité en temps réel');
+    page_title('Journal & diagnostics', 'Santé du site, services, base de données, erreurs et logs en temps réel');
 
     // ── Diagnostic ──
     $checks = diag_checks();
@@ -7314,11 +7366,22 @@ function page_journal(): void {
     }
     echo '</div>';
 
-    /* --- Diagnostics : dernières erreurs de l'émulateur (server.log) --- */
-    $errs = server_log_errors(20);
-    echo '<div class="panel"><div class="ph"><h3>🩺 Diagnostics — dernières erreurs</h3><span class="muted sm" style="margin-left:auto">server.log · ' . count($errs) . ' ligne(s)</span></div>';
-    if (!$errs) echo '<div class="empty">Aucune erreur récente dans le log 🎉</div>';
-    else echo '<pre class="logbox" style="max-height:260px;overflow:auto">' . h(implode("\n", $errs)) . '</pre><p class="hint">Dernières lignes ERROR/WARN/exception du log de l\'émulateur (sans secrets). Pour le contrôle du serveur, voir l\'onglet <a href="?p=server">🖥️ Serveur</a>.</p>';
+    // ── Visionneuse de logs (tous les logs du serveur & du site) ──
+    $srcs = diag_log_sources();
+    echo '<div class="panel"><div class="ph"><h3>🔎 Visionneuse de logs</h3><span class="muted sm" style="margin-left:auto">n\'importe quel log · erreurs en direct</span></div>';
+    echo '<div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">';
+    echo '<label>Source<select id="lvsrc">';
+    foreach ($srcs as $k => $v) { $exists = $v[1] !== '' && is_file($v[1]); echo '<option value="' . h($k) . '">' . h($v[0]) . ($exists ? '' : ' — absent') . '</option>'; }
+    echo '</select></label>';
+    echo '<label>Filtre texte<input id="lvfilter" placeholder="ex. error, 500, exception" style="width:170px"></label>';
+    echo '<label>Lignes<select id="lvlines"><option>150</option><option>300</option><option>600</option></select></label>';
+    echo '<label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="lvauto"> Auto (3s)</label>';
+    echo '<button class="mini" type="button" id="lvrefresh">🔄 Rafraîchir</button>';
+    echo '<form method="post" class="js" data-reload data-confirm="Vider ce fichier de log ?" style="margin:0"><input type="hidden" name="action" value="log_clear"><input type="hidden" name="src" id="lvclearsrc" value="">' . csrf_field() . '<button class="mini ghost danger">🗑️ Vider</button></form>';
+    echo '</div>';
+    echo '<div id="lvmeta" class="muted sm" style="margin:8px 0 4px">—</div>';
+    echo '<pre class="logbox" id="lvbox" style="max-height:430px;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-all">Chargement…</pre>';
+    echo '<p class="hint">💡 Toutes les sources de logs du serveur et du site. <b>Erreurs JS</b> = problèmes capturés en direct sur le site ET l\'admin (console, fetch, ressources). Mets « Auto » pour voir les soucis apparaître en temps réel.</p>';
     echo '</div>';
 
     $f = journal_access_log();
@@ -7373,6 +7436,38 @@ function page_journal(): void {
   autoEl.onchange=schedule; modeEl.onchange=poll; ipEl.onchange=poll;
   ipEl.onkeyup=function(e){ if(e.keyCode===13) poll(); };
   poll(); schedule();
+})();
+/* Visionneuse de logs universelle */
+(function(){
+  var src=document.getElementById('lvsrc'), f=document.getElementById('lvfilter'), ln=document.getElementById('lvlines'),
+      auto=document.getElementById('lvauto'), box=document.getElementById('lvbox'), meta=document.getElementById('lvmeta'),
+      csrc=document.getElementById('lvclearsrc');
+  if(!src) return; var timer=null, busy=false;
+  function esc(s){return String(s).replace(/[&<>]/g,function(c){return c==='&'?'&amp;':c==='<'?'&lt;':'&gt;';});}
+  function row(l){
+    if(l.js){var j=l.js; var col=/ERROR|FETCH_NETWORK|UNHANDLED/.test(j.type)?'#e06a5b':(/WARN|FETCH_HTTP|RESOURCE/.test(j.type)?'#e8c34a':'#9fb4c6');
+      return '<span style="color:'+col+'">'+esc(j.time||'')+'  '+esc(j.type||'')+'  '+esc(j.message||'')+(j.source?('  ('+esc(j.source)+(j.line?':'+j.line:'')+')'):'')+(j.page_name?'  — '+esc(j.page_name):'')+'</span>';}
+    var c=l.lvl==='err'?'#e06a5b':(l.lvl==='warn'?'#e8c34a':'#9fb4c6');
+    return '<span style="color:'+c+'">'+esc(l.raw||'')+'</span>';
+  }
+  function load(){
+    if(busy)return; busy=true; if(csrc)csrc.value=src.value;
+    var url='?p=journal&logview=1&src='+encodeURIComponent(src.value)+'&lines='+encodeURIComponent(ln.value)+'&filter='+encodeURIComponent(f.value||'');
+    fetch(url,{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+      busy=false;
+      if(!d.ok){ box.textContent=d.error||'Erreur.'; meta.textContent='—'; return; }
+      if(d.missing){ box.innerHTML='<span class="muted">Fichier absent : '+esc(d.path||'')+'</span>'; meta.textContent='—'; return; }
+      var atBottom = box.scrollTop+box.clientHeight >= box.scrollHeight-30;
+      var rows=d.lines||[];
+      box.innerHTML = rows.length? rows.map(row).join('\n') : '<span class="muted">Aucune ligne (selon le filtre).</span>';
+      var kb=d.size?Math.round(d.size/1024):0;
+      meta.textContent=(d.total||0)+' ligne(s) · '+kb+' Ko · '+(d.path||'');
+    }).catch(function(){ busy=false; box.textContent='Erreur réseau.'; });
+  }
+  function sched(){ if(timer){clearInterval(timer);timer=null;} if(auto.checked)timer=setInterval(load,3000); }
+  document.getElementById('lvrefresh').onclick=load; src.onchange=load; ln.onchange=load; auto.onchange=sched;
+  f.onkeyup=function(e){ if(e.keyCode===13)load(); };
+  load();
 })();
 </script>
     <?php
@@ -8158,7 +8253,7 @@ document.addEventListener('submit',function(e){
   }).catch(function(){toast('Erreur réseau',false);if(btn)btn.disabled=false;});
 });
 function filt(inp,tblId){var q=inp.value.toLowerCase();var t=document.getElementById(tblId);if(!t)return;t.querySelectorAll('tr.frow').forEach(function(r){var txt=r.textContent.toLowerCase();r.querySelectorAll('input').forEach(function(i){txt+=' '+(i.value||'').toLowerCase();});r.style.display=txt.indexOf(q)>-1?'':'none';var nx=r.nextElementSibling;if(nx&&nx.classList.contains('drawer'))nx.style.display='none';});}
-</script></body></html><?php
+</script><?php $__et = dirname(__DIR__) . '/inc/error_tracker.php'; if (is_file($__et)) { require_once $__et; echo error_tracker_html(); } ?></body></html><?php
 }
 function render_login(?string $err): void {
     $t = THEMES[current_theme_key()]; $acc = $t[7];

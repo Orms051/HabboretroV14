@@ -558,6 +558,7 @@ function carGo(i){var c=document.getElementById('carousel');if(!c)return;var n=p
   });
 })();
 </script>
+<?php if (function_exists('error_tracker_html')) echo error_tracker_html(); ?>
 </body></html>
 <?php
 }
