@@ -6752,6 +6752,9 @@ function alerts_css(): string {
 .cfh-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
 .cfh-chip{font-size:12px;padding:4px 10px;border-radius:16px;border:1px solid var(--line2);background:var(--panel);color:var(--mut);cursor:pointer;transition:.12s}
 .cfh-chip:hover{color:var(--txt);border-color:var(--acc)}
+.cfh-replybox button.cfh-send{background:var(--blue)}
+.cfh-replybox button.cfh-send-close{background:var(--green);box-shadow:0 2px 8px rgba(18,168,90,.28)}
+.cfh-replybox button.cfh-send-close:hover{filter:brightness(1.08)}
 .cfh-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;padding-top:12px;border-top:1px solid var(--line2)}
 .cfh-tools form{margin:0}
 .cfh-closef{display:flex;gap:6px;align-items:center}
@@ -6812,6 +6815,30 @@ function alerts_css(): string {
 .al-res-ko{color:var(--red);font-weight:600}
 ';
 }
+/* Mémoire « vu » par membre du staff (badges de type notification qui s'effacent
+   une fois la section consultée). Table créée à la demande. */
+function admin_seen_ensure(): void {
+    static $done = false; if ($done) return; $done = true;
+    try { db()->exec("CREATE TABLE IF NOT EXISTS admin_seen (username VARCHAR(64) NOT NULL, skey VARCHAR(32) NOT NULL, sig VARCHAR(64) NOT NULL DEFAULT '', seen_at DATETIME NOT NULL, PRIMARY KEY (username, skey)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); } catch (Throwable $e) {}
+}
+function admin_seen_get(string $key): string {
+    admin_seen_ensure();
+    try { $st = db()->prepare('SELECT sig FROM admin_seen WHERE username=? AND skey=?'); $st->execute([(string)($_SESSION['admin']['username'] ?? ''), $key]); $v = $st->fetchColumn(); return $v === false ? '' : (string)$v; }
+    catch (Throwable $e) { return ''; }
+}
+function admin_seen_set(string $key, string $sig): void {
+    admin_seen_ensure();
+    try { db()->prepare('INSERT INTO admin_seen (username,skey,sig,seen_at) VALUES (?,?,?,NOW()) ON DUPLICATE KEY UPDATE sig=VALUES(sig), seen_at=NOW()')->execute([(string)($_SESSION['admin']['username'] ?? ''), $key, $sig]); }
+    catch (Throwable $e) {}
+}
+/* État de la veille : joueurs avec ≥3 appels/7 j. Renvoie le nb + une signature
+   (pour détecter du nouveau depuis la dernière consultation). */
+function veille_state(): array {
+    try { $rows = db()->query("SELECT caller_id, COUNT(*) c FROM calls_for_help WHERE created_at > (NOW() - INTERVAL 7 DAY) GROUP BY caller_id HAVING COUNT(*) >= 3 ORDER BY caller_id")->fetchAll(PDO::FETCH_KEY_PAIR); }
+    catch (Throwable $e) { $rows = []; }
+    $sig = ''; foreach ($rows as $id => $c) $sig .= $id . ':' . $c . ';';
+    return ['n' => count($rows), 'sig' => $sig === '' ? '' : md5($sig)];
+}
 function page_alerts(): void {
     page_title('Alertes & annonces', 'Appels à l\'aide, alertes en jeu et annonces — regroupés');
     $hasVeille = tab_allowed('veille');
@@ -6819,8 +6846,15 @@ function page_alerts(): void {
     $valid = ['cfh', 'send', 'announce', 'history']; if ($hasVeille) $valid[] = 'veille';
     if (!in_array($sec, $valid, true)) $sec = 'send';
     $openN = 0; if (tab_allowed('alerts')) { try { $openN = cfh_pending_count(); } catch (Throwable $e) {} }
-    // Badge Veille = nb de joueurs qui multiplient les appels (≥3 / 7 j).
-    $veilleN = 0; if ($hasVeille) { try { $veilleN = (int) db()->query("SELECT COUNT(*) FROM (SELECT caller_id FROM calls_for_help WHERE created_at > (NOW() - INTERVAL 7 DAY) GROUP BY caller_id HAVING COUNT(*) >= 3) t")->fetchColumn(); } catch (Throwable $e) {} }
+    // Badge Veille façon NOTIFICATION : nb de joueurs qui multiplient les appels
+    // (≥3 / 7 j). S'efface dès que la Veille est consultée, revient seulement s'il
+    // y a du nouveau (nouveau joueur en abus ou compteurs changés).
+    $veilleN = 0; $veilleNew = false;
+    if ($hasVeille) {
+        $vs = veille_state(); $veilleN = (int)$vs['n'];
+        if ($sec === 'veille') admin_seen_set('veille', $vs['sig']);        // consultée → marquée vue
+        else $veilleNew = ($veilleN > 0 && $vs['sig'] !== admin_seen_get('veille'));
+    }
     echo '<style>' . alerts_css() . '</style>';
     $tabs = ['cfh' => ['🆘', 'Appels à l\'aide'], 'send' => ['📢', 'Alerte en jeu'], 'announce' => ['📨', 'Annonce messagerie']];
     if ($hasVeille) $tabs['veille'] = ['🔎', 'Veille'];
@@ -6829,7 +6863,7 @@ function page_alerts(): void {
     foreach ($tabs as $k => $t) {
         $badge = '';
         if ($k === 'cfh' && $openN > 0) $badge = '<span class="atab-badge">' . (int)$openN . '</span>';
-        elseif ($k === 'veille' && $veilleN > 0) $badge = '<span class="atab-badge">' . (int)$veilleN . '</span>';
+        elseif ($k === 'veille' && $veilleNew) $badge = '<span class="atab-badge">' . (int)$veilleN . '</span>';
         echo '<a class="atab' . ($sec === $k ? ' on' : '') . '" href="?p=alerts&sec=' . $k . '"><span class="atab-ic">' . $t[0] . '</span>' . h($t[1]) . $badge . '</a>';
     }
     echo '</div>';
@@ -6953,8 +6987,8 @@ function alerts_sec_cfh(): void {
             echo '</div>';
             echo '<input type="hidden" name="also_close" id="ac' . $cid . '" value="">';
             echo '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">'
-               . '<button type="submit" onclick="document.getElementById(\'ac' . $cid . '\').value=\'\'">💬 Envoyer la réponse</button>'
-               . '<button type="submit" class="ghost" onclick="document.getElementById(\'ac' . $cid . '\').value=\'1\'" title="Envoyer la réponse puis clôturer l\'appel">💬✅ Envoyer et clôturer</button>'
+               . '<button type="submit" class="cfh-send" onclick="document.getElementById(\'ac' . $cid . '\').value=\'\'">💬 Envoyer la réponse</button>'
+               . '<button type="submit" class="cfh-send-close" onclick="document.getElementById(\'ac' . $cid . '\').value=\'1\'" title="Envoyer la réponse puis clôturer l\'appel dans la foulée">✅ Envoyer et clôturer</button>'
                . '</div></form>';
 
             // Note interne (repliée)
