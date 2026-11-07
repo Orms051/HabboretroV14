@@ -1745,16 +1745,17 @@ switch ($p) {
     case 'journal': page_journal(); break;
     case 'wordfilter': page_wordfilter(); break;
     case 'security': page_security(); break;
+    case 'maintenance': page_maintenance(); break;
     default: page_dashboard(); break;
 }
 render_footer();
 
 /* ============ ACCÈS AUX ONGLETS PAR RANG ============ */
 function admin_nav(): array {
-    return ['dashboard' => ['🏠', 'Accueil'], 'stats' => ['📈', 'Statistiques'], 'veille' => ['🔎', 'Veille & signalements'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal en direct'], 'wordfilter' => ['🤬', 'Filtre de mots'], 'security' => ['🛡️', 'Sécurité']];
+    return ['dashboard' => ['🏠', 'Accueil'], 'stats' => ['📈', 'Statistiques'], 'veille' => ['🔎', 'Veille & signalements'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal & diagnostics'], 'wordfilter' => ['🤬', 'Filtre de mots'], 'security' => ['🛡️', 'Sécurité'], 'maintenance' => ['🚧', 'Maintenance']];
 }
 function tab_default_rank(string $tab): int {
-    $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6, 'journal' => 7, 'veille' => 6, 'security' => 7];
+    $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6, 'journal' => 7, 'veille' => 6, 'security' => 7, 'maintenance' => 7];
     return $d[$tab] ?? MIN_RANK;
 }
 function nav_groups(): array {
@@ -1766,7 +1767,7 @@ function nav_groups(): array {
         'Hôtel & appartements' => ['rooms', 'models', 'gamemaps', 'bots', 'games'],
         'Catalogue & économie' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax', 'recycler', 'vouchers'],
         'Animations' => ['events', 'bus'],
-        'Technique' => ['settings', 'security', 'textes', 'access', 'mysql', 'server', 'journal'],
+        'Technique' => ['settings', 'security', 'maintenance', 'textes', 'access', 'mysql', 'server', 'journal'],
     ];
 }
 function ensure_tab_perms(): void {
@@ -3532,7 +3533,7 @@ function sitemgr_settings(): void {
         echo '<form method="post" class="js row" data-reload style="margin-bottom:6px">' . csrf_field() . '<input type="hidden" name="action" value="site_setting"><input type="hidden" name="key" value="' . h($cfg[0]) . '">';
         echo '<label style="flex:1">' . h($cfg[1]) . '<input name="value" value="' . h(site_setting_get($cfg[0], $cfg[2])) . '" maxlength="400"></label><button style="align-self:flex-end">💾</button></form>';
     }
-    echo '<p class="muted sm">La maintenance et l\'accès pendant maintenance se gèrent dans l\'onglet <a href="?p=server">Serveur</a>. Aucun éditeur de code ici (point 11).</p></div>';
+    echo '<p class="muted sm">La maintenance et l\'accès pendant maintenance se gèrent dans l\'onglet <a href="?p=maintenance">🚧 Maintenance</a>. Aucun éditeur de code ici (point 11).</p></div>';
 }
 function sitemgr_history(): void {
     echo '<div class="panel"><div class="ph"><h3>🕑 Historique des modifications du site</h3></div>';
@@ -3593,7 +3594,7 @@ function action_tab(string $a): string {
         // Système (rang 7 par défaut)
         'setting_update' => 'settings', 'xtext_update' => 'textes', 'tabperm_update' => 'access',
         'srv_start' => 'server', 'srv_stop' => 'server', 'set_entry_bg' => 'server', 'hotel_alert' => 'server', 'alert_presets_save' => 'server',
-        'maint_on' => 'server', 'maint_off' => 'server',
+        'maint_on' => 'maintenance', 'maint_off' => 'maintenance',
         'db_backup' => 'mysql',
         // Sécurité du site (rang 7)
         'sec_lockdown' => 'security', 'sec_unlock' => 'security', 'sec_ban_ip' => 'security', 'sec_unban_ip' => 'security',
@@ -5810,7 +5811,7 @@ function page_messages(): void {
    ============================================================ */
 function sec_css(): string {
     return '
-.secw{max-width:1180px}
+.secw{width:100%}
 .sec-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:2px 0 16px}
 @media(max-width:820px){.sec-kpis{grid-template-columns:repeat(2,1fr)}}
 .sec-kpi{background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:14px 16px}
@@ -7204,7 +7205,15 @@ function page_wordfilter(): void {
 }
 
 function page_journal(): void {
-    page_title('Journal en direct', 'Vois en temps réel les requêtes reçues par le site (qui se connecte, quelle page, quel code)');
+    page_title('Journal & diagnostics', 'Activité du site en temps réel + dernières erreurs de l\'émulateur');
+
+    /* --- Diagnostics : dernières erreurs de l'émulateur (server.log) --- */
+    $errs = server_log_errors(20);
+    echo '<div class="panel"><div class="ph"><h3>🩺 Diagnostics — dernières erreurs</h3><span class="muted sm" style="margin-left:auto">server.log · ' . count($errs) . ' ligne(s)</span></div>';
+    if (!$errs) echo '<div class="empty">Aucune erreur récente dans le log 🎉</div>';
+    else echo '<pre class="logbox" style="max-height:260px;overflow:auto">' . h(implode("\n", $errs)) . '</pre><p class="hint">Dernières lignes ERROR/WARN/exception du log de l\'émulateur (sans secrets). Pour le contrôle du serveur, voir l\'onglet <a href="?p=server">🖥️ Serveur</a>.</p>';
+    echo '</div>';
+
     $f = journal_access_log();
     echo '<div class="panel"><div class="ph"><h3>📡 Activité en direct</h3><span id="jstatus" class="muted sm" style="margin-left:auto">—</span></div>';
     if ($f === '') {
@@ -7262,8 +7271,42 @@ function page_journal(): void {
     <?php
 }
 
+function page_maintenance(): void {
+    page_title('🚧 Maintenance', 'Fermer le site public et le jeu (le staff garde l\'accès)');
+    $mf = dirname(__DIR__) . '/maintenance.json';
+    $mData = is_file($mf) ? (json_decode((string)@file_get_contents($mf), true) ?: []) : [];
+    $mOn = !empty($mData['on']);
+
+    // État
+    echo '<div class="grid">';
+    echo '<div class="stat ' . ($mOn ? 'red' : 'green') . '"><div class="ic">' . ($mOn ? '🚧' : '🟢') . '</div><div><div class="num" style="font-size:17px">' . ($mOn ? 'ACTIVÉE' : 'Site ouvert') . '</div><div class="lbl">Mode maintenance</div></div></div>';
+    if ($mOn) {
+        echo '<div class="stat blue"><div class="ic">👤</div><div><div class="num" style="font-size:15px">' . h((string)($mData['by'] ?? '?')) . '</div><div class="lbl">Activée par</div></div></div>';
+        if (!empty($mData['eta'])) echo '<div class="stat blue"><div class="ic">🕐</div><div><div class="num" style="font-size:15px">' . h((string)$mData['eta']) . '</div><div class="lbl">Retour estimé</div></div></div>';
+    }
+    echo '</div>';
+
+    echo '<div class="panel"><div class="ph"><h3>' . ($mOn ? '✅ Rouvrir le site' : '🚧 Activer la maintenance') . '</h3><span class="rk ' . ($mOn ? 'red' : 'green') . '" style="margin-left:auto">' . ($mOn ? 'ACTIVÉ' : 'Inactif') . '</span></div>';
+    echo '<p class="sub">Ferme le site public <b>et le jeu</b> (<code>/client.php</code>) avec une page « Hôtel en maintenance » (503). Le <b>staff (rang 5+)</b> et l\'admin gardent l\'accès. Fonctionne même si l\'émulateur ou MySQL sont arrêtés.</p>';
+    if ($mOn) {
+        if (!empty($mData['message'])) echo '<p class="hint">💬 Message affiché aux joueurs : « ' . h((string)$mData['message']) . ' »</p>';
+        echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="maint_off"><button class="bigok">✅ Rouvrir le site</button></form>';
+    } else {
+        echo '<form method="post" class="js" data-reload data-confirm="Activer le mode maintenance ? Le site public sera fermé aux joueurs.">' . csrf_field() . '<input type="hidden" name="action" value="maint_on">';
+        echo '<div class="row"><label style="flex:2">Message affiché<input name="message" placeholder="Ex. Petite mise à jour en cours, on revient vite !"></label><label style="flex:1">Retour estimé<input name="eta" placeholder="Ex. 18h30"></label></div>';
+        echo '<button class="bigwarn" style="margin-top:10px">🚧 Activer la maintenance</button></form>';
+    }
+    echo '</div>';
+
+    echo '<div class="panel"><div class="ph"><h3>ℹ️ Comment ça marche</h3></div>';
+    echo '<ul class="sub" style="margin:0;padding-left:20px;line-height:1.9">'
+        . '<li>Un fichier <code>maintenance.json</code> est créé à la racine du site ; le socle <code>boot.php</code> et <code>client.php</code> le lisent à chaque requête.</li>'
+        . '<li>Les visiteurs non-staff reçoivent une page « Hôtel en maintenance » (code 503), le staff connecté passe normalement pour préparer/tester.</li>'
+        . '<li>Indépendant de l\'émulateur : la maintenance marche même serveur de jeu éteint.</li>'
+        . '</ul></div>';
+}
 function page_server(): void {
-    page_title('Serveur', 'État des services, contrôle de l\'émulateur et diagnostics');
+    page_title('Serveur', 'État des services et contrôle de l\'émulateur');
     $up = emu_running();
     $mav = minerva_running();
     $online = db()->query("SELECT value FROM settings WHERE setting='players.online'")->fetchColumn();
@@ -7299,35 +7342,6 @@ function page_server(): void {
     echo '<div id="rkprog" style="margin-top:10px;display:none;padding:10px 12px;border:1px solid var(--line2);border-radius:10px"><b>Progression :</b> <span id="rkprog-label">—</span><div id="rkprog-detail" class="muted sm" style="margin-top:4px"></div></div>';
     echo '<p class="hint">💡 « Redémarrage de Kepler uniquement ». L\'opération continue même si tu fermes cette page ; « 🔄 Rafraîchir l\'état » (en haut) ne fait que consulter.</p></div>';
     echo '<script>(function(){var b=document.getElementById("rkprog"),l=document.getElementById("rkprog-label"),d=document.getElementById("rkprog-detail");if(!b)return;function p(){fetch("?p=server&rkstatus=1",{credentials:"same-origin"}).then(function(r){return r.json();}).then(function(s){if(!s||s.state==="idle")return;b.style.display="block";var m={error:" ❌",ok:" ✅",cancelled:" ✋"};l.textContent=(s.label||"")+(s.dry?" (simulation)":"")+(m[s.state]||"");d.textContent=s.detail||"";if(s.state==="running")setTimeout(p,1500);}).catch(function(){});}p();})();</script>';
-
-    /* --- Mode maintenance --- */
-    $mf = dirname(__DIR__) . '/maintenance.json';
-    $mData = is_file($mf) ? (json_decode((string)@file_get_contents($mf), true) ?: []) : [];
-    $mOn = !empty($mData['on']);
-    echo '<div class="panel"><div class="ph"><h3>🚧 Mode maintenance</h3><span class="rk ' . ($mOn ? 'red' : 'green') . '" style="margin-left:auto">' . ($mOn ? 'ACTIVÉ' : 'Inactif') . '</span></div>';
-    echo '<p class="sub">Ferme le site public <b>et le jeu</b> (<code>/client.php</code>) avec une page « Hôtel en maintenance » (503). Le staff (rang 5+) et l\'admin gardent l\'accès. Fonctionne même si l\'émulateur ou MySQL sont arrêtés.</p>';
-    if ($mOn) {
-        echo '<p class="hint">Activé par <b>' . h((string)($mData['by'] ?? '?')) . '</b>' . (!empty($mData['message']) ? ' · « ' . h((string)$mData['message']) . ' »' : '') . (!empty($mData['eta']) ? ' · retour estimé : ' . h((string)$mData['eta']) : '') . '</p>';
-        echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="maint_off"><button class="bigok">✅ Rouvrir le site</button></form>';
-    } else {
-        echo '<form method="post" class="js" data-reload data-confirm="Activer le mode maintenance ? Le site public sera fermé aux joueurs.">' . csrf_field() . '<input type="hidden" name="action" value="maint_on">';
-        echo '<div class="row"><label style="flex:2">Message affiché<input name="message" placeholder="Ex. Petite mise à jour en cours, on revient vite !"></label><label style="flex:1">Retour estimé<input name="eta" placeholder="Ex. 18h30"></label></div>';
-        echo '<button class="bigwarn" style="margin-top:10px">🚧 Activer la maintenance</button></form>';
-    }
-    echo '</div>';
-
-    /* --- Diagnostics : dernières erreurs du serveur --- */
-    $errs = server_log_errors(14);
-    echo '<div class="panel"><div class="ph"><h3>🩺 Diagnostics — dernières erreurs</h3><span class="muted sm" style="margin-left:auto">server.log</span></div>';
-    if (!$errs) echo '<div class="empty">Aucune erreur récente dans le log 🎉</div>';
-    else echo '<pre class="logbox">' . h(implode("\n", $errs)) . '</pre><p class="hint">Extrait des dernières lignes ERROR/WARN/exception du log de l\'émulateur (sans secrets).</p>';
-    echo '</div>';
-
-    // Alerte hôtel : l'interface a été déplacée vers « Alertes & annonces ». On garde ici un simple raccourci.
-    echo '<div class="panel"><div class="ph"><h3>📢 Alerte à tout l\'hôtel</h3></div>';
-    echo '<p class="sub">L\'envoi d\'alertes en jeu a été déplacé vers la rubrique dédiée <b>Alertes &amp; annonces</b> (avec historique, modèles et annonces persistantes).</p>';
-    echo '<a class="qabtn" style="display:inline-flex;max-width:280px" href="?p=alerts&sec=send">📢 <span>Ouvrir Alertes &amp; annonces</span></a>';
-    echo '</div>';
 
     // Fond de connexion / décor du client
     $curBg = current_entry_bg();
