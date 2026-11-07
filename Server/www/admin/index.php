@@ -1708,10 +1708,9 @@ function tab_default_rank(string $tab): int {
 }
 function nav_groups(): array {
     return [
-        '' => ['dashboard', 'search', 'stats'],
+        '' => ['dashboard', 'search', 'stats', 'alerts'],
         'Site & contenus' => ['sitemgr', 'news'],
         'Joueurs' => ['users', 'badges', 'ranks'],
-        'Alertes & annonces' => ['alerts'],
         'Modération & assistance' => ['messages', 'moderation', 'homemod', 'commandes', 'wordfilter', 'audit'],
         'Hôtel & appartements' => ['rooms', 'models', 'gamemaps', 'bots', 'games'],
         'Catalogue & économie' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax', 'recycler', 'vouchers'],
