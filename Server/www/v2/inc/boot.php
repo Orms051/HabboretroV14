@@ -49,6 +49,7 @@ function db(): PDO {
 }
 function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 $__cv = dirname(__DIR__, 2) . '/inc/conversations.php'; if (is_file($__cv)) require_once $__cv; // modèle conversation partagé (messagerie)
+$__sec = dirname(__DIR__, 2) . '/inc/security.php'; if (is_file($__sec)) require_once $__sec; // système de sécurité du site (lockdown / bans IP)
 function redirect(string $to) { header('Location: ' . $to); exit; }
 function me(): ?array { return $_SESSION['site_user'] ?? null; }
 /** URL du bouton « Entre dans l'Hôtel ».
@@ -503,3 +504,9 @@ function avatar_tag(string $username, array $o = []): string {
     return '<img src="/avatar.php?' . h($q) . '" alt="' . h($o['alt'] ?? $username) . '" loading="lazy"'
          . ' class="' . h($o['class'] ?? 'hb-av') . '" style="' . h($style) . '">';
 }
+
+/* ── Garde de sécurité du site (lockdown / IP bannie / anti-injection) ──
+   À la toute fin du socle : is_staff() est défini, donc l'exemption staff marche.
+   HTTP uniquement (les outils CLI de v2/tools/ ne doivent pas être bloqués).
+   Fail-open intégré : toute erreur laisse passer. */
+if (PHP_SAPI !== 'cli' && function_exists('sec_guard')) { sec_guard(); }

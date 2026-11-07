@@ -51,6 +51,7 @@ if ($p === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('?p=home');
         }
         login_register_fail();
+        if (function_exists('sec_record_login_fail')) sec_record_login_fail(trim((string)($_POST['username'] ?? ''))); // scoring IP + auto-ban/lockdown
         $err = 'Nom ou mot de passe incorrect.';
     }
     $p = 'login'; // échec → page de connexion dédiée (l'erreur y est visible, pas cachée dans le menu replié)

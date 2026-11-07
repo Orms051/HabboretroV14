@@ -101,6 +101,7 @@ function admin_db_down(): void {
     echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Habbo · Admin</title><style>body{font:14px/1.6 Segoe UI,Arial,sans-serif;background:#20262e;color:#e6ebf2;display:grid;place-items:center;height:100vh;margin:0}.box{background:#2b333d;border:1px solid #3a444f;border-radius:14px;padding:30px 34px;max-width:440px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.4)}h1{font-size:20px;margin:0 0 10px}p{color:#aeb8c4;margin:8px 0}b{color:#ffcf3f}a{color:#6fb1ff}</style></head><body><div class="box"><h1>🛠 La base de données est éteinte</h1><p>Le panneau d\'administration a besoin de la base pour fonctionner.</p><p>Lance le serveur (fichier <b>START</b> dans le dossier du jeu), attends « Base prête ! », puis <a href="?p=dashboard">recharge cette page</a>.</p></div></body></html>';
 }
 function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+$__sec = dirname(__DIR__) . '/inc/security.php'; if (is_file($__sec)) require_once $__sec; // moteur de sécurité (page Sécurité + actions) — n'applique PAS de blocage à l'admin
 /* Dates à la française (le champ HTML type=date n'est pas géré par Basilisk/Goanna) */
 function fr_date(?string $iso): string { if ($iso && preg_match('/^(\d{4})-(\d{2})-(\d{2})/', (string)$iso, $m)) return $m[3] . '/' . $m[2] . '/' . $m[1]; return (string)$iso; }
 function parse_fr_date(?string $s): string { $s = trim((string)$s); if (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})$#', $s, $m)) return sprintf('%04d-%02d-%02d', (int)$m[3], (int)$m[2], (int)$m[1]); if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $s)) return $s; return '1990-01-01'; }
@@ -1624,6 +1625,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $sent = rcon_send('kick_user', $params);
                 $ok = $sent; $msg = $sent ? '👢 Joueur déconnecté (s\'il était connecté).' : '❌ Émulateur injoignable (RCON).'; break;
             }
+            /* ───────── Sécurité du site ───────── */
+            case 'sec_lockdown': {
+                if (!function_exists('sec_trigger_lockdown')) { $ok = false; $msg = '❌ Module sécurité absent.'; break; }
+                $raison = trim((string)($_POST['raison'] ?? 'Lockdown manuel')); if ($raison === '') $raison = 'Lockdown manuel';
+                $niveau = in_array(($_POST['niveau'] ?? 'lockdown'), ['alerte', 'lockdown', 'urgence'], true) ? (string)$_POST['niveau'] : 'lockdown';
+                $tok = sec_trigger_lockdown((int)($_SESSION['admin']['id'] ?? 0) ?: null, $raison, $niveau);
+                $msg = $tok !== '' ? '🔒 Lockdown activé. Lien de secours : /security/emergency_unlock.php?token=' . $tok : '⚠️ Un lockdown est déjà actif.'; break;
+            }
+            case 'sec_unlock': {
+                if (!function_exists('sec_unlock')) { $ok = false; $msg = '❌ Module sécurité absent.'; break; }
+                sec_unlock((int)($_SESSION['admin']['id'] ?? 0) ?: null, 'Déverrouillage manuel admin');
+                $msg = '✅ Site déverrouillé.'; break;
+            }
+            case 'sec_ban_ip': {
+                if (!function_exists('sec_ban_ip')) { $ok = false; $msg = '❌ Module sécurité absent.'; break; }
+                $ip = trim((string)($_POST['ip'] ?? ''));
+                if (!filter_var($ip, FILTER_VALIDATE_IP)) { $ok = false; $msg = '❌ Adresse IP invalide.'; break; }
+                sec_ban_ip($ip, (int)($_POST['minutes'] ?? 1440), 'Ban manuel (admin)');
+                $msg = "🚫 IP $ip bannie."; break;
+            }
+            case 'sec_unban_ip': {
+                if (!function_exists('sec_unban_ip')) { $ok = false; $msg = '❌ Module sécurité absent.'; break; }
+                $ip = trim((string)($_POST['ip'] ?? ''));
+                if ($ip !== '') sec_unban_ip($ip);
+                $msg = "✅ IP $ip débannie."; break;
+            }
+            case 'sec_clear_events': {
+                try { db()->exec("DELETE FROM security_events WHERE cree_le < DATE_SUB(NOW(), INTERVAL 30 DAY)"); } catch (Throwable $e) {}
+                $msg = '🗑️ Événements de plus de 30 jours supprimés.'; break;
+            }
+            case 'sec_config_save': {
+                $vals = [
+                    'sec.login_fail'    => (string)max(1, (int)($_POST['login_fail'] ?? 10)),
+                    'sec.global_fail'   => (string)max(1, (int)($_POST['global_fail'] ?? 50)),
+                    'sec.lockdown_min'  => (string)max(1, (int)($_POST['lockdown_min'] ?? 30)),
+                    'sec.ban_min'       => (string)max(1, (int)($_POST['ban_min'] ?? 60)),
+                    'sec.auto_lockdown' => isset($_POST['auto_lockdown']) ? '1' : '0',
+                    'sec.notify_email'  => isset($_POST['notify_email']) ? '1' : '0',
+                    'sec.alert_email'   => trim((string)($_POST['alert_email'] ?? '')),
+                    'sec.whitelist'     => trim((string)($_POST['whitelist'] ?? '')),
+                ];
+                if ($vals['sec.alert_email'] !== '' && !filter_var($vals['sec.alert_email'], FILTER_VALIDATE_EMAIL)) { $ok = false; $msg = '❌ E-mail d\'alerte invalide.'; break; }
+                if ($vals['sec.whitelist'] !== '' && json_decode($vals['sec.whitelist']) === null) { $ok = false; $msg = '❌ Liste blanche : JSON invalide (ex : ["1.2.3.4"]).'; break; }
+                try {
+                    $up = db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)');
+                    foreach ($vals as $k => $v) $up->execute([$k, $v]);
+                } catch (Throwable $e) { $ok = false; $msg = '❌ Erreur enregistrement.'; break; }
+                $msg = '⚙️ Paramètres de sécurité enregistrés.'; break;
+            }
             default: $ok = false; $msg = 'Action inconnue.';
         }
     } catch (Throwable $e) { $ok = false; $msg = '❌ Erreur : ' . $e->getMessage(); }
@@ -1694,16 +1744,17 @@ switch ($p) {
     case 'server': page_server(); break;
     case 'journal': page_journal(); break;
     case 'wordfilter': page_wordfilter(); break;
+    case 'security': page_security(); break;
     default: page_dashboard(); break;
 }
 render_footer();
 
 /* ============ ACCÈS AUX ONGLETS PAR RANG ============ */
 function admin_nav(): array {
-    return ['dashboard' => ['🏠', 'Accueil'], 'stats' => ['📈', 'Statistiques'], 'veille' => ['🔎', 'Veille & signalements'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal en direct'], 'wordfilter' => ['🤬', 'Filtre de mots']];
+    return ['dashboard' => ['🏠', 'Accueil'], 'stats' => ['📈', 'Statistiques'], 'veille' => ['🔎', 'Veille & signalements'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal en direct'], 'wordfilter' => ['🤬', 'Filtre de mots'], 'security' => ['🛡️', 'Sécurité']];
 }
 function tab_default_rank(string $tab): int {
-    $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6, 'journal' => 7, 'veille' => 6];
+    $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6, 'journal' => 7, 'veille' => 6, 'security' => 7];
     return $d[$tab] ?? MIN_RANK;
 }
 function nav_groups(): array {
@@ -1715,7 +1766,7 @@ function nav_groups(): array {
         'Hôtel & appartements' => ['rooms', 'models', 'gamemaps', 'bots', 'games'],
         'Catalogue & économie' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax', 'recycler', 'vouchers'],
         'Animations' => ['events', 'bus'],
-        'Technique' => ['settings', 'textes', 'access', 'mysql', 'server', 'journal'],
+        'Technique' => ['settings', 'security', 'textes', 'access', 'mysql', 'server', 'journal'],
     ];
 }
 function ensure_tab_perms(): void {
@@ -3544,6 +3595,9 @@ function action_tab(string $a): string {
         'srv_start' => 'server', 'srv_stop' => 'server', 'set_entry_bg' => 'server', 'hotel_alert' => 'server', 'alert_presets_save' => 'server',
         'maint_on' => 'server', 'maint_off' => 'server',
         'db_backup' => 'mysql',
+        // Sécurité du site (rang 7)
+        'sec_lockdown' => 'security', 'sec_unlock' => 'security', 'sec_ban_ip' => 'security', 'sec_unban_ip' => 'security',
+        'sec_clear_events' => 'security', 'sec_config_save' => 'security',
     ];
     return $map[$a] ?? '';
 }
@@ -5751,6 +5805,185 @@ function page_messages(): void {
     else conv_assistance_view($vue);
 }
 
+/* ============================================================
+   PAGE SÉCURITÉ — tableau de bord (porté de Cadurix v5)
+   ============================================================ */
+function sec_css(): string {
+    return '
+.secw{max-width:1180px}
+.sec-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:2px 0 16px}
+@media(max-width:820px){.sec-kpis{grid-template-columns:repeat(2,1fr)}}
+.sec-kpi{background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:14px 16px}
+.sec-kpi .v{font-size:26px;font-weight:800;line-height:1}
+.sec-kpi .l{font-size:12px;color:var(--mut);margin-top:6px;font-weight:600}
+.sec-kpi.red .v{color:var(--red)}.sec-kpi.orange .v{color:#e08a00}
+.sec-banner{display:flex;align-items:center;gap:14px;background:rgba(229,72,77,.1);border:1px solid rgba(229,72,77,.34);border-radius:14px;padding:13px 17px;margin-bottom:16px}
+.sec-banner .bi{font-size:24px;animation:secpulse 1.6s infinite}
+@keyframes secpulse{0%,100%{opacity:1}50%{opacity:.45}}
+.sec-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){.sec-cols{grid-template-columns:1fr}}
+.sec-score{height:4px;border-radius:3px;background:var(--line2);margin-top:5px;overflow:hidden}
+.sec-score span{display:block;height:100%;border-radius:3px}
+.sec-ip{font-family:ui-monospace,Consolas,monospace;font-weight:700}
+.sec-ld{padding:10px 13px;background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--line2);border-radius:10px;margin-bottom:7px}
+.sec-tag{font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:20px;white-space:nowrap}
+.sec-toggles{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
+.sec-toggles label{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 12px;cursor:pointer}
+.sec-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(max-width:680px){.sec-grid{grid-template-columns:1fr}}
+.sec-f{display:flex;flex-direction:column;gap:5px;font-size:12.5px;font-weight:600;color:var(--mut)}
+.sec-f input,.sec-f textarea{font-family:inherit;font-size:13.5px;color:var(--txt);padding:9px 11px;border:1px solid var(--line2);border-radius:9px;background:var(--panel2)}
+';
+}
+function page_security(): void {
+    page_title('🛡️ Sécurité', 'Protection du site — surveillance des IP, lockdown, journal');
+    $stats = function_exists('sec_stats') ? sec_stats() : ['lockdown'=>false,'bannies'=>0,'suspectes'=>0,'events_24h'=>0,'fails_1h'=>0];
+    $cfg   = function_exists('sec_cfg') ? sec_cfg() : sec_defaults();
+
+    // Données
+    $ips = []; $events = []; $hist = [];
+    try { $ips = db()->query("SELECT * FROM security_ips ORDER BY (statut='banni') DESC, score DESC, derniere_vue DESC LIMIT 40")->fetchAll(); } catch (Throwable $e) {}
+    try { $events = db()->query("SELECT se.*, u.username FROM security_events se LEFT JOIN users u ON u.id=se.user_id ORDER BY se.cree_le DESC LIMIT 60")->fetchAll(); } catch (Throwable $e) {}
+    try { $hist = db()->query("SELECT ld.*, t.username AS trig_name, d.username AS deb_name FROM security_lockdown ld LEFT JOIN users t ON t.id=ld.declenche_par LEFT JOIN users d ON d.id=ld.debloque_par ORDER BY ld.id DESC LIMIT 10")->fetchAll(); } catch (Throwable $e) {}
+
+    // IP -> joueurs (indice multi-comptes), une requête
+    $ipUsers = [];
+    $ipset = array_values(array_unique(array_filter(array_column($ips, 'ip'))));
+    if ($ipset) {
+        try {
+            $ph = implode(',', array_fill(0, count($ipset), '?'));
+            $st = db()->prepare("SELECT l.ip_address, GROUP_CONCAT(DISTINCT u.username ORDER BY u.username SEPARATOR ', ') AS users FROM users_ip_logs l JOIN users u ON u.id=l.user_id WHERE l.ip_address IN ($ph) GROUP BY l.ip_address");
+            $st->execute($ipset);
+            foreach ($st->fetchAll() as $r) $ipUsers[$r['ip_address']] = (string)$r['users'];
+        } catch (Throwable $e) {}
+    }
+    $myIp = function_exists('sec_real_ip') ? sec_real_ip() : (string)($_SERVER['REMOTE_ADDR'] ?? '');
+
+    echo '<style>' . sec_css() . '</style><div class="secw">';
+
+    // Barre d'actions
+    echo '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">';
+    if ($stats['lockdown']) {
+        echo '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="sec_unlock"><button class="btn" style="background:var(--green);color:#fff">✅ Déverrouiller le site</button></form>';
+    } else {
+        echo '<button class="btn" onclick="document.getElementById(\'secLdModal\').style.display=\'flex\'" style="border:1px solid rgba(229,72,77,.5);color:var(--red);background:var(--panel)">🔒 Activer le lockdown</button>';
+    }
+    echo '</div>';
+
+    if ($stats['lockdown']) {
+        echo '<div class="sec-banner"><div class="bi">🔒</div><div><div style="font-weight:800;color:var(--red)">LOCKDOWN ACTIF</div><div class="sm muted">Le site public est en mode protection. Toi (localhost / staff) gardes l\'accès.</div></div></div>';
+    }
+
+    // KPIs
+    $kb = $stats['bannies'] > 0; $ks = $stats['suspectes'] > 0; $lf = (int)$stats['fails_1h'];
+    echo '<div class="sec-kpis">'
+        . '<div class="sec-kpi' . ($kb ? ' red' : '') . '"><div class="v">' . (int)$stats['bannies'] . '</div><div class="l">🚫 IPs bannies</div></div>'
+        . '<div class="sec-kpi' . ($ks ? ' orange' : '') . '"><div class="v">' . (int)$stats['suspectes'] . '</div><div class="l">⚠️ IPs suspectes (score ≥ 50)</div></div>'
+        . '<div class="sec-kpi' . ($lf > 10 ? ' red' : ($lf > 5 ? ' orange' : '')) . '"><div class="v">' . $lf . '</div><div class="l">🔑 Échecs login (1 h)</div></div>'
+        . '<div class="sec-kpi"><div class="v">' . (int)$stats['events_24h'] . '</div><div class="l">📋 Événements (24 h)</div></div>'
+        . '</div>';
+
+    echo '<div class="sec-cols">';
+
+    // ── IPs surveillées ──
+    echo '<div class="panel"><div class="ph"><h3>🌐 IPs surveillées</h3>'
+        . '<form method="post" class="js row" data-reload style="margin-left:auto;gap:5px" data-confirm="Bannir cette IP 24 h ?">' . csrf_field()
+        . '<input type="hidden" name="action" value="sec_ban_ip"><input type="hidden" name="minutes" value="1440">'
+        . '<input name="ip" placeholder="IP à bannir" style="width:140px;font-family:ui-monospace,monospace"><button class="mini ghost danger">🚫 Bannir</button></form></div>';
+    if (!$ips) echo '<div class="empty">Aucune IP suspecte détectée ✅</div>';
+    else {
+        echo '<table class="clean"><tr><th>IP</th><th>Score / tentatives</th><th>Statut</th><th></th></tr>';
+        foreach ($ips as $r) {
+            $banni = ($r['statut'] ?? '') === 'banni';
+            $col = $banni ? 'var(--red)' : ((int)$r['score'] >= 70 ? '#e08a00' : 'var(--mut)');
+            $who = $ipUsers[$r['ip']] ?? '';
+            $mine = $r['ip'] === $myIp;
+            echo '<tr><td><span class="sec-ip" style="color:' . $col . '">' . h((string)$r['ip']) . '</span>'
+                . ($mine ? ' <span class="sec-tag" style="background:var(--acc);color:#fff">Toi</span>' : ($who !== '' ? ' <span class="sm muted">👤 ' . h($who) . '</span>' : ''))
+                . '<div class="sec-score"><span style="width:' . min(100, (int)$r['score']) . '%;background:' . $col . '"></span></div></td>'
+                . '<td class="sm muted">' . (int)$r['score'] . '/100 · ' . (int)$r['nb_tentatives'] . ' · <span style="opacity:.8">' . h((string)$r['raison']) . '</span>'
+                . ($banni && !empty($r['banni_jusqu']) ? '<br>⛔ jusqu\'à ' . h(date('d/m H:i', strtotime((string)$r['banni_jusqu']))) : '') . '</td>'
+                . '<td><span class="sec-tag" style="background:' . $col . '22;color:' . $col . '">' . ($banni ? '🔴 Bannie' : '🟡 Surveillée') . '</span></td>'
+                . '<td>' . ($banni
+                    ? '<form method="post" class="js" data-reload style="margin:0">' . csrf_field() . '<input type="hidden" name="action" value="sec_unban_ip"><input type="hidden" name="ip" value="' . h((string)$r['ip']) . '"><button class="mini ghost" title="Débannir">✓</button></form>'
+                    : '<form method="post" class="js" data-reload style="margin:0" data-confirm="Bannir cette IP 24 h ?">' . csrf_field() . '<input type="hidden" name="action" value="sec_ban_ip"><input type="hidden" name="minutes" value="1440"><input type="hidden" name="ip" value="' . h((string)$r['ip']) . '"><button class="mini ghost danger" title="Bannir">🚫</button></form>')
+                . '</td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '</div>';
+
+    // ── Historique lockdowns ──
+    echo '<div class="panel"><div class="ph"><h3>🔒 Historique des lockdowns</h3></div>';
+    if (!$hist) echo '<div class="empty">Aucun lockdown dans l\'historique ✅</div>';
+    else {
+        foreach ($hist as $ld) {
+            $actif = (int)$ld['actif'] === 1;
+            echo '<div class="sec-ld" style="border-left-color:' . ($actif ? 'var(--red)' : 'var(--line2)') . '">'
+                . '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px"><span class="sm" style="font-weight:800;color:' . ($actif ? 'var(--red)' : 'var(--mut)') . '">' . ($actif ? '🔒 ACTIF' : '✅ Terminé') . '</span>'
+                . '<span class="sm muted">' . h(date('d/m H:i', strtotime((string)($ld['declenche_le'] ?? 'now')))) . '</span>'
+                . '<span class="sec-tag" style="background:var(--panel2);color:var(--mut)">' . h((string)$ld['niveau']) . '</span></div>'
+                . '<div class="sm">' . h((string)($ld['raison'] ?? '—')) . '</div>'
+                . '<div class="sm muted">Par ' . h((string)($ld['trig_name'] ?? 'Auto')) . ((string)($ld['deb_name'] ?? '') !== '' ? ' · levé par ' . h((string)$ld['deb_name']) : '') . '</div></div>';
+        }
+    }
+    echo '</div>';
+
+    echo '</div>'; // /sec-cols
+
+    // ── Événements ──
+    echo '<div class="panel" style="margin-top:16px"><div class="ph"><h3>📋 Événements de sécurité récents</h3>'
+        . '<form method="post" class="js" data-reload style="margin-left:auto" data-confirm="Supprimer les événements de plus de 30 jours ?">' . csrf_field()
+        . '<input type="hidden" name="action" value="sec_clear_events"><button class="mini ghost">🗑️ Nettoyer (>30 j)</button></form></div>';
+    if (!$events) echo '<div class="empty">Aucun événement ✅</div>';
+    else {
+        $ic = ['login_fail'=>'🔑','sql_inject'=>'💉','ban_ip'=>'⛔','unban_ip'=>'✓','lockdown'=>'🔒','unlock'=>'🔓','suspicious'=>'⚠️'];
+        $cl = ['login_fail'=>'#e08a00','sql_inject'=>'var(--red)','ban_ip'=>'var(--red)','lockdown'=>'var(--red)','unlock'=>'var(--green)','suspicious'=>'#e08a00'];
+        echo '<table class="clean"><tr><th>Quand</th><th>Type</th><th>IP</th><th>Détail</th></tr>';
+        foreach ($events as $e) {
+            $t = (string)$e['type']; $c = $cl[$t] ?? 'var(--mut)';
+            echo '<tr><td class="sm muted" style="white-space:nowrap">' . h(date('d/m H:i', strtotime((string)$e['cree_le']))) . '</td>'
+                . '<td><span class="sec-tag" style="background:' . $c . '22;color:' . $c . '">' . ($ic[$t] ?? '•') . ' ' . h($t) . '</span></td>'
+                . '<td class="sm sec-ip">' . h((string)($e['ip'] ?? '—')) . ((string)($e['username'] ?? '') !== '' ? ' <span class="muted" style="font-weight:400">' . h((string)$e['username']) . '</span>' : '') . '</td>'
+                . '<td class="sm muted">' . h(mb_substr((string)($e['details'] ?? ''), 0, 120)) . '</td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '</div>';
+
+    // ── Paramètres ──
+    echo '<div class="panel" style="margin-top:16px"><div class="ph"><h3>⚙️ Paramètres de sécurité</h3></div>'
+        . '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="sec_config_save">'
+        . '<div class="sec-grid">'
+        . '<label class="sec-f"><span>Échecs login avant ban IP</span><input type="number" min="1" name="login_fail" value="' . h((string)$cfg['sec.login_fail']) . '"></label>'
+        . '<label class="sec-f"><span>Échecs globaux / h avant lockdown</span><input type="number" min="1" name="global_fail" value="' . h((string)$cfg['sec.global_fail']) . '"></label>'
+        . '<label class="sec-f"><span>Durée lockdown auto (min)</span><input type="number" min="1" name="lockdown_min" value="' . h((string)$cfg['sec.lockdown_min']) . '"></label>'
+        . '<label class="sec-f"><span>Durée ban IP (min)</span><input type="number" min="1" name="ban_min" value="' . h((string)$cfg['sec.ban_min']) . '"></label>'
+        . '</div>'
+        . '<div class="sec-toggles">'
+        . '<label><input type="checkbox" name="auto_lockdown"' . ((int)$cfg['sec.auto_lockdown'] ? ' checked' : '') . '> Lockdown automatique</label>'
+        . '<label><input type="checkbox" name="notify_email"' . ((int)$cfg['sec.notify_email'] ? ' checked' : '') . '> Notifications e-mail</label>'
+        . '</div>'
+        . '<label class="sec-f" style="margin-bottom:12px"><span>E-mail d\'alerte</span><input type="email" name="alert_email" value="' . h((string)$cfg['sec.alert_email']) . '" placeholder="securite@exemple.fr"></label>'
+        . '<label class="sec-f"><span>IPs en liste blanche — jamais bloquées (JSON)</span><textarea name="whitelist" rows="2" placeholder=\'["203.0.113.4"]\'>' . h((string)$cfg['sec.whitelist']) . '</textarea></label>'
+        . '<p class="sm muted" style="margin-top:8px">ℹ️ <b>localhost (127.0.0.1) et le staff connecté ne sont jamais bloqués</b>, quoi qu\'il arrive. En cas de lockdown qui te bloquerait malgré tout, utilise le lien de secours affiché à l\'activation : <code>/security/emergency_unlock.php?token=…</code>.</p>'
+        . '<div style="margin-top:14px"><button class="btn" style="background:var(--acc);color:#fff">💾 Enregistrer</button></div>'
+        . '</form></div>';
+
+    echo '</div>'; // /secw
+
+    // ── Modale d'activation du lockdown ──
+    echo '<div id="secLdModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(8,12,24,.6);z-index:9999;align-items:center;justify-content:center" onclick="if(event.target===this)this.style.display=\'none\'">'
+        . '<div style="background:var(--panel);border:1px solid rgba(229,72,77,.5);border-radius:16px;padding:22px;max-width:400px;width:92%">'
+        . '<div style="font-weight:800;color:var(--red);font-size:16px;margin-bottom:14px">🔒 Activer le lockdown</div>'
+        . '<form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="sec_lockdown">'
+        . '<label class="sec-f" style="margin-bottom:12px"><span>Niveau</span><select name="niveau" style="font-family:inherit;font-size:13.5px;padding:9px 11px;border:1px solid var(--line2);border-radius:9px;background:var(--panel2);color:var(--txt)">'
+        . '<option value="alerte">⚠️ Alerte</option><option value="lockdown" selected>🔒 Lockdown</option><option value="urgence">🚨 Urgence</option></select></label>'
+        . '<label class="sec-f" style="margin-bottom:14px"><span>Raison</span><input name="raison" placeholder="Ex : tentative d\'intrusion" required></label>'
+        . '<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--red);color:#fff;justify-content:center">🔒 Confirmer</button>'
+        . '<button type="button" class="btn ghost" style="flex:1;justify-content:center" onclick="document.getElementById(\'secLdModal\').style.display=\'none\'">Annuler</button></div>'
+        . '</form></div></div>';
+}
 function mod_css(): string {
     return '
 .atabs{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 16px}
