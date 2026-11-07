@@ -1645,6 +1645,9 @@ if ($p === 'news') {
     redirect($to);
 }
 
+/* ---------- Veille & signalements : désormais un onglet d'Alertes & annonces ---------- */
+if ($p === 'veille') redirect('?p=alerts&sec=veille');
+
 /* ---------- Contrôle d'accès aux onglets par rang ---------- */
 if (!tab_allowed($p)) { flash('🔒 Ton rang n\'a pas accès à « ' . $p . ' ».'); $p = 'dashboard'; }
 
@@ -1678,7 +1681,7 @@ switch ($p) {
     case 'ranks': page_ranks(); break;
     case 'games': page_games(); break;
     case 'moderation': page_moderation(); break;
-    case 'veille': page_veille(); break;
+    case 'veille': $_GET['sec'] = 'veille'; page_alerts(); break;
     case 'stats': page_stats(); break;
     case 'bus': page_bus(); break;
     case 'commandes': page_commandes(); break;
@@ -1706,7 +1709,7 @@ function tab_default_rank(string $tab): int {
 function nav_groups(): array {
     return [
         '' => ['dashboard', 'search'],
-        'Pilotage' => ['stats', 'veille'],
+        'Pilotage' => ['stats'],
         'Site & contenus' => ['sitemgr', 'news'],
         'Joueurs' => ['users', 'badges', 'ranks'],
         'Alertes & annonces' => ['alerts'],
@@ -4428,7 +4431,7 @@ function online_sample(int $n): void {
     } catch (Throwable $e) {}
 }
 /* Mini graphe en courbe (SVG inline). $points = [[label, valeur], …] dans l'ordre. */
-function svg_line(array $points, string $color = '#2bbf5b', int $w = 820, int $h = 190): string {
+function svg_line(array $points, string $color = '#2bbf5b', int $w = 1200, int $h = 200): string {
     if (!$points) return '<div class="empty">Pas encore de données.</div>';
     $vals = array_map(fn($p) => (float)$p[1], $points); $max = max(1.0, max($vals)); $n = count($points);
     $pad = 30; $iw = $w - $pad * 2; $ih = $h - $pad * 2;
@@ -4436,18 +4439,18 @@ function svg_line(array $points, string $color = '#2bbf5b', int $w = 820, int $h
     $py = fn($v) => $pad + $ih - ($ih * $v / $max);
     $d = ''; foreach ($points as $i => $p) $d .= ($i === 0 ? 'M' : 'L') . round($px($i), 1) . ' ' . round($py((float)$p[1]), 1) . ' ';
     $area = $d . 'L' . round($px($n - 1), 1) . ' ' . round($pad + $ih, 1) . ' L' . round($px(0), 1) . ' ' . round($pad + $ih, 1) . ' Z';
-    $svg = '<svg viewBox="0 0 ' . $w . ' ' . $h . '" style="width:100%;height:auto;font-family:inherit">';
+    $svg = '<svg viewBox="0 0 ' . $w . ' ' . $h . '" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;max-height:210px;font-family:inherit">';
     for ($g = 0; $g <= 2; $g++) { $gv = $max * $g / 2; $gy = round($py($gv), 1); $svg .= '<line x1="' . $pad . '" y1="' . $gy . '" x2="' . ($w - $pad) . '" y2="' . $gy . '" stroke="#2a3344" stroke-width="1"/><text x="' . ($pad - 6) . '" y="' . ($gy + 4) . '" text-anchor="end" font-size="10" fill="#8294a8">' . round($gv) . '</text>'; }
     $svg .= '<path d="' . $area . '" fill="' . $color . '" opacity="0.13"/><path d="' . $d . '" fill="none" stroke="' . $color . '" stroke-width="2.5"/>';
     foreach (array_unique([0, intdiv($n - 1, 2), $n - 1]) as $i) $svg .= '<text x="' . round($px($i), 1) . '" y="' . ($h - 7) . '" text-anchor="middle" font-size="10" fill="#8294a8">' . h((string)$points[$i][0]) . '</text>';
     return $svg . '</svg>';
 }
 /* Mini graphe en barres (SVG inline). */
-function svg_bars(array $points, string $color = '#3a7afe', int $w = 820, int $h = 190): string {
+function svg_bars(array $points, string $color = '#3a7afe', int $w = 1200, int $h = 200): string {
     if (!$points) return '<div class="empty">Pas encore de données.</div>';
     $vals = array_map(fn($p) => (float)$p[1], $points); $max = max(1.0, max($vals)); $n = count($points);
     $pad = 30; $iw = $w - $pad * 2; $ih = $h - $pad * 2; $gap = $iw / $n; $bw = $gap * 0.68;
-    $svg = '<svg viewBox="0 0 ' . $w . ' ' . $h . '" style="width:100%;height:auto;font-family:inherit">';
+    $svg = '<svg viewBox="0 0 ' . $w . ' ' . $h . '" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;max-height:210px;font-family:inherit">';
     for ($g = 0; $g <= 2; $g++) { $gv = $max * $g / 2; $gy = round($pad + $ih - ($ih * $gv / $max), 1); $svg .= '<line x1="' . $pad . '" y1="' . $gy . '" x2="' . ($w - $pad) . '" y2="' . $gy . '" stroke="#2a3344" stroke-width="1"/><text x="' . ($pad - 6) . '" y="' . ($gy + 4) . '" text-anchor="end" font-size="10" fill="#8294a8">' . round($gv) . '</text>'; }
     foreach ($points as $i => $p) { $bh = $ih * ((float)$p[1]) / $max; $bx = $pad + $gap * $i + ($gap - $bw) / 2; $by = $pad + $ih - $bh; $svg .= '<rect x="' . round($bx, 1) . '" y="' . round($by, 1) . '" width="' . round($bw, 1) . '" height="' . round(max(0, $bh), 1) . '" rx="2" fill="' . $color . '"/>'; }
     foreach (array_unique([0, intdiv($n - 1, 2), $n - 1]) as $i) { $bx = $pad + $gap * $i + $gap / 2; $svg .= '<text x="' . round($bx, 1) . '" y="' . ($h - 7) . '" text-anchor="middle" font-size="10" fill="#8294a8">' . h((string)$points[$i][0]) . '</text>'; }
@@ -4478,10 +4481,11 @@ function page_stats(): void {
     echo '</div>';
 
     $reg = []; try { $by = []; foreach ($d->query("SELECT DATE(created_at) dd, COUNT(*) n FROM users WHERE created_at > (NOW() - INTERVAL 30 DAY) GROUP BY DATE(created_at)") as $r) $by[(string)$r['dd']] = (int)$r['n']; for ($i = 29; $i >= 0; $i--) { $day = date('Y-m-d', time() - $i * 86400); $reg[] = [date('d/m', strtotime($day)), $by[$day] ?? 0]; } } catch (Throwable $e) {}
-    echo '<div class="panel"><div class="ph"><h3>🧑‍🚀 Inscriptions par jour (30 j)</h3></div>' . svg_bars($reg, '#3a7afe') . '</div>';
-
     $lg = []; try { $by = []; foreach ($d->query("SELECT DATE(created_at) dd, COUNT(*) n FROM users_ip_logs WHERE created_at > (NOW() - INTERVAL 30 DAY) GROUP BY DATE(created_at)") as $r) $by[(string)$r['dd']] = (int)$r['n']; for ($i = 29; $i >= 0; $i--) { $day = date('Y-m-d', time() - $i * 86400); $lg[] = [date('d/m', strtotime($day)), $by[$day] ?? 0]; } } catch (Throwable $e) {}
-    echo '<div class="panel"><div class="ph"><h3>🔌 Connexions par jour (30 j)</h3><span class="muted sm" style="margin-left:auto">une barre = nb de connexions</span></div>' . svg_bars($lg, '#caa300') . '</div>';
+    echo '<div class="cols">';
+    echo '<div class="panel"><div class="ph"><h3>🧑‍🚀 Inscriptions par jour (30 j)</h3></div>' . svg_bars($reg, '#3a7afe') . '</div>';
+    echo '<div class="panel"><div class="ph"><h3>🔌 Connexions par jour (30 j)</h3></div>' . svg_bars($lg, '#caa300') . '</div>';
+    echo '</div>';
 
     echo '<div class="cols">';
     $rk = []; try { foreach ($d->query('SELECT `rank` rr, COUNT(*) n FROM users GROUP BY `rank` ORDER BY `rank`') as $r) $rk[] = [RANKS[(int)$r['rr']] ?? ('Rang ' . (int)$r['rr']), (int)$r['n']]; } catch (Throwable $e) {}
@@ -4493,9 +4497,10 @@ function page_stats(): void {
     if (!$rm) echo '<div class="empty">Aucune activité de chat récente.</div>'; else { echo '<table class="clean"><tr><th>Salle</th><th>Messages</th></tr>'; foreach ($rm as $r) echo '<tr><td>' . h((string)$r[0]) . '</td><td><b>' . (int)$r[1] . '</b></td></tr>'; echo '</table>'; }
     echo '</div></div>';
 }
-function page_veille(): void {
-    page_title('Veille & signalements', 'Repérage automatique des comportements à surveiller');
+function alerts_sec_veille(): void {
+    if (!tab_allowed('veille')) { echo '<div class="panel"><div class="empty">🔒 Ton rang n\'autorise pas la veille &amp; signalements.</div></div>'; return; }
     $d = db();
+    echo '<p class="sub" style="margin:2px 0 14px">Repérage automatique des comportements à surveiller (appels répétés, chat filtré, multi-comptes).</p>';
 
     echo '<div class="panel"><div class="ph"><h3>🆘 Appels à l\'aide répétés (7 j)</h3><span class="muted sm" style="margin-left:auto">≥ 3 appels</span></div>';
     $spam = []; try { ensure_calls_for_help(); $spam = $d->query("SELECT c.caller_id, COUNT(*) n, MAX(c.created_at) last, u.username FROM calls_for_help c LEFT JOIN users u ON u.id=c.caller_id WHERE c.created_at > (NOW() - INTERVAL 7 DAY) GROUP BY c.caller_id HAVING n >= 3 ORDER BY n DESC LIMIT 30")->fetchAll(); } catch (Throwable $e) {}
@@ -6481,19 +6486,28 @@ function alerts_css(): string {
 }
 function page_alerts(): void {
     page_title('Alertes & annonces', 'Appels à l\'aide, alertes en jeu et annonces — regroupés');
+    $hasVeille = tab_allowed('veille');
     $sec = (string)($_GET['sec'] ?? 'send');
-    if (!in_array($sec, ['cfh', 'send', 'announce', 'history'], true)) $sec = 'send';
+    $valid = ['cfh', 'send', 'announce', 'history']; if ($hasVeille) $valid[] = 'veille';
+    if (!in_array($sec, $valid, true)) $sec = 'send';
     $openN = 0; if (tab_allowed('alerts')) { try { $openN = cfh_pending_count(); } catch (Throwable $e) {} }
+    // Badge Veille = nb de joueurs qui multiplient les appels (≥3 / 7 j).
+    $veilleN = 0; if ($hasVeille) { try { $veilleN = (int) db()->query("SELECT COUNT(*) FROM (SELECT caller_id FROM calls_for_help WHERE created_at > (NOW() - INTERVAL 7 DAY) GROUP BY caller_id HAVING COUNT(*) >= 3) t")->fetchColumn(); } catch (Throwable $e) {} }
     echo '<style>' . alerts_css() . '</style>';
-    $tabs = ['cfh' => ['🆘', 'Appels à l\'aide'], 'send' => ['📢', 'Alerte en jeu'], 'announce' => ['📨', 'Annonce messagerie'], 'history' => ['🕑', 'Historique']];
+    $tabs = ['cfh' => ['🆘', 'Appels à l\'aide'], 'send' => ['📢', 'Alerte en jeu'], 'announce' => ['📨', 'Annonce messagerie']];
+    if ($hasVeille) $tabs['veille'] = ['🔎', 'Veille'];
+    $tabs['history'] = ['🕑', 'Historique'];
     echo '<div class="atabs">';
     foreach ($tabs as $k => $t) {
-        $badge = ($k === 'cfh' && $openN > 0) ? '<span class="atab-badge">' . (int)$openN . '</span>' : '';
+        $badge = '';
+        if ($k === 'cfh' && $openN > 0) $badge = '<span class="atab-badge">' . (int)$openN . '</span>';
+        elseif ($k === 'veille' && $veilleN > 0) $badge = '<span class="atab-badge">' . (int)$veilleN . '</span>';
         echo '<a class="atab' . ($sec === $k ? ' on' : '') . '" href="?p=alerts&sec=' . $k . '"><span class="atab-ic">' . $t[0] . '</span>' . h($t[1]) . $badge . '</a>';
     }
     echo '</div>';
     if ($sec === 'cfh') alerts_sec_cfh();
     elseif ($sec === 'announce') alerts_sec_announce();
+    elseif ($sec === 'veille') alerts_sec_veille();
     elseif ($sec === 'history') alerts_sec_history();
     else alerts_sec_send();
 }
