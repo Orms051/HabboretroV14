@@ -512,6 +512,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 admin_log('conv_broadcast', $n . ' destinataires (' . $mode . ')');
                 $msg = '📣 Annonce envoyée à ' . $n . ' joueur' . ($n > 1 ? 's' : '') . '.'; break;
             }
+            case 'annonce_tpl_save': {
+                ensure_announce_templates();
+                $title = mb_substr(trim((string)($_POST['title'] ?? '')), 0, 120);
+                $subject = mb_substr(trim((string)($_POST['subject'] ?? '')), 0, 150);
+                $body = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 4000);
+                if ($title === '' || $body === '') { $ok = false; $msg = '❌ Titre et message requis pour enregistrer un modèle.'; break; }
+                db()->prepare('INSERT INTO announce_templates (title,subject,body) VALUES (?,?,?)')->execute([$title, $subject, $body]);
+                admin_log('annonce_tpl_save', $title);
+                $msg = '✅ Modèle d\'annonce « ' . $title . ' » enregistré.'; break;
+            }
+            case 'annonce_tpl_delete': {
+                ensure_announce_templates();
+                $id = (int)($_POST['id'] ?? 0);
+                db()->prepare('DELETE FROM announce_templates WHERE id=?')->execute([$id]);
+                admin_log('annonce_tpl_delete', '#' . $id);
+                $msg = '🗑️ Modèle d\'annonce supprimé.'; break;
+            }
             case 'conv_merge': {
                 ensure_conversations();
                 $target = (int)($_POST['cid'] ?? 0);
@@ -1425,8 +1442,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Le client Habbo (Shockwave) affiche en CP1252 : on convertit + retire les emoji.
                 $params = ['message' => kepler_text($txt)];
                 if (trim((string)($_POST['sender'] ?? '')) !== '') $params['sender'] = kepler_text(trim((string)$_POST['sender']));
+                $mode = (string)($_POST['target_mode'] ?? 'all');
                 $tu = trim((string)($_POST['target_user'] ?? ''));
-                if ($tu !== '') {
+                if ($mode === 'one' || $tu !== '') {
                     // Cible = UN joueur précis (ALERT via RCON user_alert ; reçu seulement s'il est connecté).
                     $uid = 0; try { $q = db()->prepare('SELECT id FROM users WHERE username=?'); $q->execute([$tu]); $uid = (int)$q->fetchColumn(); } catch (Throwable $e) {}
                     if ($uid <= 0) { $ok = false; $msg = '❌ Joueur « ' . $tu . ' » introuvable.'; break; }
@@ -1434,6 +1452,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $ok2 = rcon_send('user_alert', $params);
                     alert_log_add('jeu (RCON)', 'Joueur : ' . $tu, $txt, $ok2 ? 'RCON accepté — transmis (si connecté)' : 'échec — émulateur injoignable');
                     $ok = $ok2; $msg = $ok2 ? '📢 Alerte transmise pour ' . $tu . ' (reçue s\'il est connecté).' : '❌ Émulateur injoignable (RCON). Est-il démarré ?'; break;
+                }
+                if ($mode === 'staff') {
+                    // Cible = le staff (rang >= seuil) : on envoie une ALERT ciblée à chaque compte (reçue par les connectés).
+                    $rk = max(1, (int)($_POST['staff_rank'] ?? 5));
+                    $ids = []; try { foreach (db()->query('SELECT id FROM users WHERE `rank`>=' . $rk) as $r) $ids[] = (int)$r['id']; } catch (Throwable $e) {}
+                    if (!$ids) { $ok = false; $msg = '❌ Aucun compte de rang ≥ ' . $rk . '.'; break; }
+                    $n = 0; foreach ($ids as $id) { $p2 = $params; $p2['userId'] = (string)$id; if (rcon_send('user_alert', $p2)) $n++; }
+                    alert_log_add('jeu (RCON)', 'Staff (rang ≥ ' . $rk . ') — ' . count($ids) . ' compte(s)', $txt, $n > 0 ? 'RCON envoyé à ' . count($ids) . ' compte(s) staff (reçu si connectés)' : 'échec — émulateur injoignable');
+                    $ok = $n > 0; $msg = $ok ? '📢 Alerte envoyée au staff (' . count($ids) . ' compte(s), reçue par les connectés).' : '❌ Émulateur injoignable (RCON). Est-il démarré ?'; break;
                 }
                 $ok2 = rcon_send('hotel_alert', $params);
                 alert_log_add('jeu (RCON)', 'Tout l\'hôtel (connectés)', $txt, $ok2 ? 'RCON accepté — transmis au serveur' : 'échec — émulateur injoignable');
@@ -1569,7 +1596,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stamp = '[' . date('d/m H:i') . ' ' . ($_SESSION['admin']['username'] ?? '?') . '] → ' . mb_substr($reply, 0, 300);
                 db()->prepare("UPDATE calls_for_help SET staff_note = TRIM(CONCAT(COALESCE(staff_note,''), CASE WHEN staff_note IS NULL OR staff_note='' THEN '' ELSE '\n' END, ?)) WHERE id=?")->execute([$stamp, $cid]);
                 admin_log('cfh_reply', 'appel #' . $cid . ' → joueur #' . $callerId . ($sent ? '' : ' (ému injoignable)'));
-                $ok = $sent; $msg = $sent ? '💬 Réponse envoyée au joueur (s\'il est connecté).' : '❌ Émulateur injoignable (RCON). Le joueur n\'a pas reçu la réponse.'; break;
+                // Option « Répondre et clôturer » : enchaîne la clôture dans la foulée.
+                $alsoClose = !empty($_POST['also_close']);
+                if ($alsoClose) {
+                    db()->prepare("UPDATE calls_for_help SET status='closed', close_reason=CASE WHEN close_reason='' OR close_reason IS NULL THEN 'Répondu' ELSE close_reason END, closed_at=NOW() WHERE id=? AND status<>'closed'")->execute([$cid]);
+                    admin_log('cfh_close', 'appel #' . $cid . ' — clôturé après réponse');
+                }
+                $ok = $sent || $alsoClose;
+                if ($alsoClose) $msg = $sent ? '💬 Réponse envoyée et appel clôturé.' : '✅ Appel clôturé (réponse non transmise : ému injoignable).';
+                else $msg = $sent ? '💬 Réponse envoyée au joueur (s\'il est connecté).' : '❌ Émulateur injoignable (RCON). Le joueur n\'a pas reçu la réponse.';
+                break;
             }
             case 'cfh_delete': {
                 ensure_calls_for_help();
@@ -3498,6 +3534,7 @@ function action_tab(string $a): string {
         'conv_reply' => 'messages', 'conv_status' => 'messages', 'conv_new' => 'messages', 'conv_reprise' => 'messages',
         'conv_assign' => 'messages', 'conv_note' => 'messages', 'conv_category' => 'messages', 'conv_ack_set' => 'messages', 'conv_templates_save' => 'messages',
         'conv_broadcast' => 'messages', 'conv_merge' => 'messages', 'conv_staff_box' => 'messages', 'conv_hide' => 'messages',
+        'annonce_tpl_save' => 'messages', 'annonce_tpl_delete' => 'messages',
         // Jeux : codes & recycleur
         'voucher_add' => 'vouchers', 'voucher_delete' => 'vouchers',
         'recy_add' => 'recycler', 'recy_update' => 'recycler', 'recy_delete' => 'recycler',
@@ -4529,6 +4566,27 @@ function page_dashboard(): void {
     stat_box('💰', number_format($economy, 0, ',', ' '), 'Crédits en circulation', 'gold');
     stat_box($emu ? '🟢' : '🔴', $emu ? 'En marche' : 'Arrêté', 'Émulateur', $emu ? 'green' : 'red');
     echo '</div>';
+
+    /* --- Appels à l'aide : tuiles (si activité) --- */
+    if (tab_allowed('alerts')) {
+        $cfhOpen = 0; $cfhToday = 0; $cfhWeek = 0; $cfhAvg = null;
+        try {
+            ensure_calls_for_help();
+            $cfhOpen  = (int)$d->query("SELECT COUNT(*) FROM calls_for_help WHERE status='open'")->fetchColumn();
+            $cfhToday = (int)$d->query("SELECT COUNT(*) FROM calls_for_help WHERE created_at >= CURDATE()")->fetchColumn();
+            $cfhWeek  = (int)$d->query("SELECT COUNT(*) FROM calls_for_help WHERE created_at >= (NOW() - INTERVAL 7 DAY)")->fetchColumn();
+            $av = $d->query("SELECT AVG(TIMESTAMPDIFF(SECOND, created_at, closed_at)) FROM calls_for_help WHERE status='closed' AND closed_at IS NOT NULL AND closed_at >= (NOW() - INTERVAL 30 DAY)")->fetchColumn();
+            if ($av !== null && $av !== false) $cfhAvg = max(0, (int)round(((float)$av) / 60));
+        } catch (Throwable $e) {}
+        if ($cfhOpen > 0 || $cfhWeek > 0) {
+            echo '<h3 class="sec" style="margin:18px 0 10px">🆘 Appels à l\'aide <a class="lnk" href="?p=alerts&sec=cfh" style="font-size:13px;font-weight:400">Ouvrir →</a></h3><div class="grid">';
+            stat_box('🆘', $cfhOpen, 'En attente', $cfhOpen > 0 ? 'red' : 'blue', 'dashCfhOpen');
+            stat_box('📅', $cfhToday, 'Aujourd\'hui', 'blue');
+            stat_box('🗓️', $cfhWeek, '7 jours', 'blue');
+            if ($cfhAvg !== null) stat_box('⏱️', $cfhAvg . ' min', 'Délai moyen', 'gold');
+            echo '</div>';
+        }
+    }
 
     /* --- Activité (large) + Actions fréquentes (côté) --- */
     echo '<div class="dcols">';
@@ -6551,7 +6609,11 @@ function alerts_sec_cfh(): void {
             echo '<div class="cfh-chips">';
             foreach ($qr as $qm) echo '<button type="button" class="cfh-chip" data-m="' . h($qm) . '" onclick="var t=document.getElementById(\'cfhr' . $cid . '\');t.value=this.getAttribute(\'data-m\');t.focus();">' . h(mb_strimwidth($qm, 0, 32, '…')) . '</button>';
             echo '</div>';
-            echo '<div style="margin-top:8px"><button>💬 Envoyer la réponse</button></div></form>';
+            echo '<input type="hidden" name="also_close" id="ac' . $cid . '" value="">';
+            echo '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">'
+               . '<button type="submit" onclick="document.getElementById(\'ac' . $cid . '\').value=\'\'">💬 Envoyer la réponse</button>'
+               . '<button type="submit" class="ghost" onclick="document.getElementById(\'ac' . $cid . '\').value=\'1\'" title="Envoyer la réponse puis clôturer l\'appel">💬✅ Envoyer et clôturer</button>'
+               . '</div></form>';
 
             // Note interne (repliée)
             echo '<details class="cfh-note"' . ((string)$r['staff_note'] !== '' ? ' open' : '') . '><summary>📝 Note interne' . ((string)$r['staff_note'] !== '' ? ' (renseignée)' : '') . '</summary>';
@@ -6634,26 +6696,30 @@ function alerts_sec_send(): void {
        . '<div class="al-modes">'
        . '<label class="al-mode on" id="hat_all"><input type="radio" name="target_mode" value="all" checked><b>📣 Tout l\'hôtel</b><span>Tous les joueurs connectés.</span></label>'
        . '<label class="al-mode" id="hat_one"><input type="radio" name="target_mode" value="one"><b>🎯 Un joueur</b><span>Le pseudo indiqué (s\'il est connecté).</span></label>'
+       . '<label class="al-mode" id="hat_staff"><input type="radio" name="target_mode" value="staff"><b>👮 Le staff</b><span>Comptes de rang ≥ seuil (connectés).</span></label>'
        . '</div>'
        . '<label class="al-field" id="hat_userf" style="display:none"><span>Pseudo du joueur</span><input id="ha_user" name="target_user" maxlength="30" autocomplete="off" placeholder="Ex. Orms"></label>'
+       . '<label class="al-field" id="hat_stafff" style="display:none"><span>Rang minimum du staff</span><input type="number" name="staff_rank" value="5" min="1" max="7" style="width:90px"></label>'
        . '<label class="al-field"><span>📋 Modèle (facultatif)</span><select id="ha_preset">' . $presetOpts . '</select></label>'
        . '<label class="al-field"><span>Message <span class="al-count"><b id="ha_n">0</b>/200</span></span><input id="ha_msg" name="message" maxlength="200" placeholder="Ex. Maintenance dans 10 minutes !" required></label>'
        . '<label class="al-field"><span>Signature (facultatif)</span><input id="ha_sig" name="sender" maxlength="60" placeholder="L\'équipe"></label>'
        . '<div class="al-prevbox"><div class="al-prevcap">Aperçu de la pop-up</div><div class="al-prev" id="ha_prev"><span class="ph-empty">Le message apparaîtra ici…</span></div></div>'
        . '<div><button id="ha_btn">📢 Envoyer à tout l\'hôtel</button> <span class="muted sm">Résultat tracé dans l\'historique</span></div></form>';
     // Aperçu live + compteur + modèle + bascule de cible + confirmation contextuelle.
-    echo '<script>(function(){var m=document.getElementById("ha_msg"),s=document.getElementById("ha_sig"),p=document.getElementById("ha_prev"),n=document.getElementById("ha_n"),pre=document.getElementById("ha_preset"),ra=document.getElementById("hat_all"),ro=document.getElementById("hat_one"),uf=document.getElementById("hat_userf"),ui=document.getElementById("ha_user"),btn=document.getElementById("ha_btn");'
+    echo '<script>(function(){var m=document.getElementById("ha_msg"),s=document.getElementById("ha_sig"),p=document.getElementById("ha_prev"),n=document.getElementById("ha_n"),pre=document.getElementById("ha_preset"),ra=document.getElementById("hat_all"),ro=document.getElementById("hat_one"),rst=document.getElementById("hat_staff"),uf=document.getElementById("hat_userf"),ui=document.getElementById("ha_user"),sf=document.getElementById("hat_stafff"),sri=sf.querySelector("input"),btn=document.getElementById("ha_btn");'
        . 'function esc(t){return t.replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}'
        . 'function up(){var t=m.value,sig=s.value.trim();if(n)n.textContent=t.length;'
        . 'if(!t){p.innerHTML="<span class=\'ph-empty\'>Le message apparaîtra ici…</span>";return;}'
        . 'p.innerHTML=esc(t)+(sig?"<br><span style=\'opacity:.65;font-size:12px\'>— "+esc(sig)+"</span>":"");}'
-       . 'function one(){return ro.querySelector("input").checked;}'
-       . 'function sync(){var o=one();ra.classList.toggle("on",!o);ro.classList.toggle("on",o);uf.style.display=o?"":"none";if(!o)ui.value="";btn.textContent=o?"🎯 Envoyer au joueur":"📢 Envoyer à tout l\'hôtel";}'
-       . 'window.haSubmit=function(f){var o=one();if(o&&!ui.value.trim()){alert("Indique le pseudo du joueur.");ui.focus();return false;}'
-       . 'var q=o?("Envoyer cette alerte à "+ui.value.trim()+" ?"):"Envoyer cette alerte à TOUS les joueurs connectés ?";if(!confirm(q))return false;'
+       . 'function mode(){if(ro.querySelector("input").checked)return "one";if(rst.querySelector("input").checked)return "staff";return "all";}'
+       . 'function sync(){var md=mode();ra.classList.toggle("on",md==="all");ro.classList.toggle("on",md==="one");rst.classList.toggle("on",md==="staff");'
+       . 'uf.style.display=md==="one"?"":"none";sf.style.display=md==="staff"?"":"none";if(md!=="one")ui.value="";'
+       . 'btn.textContent=md==="one"?"🎯 Envoyer au joueur":(md==="staff"?"👮 Envoyer au staff":"📢 Envoyer à tout l\'hôtel");}'
+       . 'window.haSubmit=function(f){var md=mode();if(md==="one"&&!ui.value.trim()){alert("Indique le pseudo du joueur.");ui.focus();return false;}'
+       . 'var q=md==="one"?("Envoyer cette alerte à "+ui.value.trim()+" ?"):(md==="staff"?("Envoyer cette alerte au staff (rang \\u2265 "+sri.value+") ?"):"Envoyer cette alerte à TOUS les joueurs connectés ?");if(!confirm(q))return false;'
        . 'var b=f.querySelector("button[type=submit],#ha_btn");if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return true;};'
        . 'm.addEventListener("input",up);s.addEventListener("input",up);'
-       . 'ra.querySelector("input").addEventListener("change",sync);ro.querySelector("input").addEventListener("change",sync);'
+       . 'ra.querySelector("input").addEventListener("change",sync);ro.querySelector("input").addEventListener("change",sync);rst.querySelector("input").addEventListener("change",sync);'
        . 'if(pre)pre.addEventListener("change",function(){if(this.value){m.value=this.value;up();m.focus();}});})();</script>';
     echo '</div>';
 
@@ -6670,7 +6736,14 @@ function alerts_sec_announce(): void {
     echo '<div class="panel"><div class="ph"><h3>📨 Annonce dans la messagerie</h3><span class="al-online" style="margin-left:auto;color:var(--green)">💾 persistant</span></div>';
     echo '<p class="sub" style="margin-top:0">Crée <b>une conversation par destinataire</b>, conservée et consultable ensuite par le joueur (contrairement à l\'alerte en jeu). Le joueur peut répondre ; sa réponse est <b>privée</b> (jamais transmise aux autres).</p>';
 
-    echo '<form method="post" class="js" data-reload data-confirm="Envoyer cette annonce (une conversation par destinataire) ?" onsubmit="var b=this.querySelector(\'button[type=submit]\');if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return true;"><input type="hidden" name="action" value="conv_broadcast">' . csrf_field();
+    $tpls = announce_templates();
+    echo '<form method="post" class="js" data-reload data-confirm="Envoyer cette annonce (une conversation par destinataire) ?" onsubmit="var b=this.querySelector(\'button[type=submit]\');if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return true;"><input type="hidden" name="action" value="conv_broadcast"><input type="hidden" name="back" value="?p=alerts&sec=announce">' . csrf_field();
+    // Charger un modèle d'annonce (remplit sujet + message).
+    if ($tpls) {
+        $topts = '<option value="">— Charger un modèle —</option>';
+        foreach ($tpls as $t) $topts .= '<option value="' . (int)$t['id'] . '">' . h((string)$t['title']) . '</option>';
+        echo '<label class="al-field"><span>📋 Modèle d\'annonce</span><select id="an_tpl">' . $topts . '</select></label>';
+    }
     // Choix de la cible (deux cartes radio).
     echo '<label class="al-field"><span>Destinataires</span></label>';
     echo '<div class="al-modes">';
@@ -6681,9 +6754,23 @@ function alerts_sec_announce(): void {
     echo '<label class="al-field" id="alf_rank" style="display:none"><span>Rang minimum</span><input type="number" name="min_rank" value="5" min="1" max="7" style="width:90px"></label>';
     echo '<label class="al-field"><span>Sujet</span><input name="subject" maxlength="150" placeholder="Ex. Événement ce week-end"></label>';
     echo '<label class="al-field"><span>Message <span class="al-count"><b id="an_n">0</b>/4000</span></span><textarea id="an_body" name="body" rows="4" maxlength="4000" required placeholder="Texte de l\'annonce…"></textarea></label>';
-    echo '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="mini ghost" id="an_check">👁️ Vérifier les destinataires</button><button>📨 Envoyer l\'annonce</button></div>';
+    echo '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="mini ghost" id="an_check">👁️ Vérifier les destinataires</button><button type="button" class="mini ghost" id="an_savetpl">💾 Enregistrer comme modèle</button><button>📨 Envoyer l\'annonce</button></div>';
     echo '<div id="an_prev" class="note" style="display:none;margin-top:10px"></div></form>';
-    // Bascule liste/rang + compteur + vérification des destinataires.
+    // Formulaire caché pour l'enregistrement d'un modèle + gestion des modèles existants.
+    echo '<form method="post" class="js" data-reload id="an_tplsave" style="display:none"><input type="hidden" name="action" value="annonce_tpl_save"><input type="hidden" name="back" value="?p=alerts&sec=announce">' . csrf_field() . '<input type="hidden" name="title"><input type="hidden" name="subject"><input type="hidden" name="body"></form>';
+    if ($tpls) {
+        echo '<details class="cfh-note" style="margin-top:12px"><summary>🗂️ Gérer les modèles (' . count($tpls) . ')</summary><div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">';
+        foreach ($tpls as $t) {
+            echo '<div class="row" style="gap:8px;align-items:center"><b>' . h((string)$t['title']) . '</b>';
+            if ((string)$t['subject'] !== '') echo ' <span class="muted sm">[' . h((string)$t['subject']) . ']</span>';
+            echo '<span style="flex:1"></span><form method="post" class="js" data-reload data-confirm="Supprimer ce modèle d\'annonce ?" style="margin:0"><input type="hidden" name="action" value="annonce_tpl_delete"><input type="hidden" name="id" value="' . (int)$t['id'] . '"><input type="hidden" name="back" value="?p=alerts&sec=announce">' . csrf_field() . '<button class="mini ghost danger">🗑️</button></form></div>';
+        }
+        echo '</div></details>';
+    }
+    // Bascule liste/rang + compteur + vérification des destinataires + modèles.
+    $tplData = [];
+    foreach ($tpls as $t) $tplData[(string)$t['id']] = ['subject' => (string)$t['subject'], 'body' => (string)$t['body']];
+    $tplJson = json_encode($tplData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
     echo '<script>(function(){var rl=document.getElementById("alm_list"),rr=document.getElementById("alm_rank"),fl=document.getElementById("alf_list"),fr=document.getElementById("alf_rank"),b=document.getElementById("an_body"),n=document.getElementById("an_n"),ck=document.getElementById("an_check"),pv=document.getElementById("an_prev");'
        . 'function esc(t){return String(t).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}'
        . 'function sync(){var rank=rr.querySelector("input").checked;rl.classList.toggle("on",!rank);rr.classList.toggle("on",rank);fl.style.display=rank?"none":"";fr.style.display=rank?"":"none";}'
@@ -6699,7 +6786,11 @@ function alerts_sec_announce(): void {
        . 'var html="<b>"+d.count+"</b> destinataire"+(d.count>1?"s":"")+" valide"+(d.count>1?"s":"")+".";'
        . 'if(d.unknown&&d.unknown.length)html+=" <span style=\'color:var(--red)\'>⚠️ Inconnu"+(d.unknown.length>1?"s":"")+" ("+d.unknown.length+") : "+d.unknown.map(esc).join(", ")+"</span>";'
        . 'if(d.known&&d.known.length){var extra=d.known_total>d.known.length?" …":"";html+="<br><span class=\'muted sm\'>"+(rank?"Exemples":"Reçu par")+" : "+d.known.map(esc).join(", ")+extra+"</span>";}'
-       . 'pv.innerHTML=html;}).catch(function(){pv.innerHTML="❌ Erreur réseau.";});});})();</script>';
+       . 'pv.innerHTML=html;}).catch(function(){pv.innerHTML="❌ Erreur réseau.";});});'
+       . 'var tpl=document.getElementById("an_tpl"),sv=document.getElementById("an_savetpl"),sf=document.getElementById("an_tplsave"),ANTPL=' . $tplJson . ';'
+       . 'if(tpl)tpl.addEventListener("change",function(){var d=ANTPL[this.value];if(!d)return;document.querySelector("[name=subject]").value=d.subject||"";b.value=d.body||"";if(n)n.textContent=b.value.length;});'
+       . 'if(sv)sv.addEventListener("click",function(){var subj=document.querySelector("[name=subject]").value,body=b.value;if(!body.trim()){alert("Écris d\'abord le message de l\'annonce.");return;}var t=prompt("Nom du modèle ?");if(!t||!t.trim())return;sf.querySelector("[name=title]").value=t.trim();sf.querySelector("[name=subject]").value=subj;sf.querySelector("[name=body]").value=body;if(sf.requestSubmit)sf.requestSubmit();else sf.submit();});'
+       . '})();</script>';
     echo '</div>';
 }
 function alerts_sec_history(): void {
@@ -7067,6 +7158,15 @@ function alert_log_add(string $channel, string $target, string $content, string 
     ensure_alert_log();
     try { db()->prepare('INSERT INTO alert_log (author,channel,target,content,result) VALUES (?,?,?,?,?)')
         ->execute([(string)($_SESSION['admin']['username'] ?? '?'), mb_substr($channel, 0, 40), mb_substr($target, 0, 160), mb_substr($content, 0, 4000), mb_substr($result, 0, 160)]); } catch (Throwable $e) {}
+}
+/* ---- Modèles d'annonce réutilisables (messagerie) ---- */
+function ensure_announce_templates(): void {
+    static $d = false; if ($d) return; $d = true;
+    try { db()->exec("CREATE TABLE IF NOT EXISTS announce_templates (id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(120) NOT NULL DEFAULT '', subject VARCHAR(150) NOT NULL DEFAULT '', body TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); } catch (Throwable $e) {}
+}
+function announce_templates(): array {
+    ensure_announce_templates();
+    try { return db()->query('SELECT id,title,subject,body FROM announce_templates ORDER BY title, id')->fetchAll(); } catch (Throwable $e) { return []; }
 }
 
 /* ---- Sauvegarde base ---- */
