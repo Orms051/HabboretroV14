@@ -1708,8 +1708,7 @@ function tab_default_rank(string $tab): int {
 }
 function nav_groups(): array {
     return [
-        '' => ['dashboard', 'search'],
-        'Pilotage' => ['stats'],
+        '' => ['dashboard', 'search', 'stats'],
         'Site & contenus' => ['sitemgr', 'news'],
         'Joueurs' => ['users', 'badges', 'ranks'],
         'Alertes & annonces' => ['alerts'],
