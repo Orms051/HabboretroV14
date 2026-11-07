@@ -72,7 +72,7 @@ $sso  = isset($_GET['sso']) ? preg_replace('/[^a-f0-9]/i', '', (string)$_GET['ss
 <param name='sw4' value='connection.mus.host=<?php echo $host; ?>;connection.mus.port=12322'>
 <param name='sw3' value='client.reload.url=<?php echo $base; ?>/client.php'>
 <param name='sw1' value='site.url=<?php echo $base; ?>;url.prefix=<?php echo $base; ?>'>
-<param name='sw5' value='external.variables.txt=<?php echo $base; ?>/dcr/14.1_b8/external_variables.php;external.texts.txt=<?php echo $base; ?>/dcr/14.1_b8/external_texts.txt'>
+<param name='sw5' value='external.variables.txt=<?php echo $base; ?>/dcr/14.1_b8/external_variables.php;external.texts.txt=<?php echo $base; ?>/dcr/14.1_b8/external_texts.php'>
 <embed src='<?php echo $base; ?>/dcr/14.1_b8/habbo.dcr' bgColor='#000000' width='720' height='540' swRemote='swSaveEnabled='true' swVolume='true' swRestart='false' swPausePlay='false' swFastForward='false' swTitle='Habbo Hotel' swContextMenu='true'' swStretchStyle='none' swText='' type='application/x-director' pluginspage='http://www.macromedia.com/shockwave/download/'
 <?php if ($sso !== '') { ?>
 sw6='use.sso.ticket=1;sso.ticket=<?php echo $sso; ?>'
@@ -81,7 +81,7 @@ sw2='connection.info.host=<?php echo $host; ?>;connection.info.port=12321'
 sw4='connection.mus.host=<?php echo $host; ?>;connection.mus.port=12322'
 sw3='client.reload.url=<?php echo $base; ?>/client.php'
 sw1='site.url=<?php echo $base; ?>;url.prefix=<?php echo $base; ?>'
-sw5='external.variables.txt=<?php echo $base; ?>/dcr/14.1_b8/external_variables.php;external.texts.txt=<?php echo $base; ?>/dcr/14.1_b8/external_texts.txt'></embed>
+sw5='external.variables.txt=<?php echo $base; ?>/dcr/14.1_b8/external_variables.php;external.texts.txt=<?php echo $base; ?>/dcr/14.1_b8/external_texts.php'></embed>
 </object>
 </div>
 </body>
