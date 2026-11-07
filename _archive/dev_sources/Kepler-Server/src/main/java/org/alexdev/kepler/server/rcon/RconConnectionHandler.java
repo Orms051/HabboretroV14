@@ -138,6 +138,25 @@ public class RconConnectionHandler extends ChannelInboundHandlerAdapter {
                     }
 
                     break;
+                case USER_ALERT:
+                    // Alerte générique (ALERT) à UN joueur précis depuis l'admin web.
+                    // Même pop-up que l'alerte hôtel, mais ciblée ; reçue seulement si connecté.
+                    Player alertTarget = PlayerManager.getInstance().getPlayerById(Integer.parseInt(message.getValues().get("userId")));
+
+                    if (alertTarget != null) {
+                        StringBuilder userAlert = new StringBuilder();
+                        userAlert.append(message.getValues().get("message"));
+
+                        if (message.getValues().containsKey("sender")) {
+                            userAlert.append("<br>");
+                            userAlert.append("<br>");
+                            userAlert.append("- ").append(message.getValues().get("sender"));
+                        }
+
+                        alertTarget.send(new ALERT(userAlert.toString()));
+                    }
+
+                    break;
                 case SHUTDOWN:
                     // Arrêt propre déclenché à distance (bouton admin -> pack.ps1 -> RCON).
                     // Indépendant de la console : fiable quel que soit le lanceur (fin du Ctrl+C fragile).

@@ -209,6 +209,46 @@ if (isset($_GET['cfhlog'])) {
     exit;
 }
 
+/* ---------- Aperçu des destinataires d'une annonce messagerie (AJAX JSON) ---------- */
+if (isset($_GET['annonce_preview'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    if (!tab_allowed('messages')) { http_response_code(403); echo '{"ok":false}'; exit; }
+    $mode = ($_GET['mode'] ?? 'list') === 'rank' ? 'rank' : 'list';
+    $known = []; $unknown = []; $count = 0;
+    if ($mode === 'rank') {
+        $minRank = max(1, (int)($_GET['min_rank'] ?? 5));
+        try { $count = (int) db()->query('SELECT COUNT(*) FROM users WHERE `rank`>=' . $minRank)->fetchColumn(); } catch (Throwable $e) {}
+        try { foreach (db()->query('SELECT username FROM users WHERE `rank`>=' . $minRank . ' ORDER BY `rank` DESC, username LIMIT 50') as $r) $known[] = (string)$r['username']; } catch (Throwable $e) {}
+    } else {
+        $names = preg_split('/[\s,;]+/', (string)($_GET['usernames'] ?? ''), -1, PREG_SPLIT_NO_EMPTY);
+        $names = array_slice(array_unique($names), 0, 500);
+        foreach ($names as $nm) {
+            try { $q = db()->prepare('SELECT username FROM users WHERE username=?'); $q->execute([$nm]); $u = $q->fetchColumn(); }
+            catch (Throwable $e) { $u = false; }
+            if ($u !== false) $known[] = (string)$u; else $unknown[] = $nm;
+        }
+        $count = count($known);
+    }
+    echo json_encode(['ok' => true, 'mode' => $mode, 'count' => $count, 'known' => array_slice($known, 0, 50), 'known_total' => count($known), 'unknown' => array_slice($unknown, 0, 50)]);
+    exit;
+}
+
+/* ---------- Export CSV de l'historique des diffusions ---------- */
+if (isset($_GET['alert_export'])) {
+    if (!tab_allowed('alerts')) { http_response_code(403); exit; }
+    ensure_alert_log();
+    $rows = []; try { $rows = db()->query('SELECT created_at,author,channel,target,content,result FROM alert_log ORDER BY id DESC LIMIT 1000')->fetchAll(); } catch (Throwable $e) {}
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="historique_alertes_' . date('Ymd_His') . '.csv"');
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF"); // BOM UTF-8 (Excel)
+    fputcsv($out, ['Date', 'Auteur', 'Canal', 'Cible', 'Message', 'Résultat'], ';');
+    foreach ($rows as $r) fputcsv($out, [(string)$r['created_at'], (string)$r['author'], (string)$r['channel'], (string)$r['target'], (string)$r['content'], (string)$r['result']], ';');
+    fclose($out);
+    exit;
+}
+
 /* ---------- Téléchargement d'une sauvegarde (rang 7) ---------- */
 if (isset($_GET['dlbackup']) && (int)($_SESSION['admin']['rank'] ?? 0) >= 7) {
     $name = basename((string)$_GET['dlbackup']);
@@ -1385,9 +1425,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Le client Habbo (Shockwave) affiche en CP1252 : on convertit + retire les emoji.
                 $params = ['message' => kepler_text($txt)];
                 if (trim((string)($_POST['sender'] ?? '')) !== '') $params['sender'] = kepler_text(trim((string)$_POST['sender']));
+                $tu = trim((string)($_POST['target_user'] ?? ''));
+                if ($tu !== '') {
+                    // Cible = UN joueur précis (ALERT via RCON user_alert ; reçu seulement s'il est connecté).
+                    $uid = 0; try { $q = db()->prepare('SELECT id FROM users WHERE username=?'); $q->execute([$tu]); $uid = (int)$q->fetchColumn(); } catch (Throwable $e) {}
+                    if ($uid <= 0) { $ok = false; $msg = '❌ Joueur « ' . $tu . ' » introuvable.'; break; }
+                    $params['userId'] = (string)$uid;
+                    $ok2 = rcon_send('user_alert', $params);
+                    alert_log_add('jeu (RCON)', 'Joueur : ' . $tu, $txt, $ok2 ? 'RCON accepté — transmis (si connecté)' : 'échec — émulateur injoignable');
+                    $ok = $ok2; $msg = $ok2 ? '📢 Alerte transmise pour ' . $tu . ' (reçue s\'il est connecté).' : '❌ Émulateur injoignable (RCON). Est-il démarré ?'; break;
+                }
                 $ok2 = rcon_send('hotel_alert', $params);
                 alert_log_add('jeu (RCON)', 'Tout l\'hôtel (connectés)', $txt, $ok2 ? 'RCON accepté — transmis au serveur' : 'échec — émulateur injoignable');
                 $ok = $ok2; $msg = $ok2 ? '📢 Alerte transmise au serveur (joueurs connectés).' : '❌ Émulateur injoignable (RCON). Est-il démarré ?'; break;
+            case 'alert_presets_save': {
+                // Modèles d'alerte en jeu éditables (un par ligne) ; vide = repli sur les défauts.
+                $lines = array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string)($_POST['presets'] ?? ''))), fn($l) => $l !== '');
+                $lines = array_slice(array_map(fn($l) => mb_substr($l, 0, 200), $lines), 0, 30);
+                $txt = implode("\n", $lines);
+                try { db()->prepare('INSERT INTO settings (setting,value) VALUES (?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)')->execute(['alerts.presets', $txt]); } catch (Throwable $e) {}
+                admin_log('alert_presets_save', count($lines) . ' modèle(s)');
+                $ok = true; $msg = $txt === '' ? '✅ Modèles réinitialisés (valeurs par défaut).' : '✅ ' . count($lines) . ' modèle(s) de message enregistré(s).'; break;
+            }
             case 'db_backup':
                 $ok = db_backup(); $msg = $ok ? '💾 Sauvegarde créée et vérifiée.' : ('❌ Échec de la sauvegarde : ' . ($GLOBALS['backup_err'] ?? 'raison inconnue')); break;
             case 'cat_bulk':
@@ -3444,7 +3503,7 @@ function action_tab(string $a): string {
         'recy_add' => 'recycler', 'recy_update' => 'recycler', 'recy_delete' => 'recycler',
         // Système (rang 7 par défaut)
         'setting_update' => 'settings', 'xtext_update' => 'textes', 'tabperm_update' => 'access',
-        'srv_start' => 'server', 'srv_stop' => 'server', 'set_entry_bg' => 'server', 'hotel_alert' => 'server',
+        'srv_start' => 'server', 'srv_stop' => 'server', 'set_entry_bg' => 'server', 'hotel_alert' => 'server', 'alert_presets_save' => 'server',
         'maint_on' => 'server', 'maint_off' => 'server',
         'db_backup' => 'mysql',
     ];
@@ -6230,7 +6289,7 @@ function current_entry_bg(): string {
     if ($ev !== false && preg_match('/^cast\.entry\.16=hh_entry_([a-z_]+)/m', $ev, $m)) return $m[1];
     return '';
 }
-function hotel_alert_presets(): array {
+function hotel_alert_presets_defaults(): array {
     // Pas d'emoji : le client Habbo (Shockwave) ne les affiche pas (ils seraient retirés à l'envoi).
     return [
         'Maintenance dans 10 minutes - pense à ranger tes mobis, déconnexion imminente !',
@@ -6241,6 +6300,15 @@ function hotel_alert_presets(): array {
         'Bienvenue sur Habbo - amuse-toi bien !',
         'Merci de respecter les autres joueurs. Les insultes = ban.',
     ];
+}
+function hotel_alert_presets(): array {
+    // Modèles éditables depuis l'admin (réglage alerts.presets, un par ligne). Vide = défauts.
+    $raw = site_setting_get('alerts.presets', '');
+    if (trim($raw) !== '') {
+        $lines = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $raw)), fn($l) => $l !== ''));
+        if ($lines) return $lines;
+    }
+    return hotel_alert_presets_defaults();
 }
 /* Service d'avatars Minerva (port local 5123). */
 function minerva_running(): bool { $c = @fsockopen('127.0.0.1', 5123, $e, $s, 0.6); if ($c) { fclose($c); return true; } return false; }
@@ -6417,13 +6485,31 @@ function alerts_sec_cfh(): void {
     $back = '?p=alerts&sec=cfh';
     $age = function ($dt) { $t = strtotime((string)$dt); if (!$t) return ''; $s = max(0, time() - $t); if ($s < 60) return $s . ' s'; if ($s < 3600) return floor($s / 60) . ' min'; if ($s < 86400) return floor($s / 3600) . ' h'; return floor($s / 86400) . ' j'; };
 
+    // --- Statistiques (aujourd'hui / 7 j / délai moyen / récidivistes) ---
+    $stToday = 0; $stWeek = 0; $avgMin = null; $topCallers = [];
+    try { $stToday = (int) db()->query("SELECT COUNT(*) FROM calls_for_help WHERE created_at >= CURDATE()")->fetchColumn(); } catch (Throwable $e) {}
+    try { $stWeek = (int) db()->query("SELECT COUNT(*) FROM calls_for_help WHERE created_at >= (NOW() - INTERVAL 7 DAY)")->fetchColumn(); } catch (Throwable $e) {}
+    try { $a = db()->query("SELECT AVG(TIMESTAMPDIFF(SECOND, created_at, closed_at)) FROM calls_for_help WHERE status='closed' AND closed_at IS NOT NULL AND closed_at >= (NOW() - INTERVAL 30 DAY)")->fetchColumn(); if ($a !== null && $a !== false) $avgMin = max(0, (int) round(((float)$a) / 60)); } catch (Throwable $e) {}
+    try { foreach (db()->query("SELECT u.username, COUNT(*) AS n FROM calls_for_help c LEFT JOIN users u ON u.id=c.caller_id WHERE c.created_at >= (NOW() - INTERVAL 7 DAY) GROUP BY c.caller_id ORDER BY n DESC LIMIT 3") as $r) { if ((int)$r['n'] >= 2) $topCallers[] = ($r['username'] !== null ? (string)$r['username'] : '#?') . ' (' . (int)$r['n'] . ')'; } } catch (Throwable $e) {}
+
     // --- Bandeau de synthèse ---
     echo '<div class="panel"><div class="ph"><h3>🆘 Appels à l\'aide</h3><span class="rk' . ($up ? '' : ' red') . '" style="margin-left:auto">' . ($up ? '🟢 Émulateur en ligne' : '🔴 Émulateur hors ligne') . '</span></div>';
     echo '<div class="cfh-sum"><div><span class="big" style="color:' . ($open > 0 ? 'var(--red)' : 'var(--mut)') . '">' . $open . '</span> <span class="muted">en attente</span></div>';
     echo '<div><span class="big">' . count($active) . '</span> <span class="muted">actif' . (count($active) > 1 ? 's' : '') . '</span></div>';
+    echo '<div><span class="big">' . $stToday . '</span> <span class="muted">aujourd\'hui</span></div>';
+    echo '<div><span class="big">' . $stWeek . '</span> <span class="muted">7 jours</span></div>';
+    if ($avgMin !== null) echo '<div><span class="big">' . $avgMin . '</span> <span class="muted">min. délai moyen*</span></div>';
     echo '<div style="flex:1"></div></div>';
-    echo '<p class="sub" style="margin:10px 0 0">Le <b>traitement live se fait en jeu</b> (prise en charge, réponse au joueur) avec ton compte modérateur ; cet écran apporte la <b>persistance, l\'historique et une note interne</b>. Une prise en charge en jeu apparaît ici automatiquement.</p>';
+    echo '<p class="sub" style="margin:10px 0 0">Le <b>traitement live se fait en jeu</b> (prise en charge, réponse au joueur) avec ton compte modérateur ; cet écran apporte la <b>persistance, l\'historique et une note interne</b>. Une prise en charge en jeu apparaît ici automatiquement.' . ($avgMin !== null ? ' <span class="muted sm">(*ouverture → clôture, 30 j.)</span>' : '') . '</p>';
+    if ($topCallers) echo '<p class="muted sm" style="margin:8px 0 0">📈 Appellent le plus (7 j) : <b>' . implode('</b> · <b>', array_map('h', $topCallers)) . '</b> — à surveiller si abus du bouton d\'aide.</p>';
     echo '</div>';
+
+    // Bandeau « nouvel appel » : apparaît si le nombre d'appels en attente augmente (poll 15 s), sans recharger toute la page.
+    echo '<a id="cfhNew" href="?p=alerts&sec=cfh" style="display:none;align-items:center;gap:10px;background:var(--red);color:#fff;border-radius:11px;padding:11px 15px;margin-bottom:14px;text-decoration:none;font-weight:700;box-shadow:0 4px 14px var(--glow)"><span>🆕 <span id="cfhNewN">1</span> nouvel appel à l\'aide — cliquer pour afficher</span></a>';
+    echo '<script>(function(){var base=' . (int)$open . ',bn=document.getElementById("cfhNew"),bnn=document.getElementById("cfhNewN");'
+       . 'function poll(){fetch("?cfhcount=1",{headers:{"X-Requested-With":"fetch"}}).then(function(r){return r.json();}).then(function(d){'
+       . 'var c=(d&&typeof d.count==="number")?d.count:base;if(c>base){bnn.textContent=(c-base);bn.style.display="flex";}else{bn.style.display="none";}}).catch(function(){});}'
+       . 'setInterval(poll,15000);})();</script>';
 
     // --- Appels actifs ---
     if (!$active) {
@@ -6537,22 +6623,42 @@ function alerts_sec_send(): void {
     $presetOpts = '<option value="">— Choisir un message prédéfini —</option>';
     foreach (hotel_alert_presets() as $pm) $presetOpts .= '<option value="' . h($pm) . '">' . h(mb_strlen($pm) > 70 ? mb_substr($pm, 0, 70) . '…' : $pm) . '</option>';
 
-    echo '<form method="post" class="js" data-reload onsubmit="var b=this.querySelector(\'button[type=submit]\');if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return confirm(\'Envoyer cette alerte à TOUS les joueurs connectés ?\');">' . csrf_field()
+    echo '<form method="post" class="js" data-reload onsubmit="return haSubmit(this);">' . csrf_field()
        . '<input type="hidden" name="action" value="hotel_alert">'
+       . '<label class="al-field"><span>Cible</span></label>'
+       . '<div class="al-modes">'
+       . '<label class="al-mode on" id="hat_all"><input type="radio" name="target_mode" value="all" checked><b>📣 Tout l\'hôtel</b><span>Tous les joueurs connectés.</span></label>'
+       . '<label class="al-mode" id="hat_one"><input type="radio" name="target_mode" value="one"><b>🎯 Un joueur</b><span>Le pseudo indiqué (s\'il est connecté).</span></label>'
+       . '</div>'
+       . '<label class="al-field" id="hat_userf" style="display:none"><span>Pseudo du joueur</span><input id="ha_user" name="target_user" maxlength="30" autocomplete="off" placeholder="Ex. Orms"></label>'
        . '<label class="al-field"><span>📋 Modèle (facultatif)</span><select id="ha_preset">' . $presetOpts . '</select></label>'
        . '<label class="al-field"><span>Message <span class="al-count"><b id="ha_n">0</b>/200</span></span><input id="ha_msg" name="message" maxlength="200" placeholder="Ex. Maintenance dans 10 minutes !" required></label>'
        . '<label class="al-field"><span>Signature (facultatif)</span><input id="ha_sig" name="sender" maxlength="60" placeholder="L\'équipe"></label>'
        . '<div class="al-prevbox"><div class="al-prevcap">Aperçu de la pop-up</div><div class="al-prev" id="ha_prev"><span class="ph-empty">Le message apparaîtra ici…</span></div></div>'
-       . '<div><button>📢 Envoyer à tout l\'hôtel</button> <span class="muted sm">Portée : joueurs connectés · résultat tracé dans l\'historique</span></div></form>';
-    // Aperçu live + compteur + remplissage par modèle.
-    echo '<script>(function(){var m=document.getElementById("ha_msg"),s=document.getElementById("ha_sig"),p=document.getElementById("ha_prev"),n=document.getElementById("ha_n"),pre=document.getElementById("ha_preset");'
+       . '<div><button id="ha_btn">📢 Envoyer à tout l\'hôtel</button> <span class="muted sm">Résultat tracé dans l\'historique</span></div></form>';
+    // Aperçu live + compteur + modèle + bascule de cible + confirmation contextuelle.
+    echo '<script>(function(){var m=document.getElementById("ha_msg"),s=document.getElementById("ha_sig"),p=document.getElementById("ha_prev"),n=document.getElementById("ha_n"),pre=document.getElementById("ha_preset"),ra=document.getElementById("hat_all"),ro=document.getElementById("hat_one"),uf=document.getElementById("hat_userf"),ui=document.getElementById("ha_user"),btn=document.getElementById("ha_btn");'
        . 'function esc(t){return t.replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}'
        . 'function up(){var t=m.value,sig=s.value.trim();if(n)n.textContent=t.length;'
        . 'if(!t){p.innerHTML="<span class=\'ph-empty\'>Le message apparaîtra ici…</span>";return;}'
        . 'p.innerHTML=esc(t)+(sig?"<br><span style=\'opacity:.65;font-size:12px\'>— "+esc(sig)+"</span>":"");}'
+       . 'function one(){return ro.querySelector("input").checked;}'
+       . 'function sync(){var o=one();ra.classList.toggle("on",!o);ro.classList.toggle("on",o);uf.style.display=o?"":"none";if(!o)ui.value="";btn.textContent=o?"🎯 Envoyer au joueur":"📢 Envoyer à tout l\'hôtel";}'
+       . 'window.haSubmit=function(f){var o=one();if(o&&!ui.value.trim()){alert("Indique le pseudo du joueur.");ui.focus();return false;}'
+       . 'var q=o?("Envoyer cette alerte à "+ui.value.trim()+" ?"):"Envoyer cette alerte à TOUS les joueurs connectés ?";if(!confirm(q))return false;'
+       . 'var b=f.querySelector("button[type=submit],#ha_btn");if(b){b.disabled=true;setTimeout(function(){b.disabled=false;},4000);}return true;};'
        . 'm.addEventListener("input",up);s.addEventListener("input",up);'
+       . 'ra.querySelector("input").addEventListener("change",sync);ro.querySelector("input").addEventListener("change",sync);'
        . 'if(pre)pre.addEventListener("change",function(){if(this.value){m.value=this.value;up();m.focus();}});})();</script>';
     echo '</div>';
+
+    // Éditeur de modèles d'alerte (repliable).
+    $cur = implode("\n", hotel_alert_presets());
+    echo '<div class="panel"><details class="cfh-note"><summary>📋 Modifier les messages prédéfinis</summary>';
+    echo '<p class="muted sm" style="margin:8px 0">Un message par ligne (max 30 · 200 caractères). Ils alimentent le menu « Modèle » ci-dessus. Laisser vide puis enregistrer = revenir aux messages par défaut. <b>Pas d\'emoji</b> (non affichés par le client).</p>';
+    echo '<form method="post" class="js" data-reload><input type="hidden" name="action" value="alert_presets_save">' . csrf_field();
+    echo '<textarea name="presets" rows="8" style="width:100%;font-family:inherit">' . h($cur) . '</textarea>';
+    echo '<div style="margin-top:8px"><button class="mini">💾 Enregistrer les modèles</button></div></form></details></div>';
 }
 function alerts_sec_announce(): void {
     if (!tab_allowed('messages')) { echo '<div class="panel"><div class="empty">🔒 Ton rang n\'autorise pas les annonces de messagerie.</div></div>'; return; }
@@ -6570,12 +6676,25 @@ function alerts_sec_announce(): void {
     echo '<label class="al-field" id="alf_rank" style="display:none"><span>Rang minimum</span><input type="number" name="min_rank" value="5" min="1" max="7" style="width:90px"></label>';
     echo '<label class="al-field"><span>Sujet</span><input name="subject" maxlength="150" placeholder="Ex. Événement ce week-end"></label>';
     echo '<label class="al-field"><span>Message <span class="al-count"><b id="an_n">0</b>/4000</span></span><textarea id="an_body" name="body" rows="4" maxlength="4000" required placeholder="Texte de l\'annonce…"></textarea></label>';
-    echo '<div><button>📨 Envoyer l\'annonce</button> <span class="muted sm">Cible + nombre de destinataires affichés dans le résultat</span></div></form>';
-    // Bascule liste/rang + compteur.
-    echo '<script>(function(){var rl=document.getElementById("alm_list"),rr=document.getElementById("alm_rank"),fl=document.getElementById("alf_list"),fr=document.getElementById("alf_rank"),b=document.getElementById("an_body"),n=document.getElementById("an_n");'
+    echo '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="mini ghost" id="an_check">👁️ Vérifier les destinataires</button><button>📨 Envoyer l\'annonce</button></div>';
+    echo '<div id="an_prev" class="note" style="display:none;margin-top:10px"></div></form>';
+    // Bascule liste/rang + compteur + vérification des destinataires.
+    echo '<script>(function(){var rl=document.getElementById("alm_list"),rr=document.getElementById("alm_rank"),fl=document.getElementById("alf_list"),fr=document.getElementById("alf_rank"),b=document.getElementById("an_body"),n=document.getElementById("an_n"),ck=document.getElementById("an_check"),pv=document.getElementById("an_prev");'
+       . 'function esc(t){return String(t).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}'
        . 'function sync(){var rank=rr.querySelector("input").checked;rl.classList.toggle("on",!rank);rr.classList.toggle("on",rank);fl.style.display=rank?"none":"";fr.style.display=rank?"":"none";}'
        . 'rl.querySelector("input").addEventListener("change",sync);rr.querySelector("input").addEventListener("change",sync);'
-       . 'if(b&&n)b.addEventListener("input",function(){n.textContent=b.value.length;});})();</script>';
+       . 'if(b&&n)b.addEventListener("input",function(){n.textContent=b.value.length;});'
+       . 'if(ck)ck.addEventListener("click",function(){var rank=rr.querySelector("input").checked;'
+       . 'var qs="annonce_preview=1&mode="+(rank?"rank":"list");'
+       . 'if(rank)qs+="&min_rank="+encodeURIComponent(document.querySelector("[name=min_rank]").value);'
+       . 'else qs+="&usernames="+encodeURIComponent(document.querySelector("[name=usernames]").value);'
+       . 'pv.style.display="";pv.innerHTML="⏳ Vérification…";'
+       . 'fetch("?"+qs,{headers:{"X-Requested-With":"fetch"}}).then(function(r){return r.json();}).then(function(d){'
+       . 'if(!d||!d.ok){pv.innerHTML="❌ Erreur de vérification.";return;}'
+       . 'var html="<b>"+d.count+"</b> destinataire"+(d.count>1?"s":"")+" valide"+(d.count>1?"s":"")+".";'
+       . 'if(d.unknown&&d.unknown.length)html+=" <span style=\'color:var(--red)\'>⚠️ Inconnu"+(d.unknown.length>1?"s":"")+" ("+d.unknown.length+") : "+d.unknown.map(esc).join(", ")+"</span>";'
+       . 'if(d.known&&d.known.length){var extra=d.known_total>d.known.length?" …":"";html+="<br><span class=\'muted sm\'>"+(rank?"Exemples":"Reçu par")+" : "+d.known.map(esc).join(", ")+extra+"</span>";}'
+       . 'pv.innerHTML=html;}).catch(function(){pv.innerHTML="❌ Erreur réseau.";});});})();</script>';
     echo '</div>';
 }
 function alerts_sec_history(): void {
@@ -6584,17 +6703,21 @@ function alerts_sec_history(): void {
     $nJeu = 0; $nMsg = 0;
     foreach ($rows as $r) { if (stripos((string)$r['channel'], 'jeu') !== false) $nJeu++; else $nMsg++; }
 
-    echo '<div class="panel"><div class="ph"><h3>🕑 Historique des diffusions</h3><span class="muted sm" style="margin-left:auto">' . count($rows) . ' entrée' . (count($rows) > 1 ? 's' : '') . ' (100 max)</span></div>';
-    echo '<p class="muted sm" style="margin:-2px 0 10px">⚠️ Un envoi RCON « accepté » = « transmis au serveur », pas que tous les joueurs l\'ont lu.</p>';
+    echo '<div class="panel"><div class="ph"><h3>🕑 Historique des diffusions</h3><a class="mini ghost" style="margin-left:auto" href="?p=alerts&sec=history&alert_export=csv">⬇️ Export CSV</a></div>';
+    echo '<p class="muted sm" style="margin:-2px 0 10px">⚠️ Un envoi RCON « accepté » = « transmis au serveur », pas que tous les joueurs l\'ont lu. · ' . count($rows) . ' entrée' . (count($rows) > 1 ? 's' : '') . ' (100 max à l\'écran, 1000 à l\'export).</p>';
     if (!$rows) { echo '<div class="empty">Aucune diffusion enregistrée pour l\'instant.</div></div>'; return; }
 
-    echo '<div class="al-filters"><button type="button" class="al-fchip on" data-f="all">Tout (' . count($rows) . ')</button><button type="button" class="al-fchip" data-f="jeu">📢 Jeu (' . $nJeu . ')</button><button type="button" class="al-fchip" data-f="msg">📨 Messagerie (' . $nMsg . ')</button></div>';
+    echo '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">';
+    echo '<div class="al-filters" style="margin:0"><button type="button" class="al-fchip on" data-f="all">Tout (' . count($rows) . ')</button><button type="button" class="al-fchip" data-f="jeu">📢 Jeu (' . $nJeu . ')</button><button type="button" class="al-fchip" data-f="msg">📨 Messagerie (' . $nMsg . ')</button></div>';
+    echo '<input type="search" id="alSearch" placeholder="🔍 Rechercher (pseudo, message…)" style="flex:1;min-width:200px">';
+    echo '<span class="muted sm" id="alHitCount"></span></div>';
     echo '<table class="al-htable" id="alHist"><tr><th>Quand</th><th>Par</th><th>Canal</th><th>Cible</th><th>Message</th><th>Résultat</th></tr>';
     foreach ($rows as $r) {
         $isJeu = stripos((string)$r['channel'], 'jeu') !== false;
         $res = (string)$r['result'];
         $ko = (stripos($res, 'échec') !== false || stripos($res, 'injoignable') !== false);
-        echo '<tr data-chan="' . ($isJeu ? 'jeu' : 'msg') . '">';
+        $hay = mb_strtolower((string)$r['author'] . ' ' . (string)$r['target'] . ' ' . (string)$r['content'] . ' ' . (string)$r['result']);
+        echo '<tr data-chan="' . ($isJeu ? 'jeu' : 'msg') . '" data-search="' . h($hay) . '">';
         echo '<td class="sm muted" style="white-space:nowrap">' . h(date('d/m H:i', strtotime((string)$r['created_at']))) . '</td>';
         echo '<td class="sm">' . h((string)$r['author']) . '</td>';
         echo '<td><span class="al-chan ' . ($isJeu ? 'jeu' : 'msg') . '">' . ($isJeu ? '📢 Jeu' : '📨 Msg') . '</span></td>';
@@ -6603,10 +6726,12 @@ function alerts_sec_history(): void {
         echo '<td class="sm ' . ($ko ? 'al-res-ko' : 'al-res-ok') . '">' . h($res) . '</td>';
         echo '</tr>';
     }
-    echo '</table>';
-    echo '<script>(function(){var chips=document.querySelectorAll(".al-fchip"),rows=document.querySelectorAll("#alHist tr[data-chan]");'
-       . 'chips.forEach(function(c){c.addEventListener("click",function(){chips.forEach(function(x){x.classList.remove("on");});c.classList.add("on");var f=c.getAttribute("data-f");'
-       . 'rows.forEach(function(r){r.style.display=(f==="all"||r.getAttribute("data-chan")===f)?"":"none";});});});})();</script>';
+    echo '</table><div class="empty" id="alNoHit" style="display:none">Aucun résultat pour cette recherche.</div>';
+    echo '<script>(function(){var chips=document.querySelectorAll(".al-fchip"),rows=document.querySelectorAll("#alHist tr[data-chan]"),sr=document.getElementById("alSearch"),cnt=document.getElementById("alHitCount"),no=document.getElementById("alNoHit"),cur="all";'
+       . 'function apply(){var q=(sr.value||"").toLowerCase().trim(),n=0;rows.forEach(function(r){var okc=(cur==="all"||r.getAttribute("data-chan")===cur);var oks=(!q||r.getAttribute("data-search").indexOf(q)>=0);var show=okc&&oks;r.style.display=show?"":"none";if(show)n++;});'
+       . 'cnt.textContent=n+" affichée"+(n>1?"s":"");no.style.display=n?"none":"";}'
+       . 'chips.forEach(function(c){c.addEventListener("click",function(){chips.forEach(function(x){x.classList.remove("on");});c.classList.add("on");cur=c.getAttribute("data-f");apply();});});'
+       . 'sr.addEventListener("input",apply);apply();})();</script>';
     echo '</div>';
 }
 
