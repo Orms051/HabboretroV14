@@ -7619,6 +7619,10 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
 .tb-status .dot{width:9px;height:9px;border-radius:50%;margin-right:7px}
 .tb-status.up{color:var(--green)}.tb-status.up .dot{background:var(--green)}
 .tb-status.down{color:var(--red)}.tb-status.down .dot{background:var(--red)}
+@keyframes cfhPulse{0%,100%{box-shadow:0 0 0 0 rgba(229,72,77,.55);background:rgba(229,72,77,.12)}50%{box-shadow:0 0 0 7px rgba(229,72,77,0);background:rgba(229,72,77,.30)}}
+@keyframes cfhBadgePop{0%,100%{transform:scale(1)}50%{transform:scale(1.2)}}
+.tb-status.alert{color:#e5484d;border-color:#e5484d;animation:cfhPulse 1.1s ease-in-out infinite}
+.tb-status.alert #cfhBadge{animation:cfhBadgePop .9s ease-in-out infinite}
 @media(max-width:760px){.topbar{padding:10px 16px}.tb-crumb{display:none}}
 /* Sous-onglets de section (style Cadurix) */
 .subtabs{display:flex;flex-wrap:wrap;margin:0 0 20px;padding-bottom:14px;border-bottom:1px solid var(--line2)}
@@ -7673,7 +7677,7 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
   <button type="button" class="sbtoggle" onclick="toggleSidebar()" title="Replier / déplier le menu" aria-label="Replier le menu">☰</button>
   <div class="tb-crumb"><?php if ($secLabel !== '') echo '<span class="tb-sec">' . h($secLabel) . '</span><span class="tb-sep">›</span>'; ?><b><?= h($pageLabel) ?></b></div>
   <form class="tb-search" method="get" action="?"><input type="hidden" name="p" value="search"><input name="q" placeholder="Rechercher un joueur, un mobi, une salle…" value="<?= $sq ?>"><button type="submit" title="Rechercher">🔍</button></form>
-  <?php if (tab_allowed('alerts')) { $cfhN = cfh_pending_count(); ?><a id="cfhAlertBtn" class="tb-status" href="?p=alerts&sec=cfh" title="Alertes &amp; annonces — appels à l'aide des joueurs" style="margin-right:10px">📢 Alertes<span id="cfhBadge" style="background:#e5484d;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:800;margin-left:5px;<?= $cfhN > 0 ? '' : 'display:none' ?>"><?= (int)$cfhN ?></span></a>
+  <?php if (tab_allowed('alerts')) { $cfhN = cfh_pending_count(); ?><a id="cfhAlertBtn" class="tb-status<?= $cfhN > 0 ? ' alert' : '' ?>" href="?p=alerts&sec=cfh" title="Alertes &amp; annonces — appels à l'aide des joueurs" style="margin-right:10px">📢 Alertes<span id="cfhBadge" style="background:#e5484d;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:800;margin-left:5px;<?= $cfhN > 0 ? '' : 'display:none' ?>"><?= (int)$cfhN ?></span></a>
   <script>(function(){
     var baseTitle=document.title, prev=<?= (int)$cfhN ?>, flashTimer=null, flashOn=false;
     function beep(){try{var C=window.AudioContext||window.webkitAudioContext;if(!C)return;var a=new C(),o=a.createOscillator(),g=a.createGain();o.type='sine';o.frequency.value=880;o.connect(g);g.connect(a.destination);g.gain.setValueAtTime(0.0001,a.currentTime);g.gain.exponentialRampToValueAtTime(0.25,a.currentTime+0.02);g.gain.exponentialRampToValueAtTime(0.0001,a.currentTime+0.5);o.start();o.stop(a.currentTime+0.55);setTimeout(function(){try{a.close();}catch(e){}},900);}catch(e){}}
@@ -7684,12 +7688,13 @@ input[type=checkbox]{margin-top:0;margin-right:6px}
     function tick(){fetch('?cfhcount=1',{headers:{'X-Requested-With':'fetch'}}).then(function(r){return r.json();}).then(function(d){
       var n=(d&&d.count)?d.count:0, conv=(d&&d.conv)?d.conv:0, on=(d&&typeof d.online!=='undefined')?d.online:null;
       var el=document.getElementById('cfhBadge');if(el){el.textContent=n;el.style.display=n>0?'':'none';}
+      var btn=document.getElementById('cfhAlertBtn');if(btn)btn.classList.toggle('alert',n>0);
       var dh=document.getElementById('dashCfhCount');if(dh)dh.textContent=n;
       if(on!==null){var o1=document.getElementById('dashOnline');if(o1)o1.textContent=on;var o2=document.getElementById('dashOnline2');if(o2)o2.textContent=on;}
       if(n>prev){beep();if(document.hidden||(document.hasFocus&&!document.hasFocus()))startFlash();}
       prev=n;setTitle(n+conv);
     }).catch(function(){});}
-    setInterval(tick,20000);tick();
+    setInterval(tick,8000);tick();
   })();</script><?php } ?>
   <a class="tb-status <?= $emuUp ? 'up' : 'down' ?>" href="?p=server" title="État de l'émulateur — ouvrir la page Serveur"><span class="dot"></span><?= $emuUp ? 'En marche' : 'Arrêté' ?></a>
 </header><div class="content"><?php
