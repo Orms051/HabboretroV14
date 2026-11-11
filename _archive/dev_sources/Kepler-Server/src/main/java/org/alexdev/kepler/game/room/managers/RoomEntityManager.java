@@ -87,6 +87,24 @@ public class RoomEntityManager {
     }
 
     /**
+     * Get the number of players that are visible to ordinary users (i.e. excluding
+     * staff currently in invisible / Silent mode). Used for the room visitor count.
+     *
+     * @return the count of non-invisible players
+     */
+    public int getVisiblePlayerCount() {
+        int count = 0;
+
+        for (Player player : this.getPlayers()) {
+            if (!player.getRoomUser().isInvisible()) {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /**
      * Get an entity by instance id.
      *
      * @param instanceId the instance id to get by
@@ -157,12 +175,12 @@ public class RoomEntityManager {
             }
         } else {
             if (this.getPlayers().size() > 0) {
-                this.room.send(new USER_OBJECTS(entity));
+                this.room.sendVisible(new USER_OBJECTS(entity), entity);
             }
         }
 
         this.room.getEntities().add(entity);
-        this.room.getData().setVisitorsNow(this.room.getEntityManager().getPlayers().size());
+        this.room.getData().setVisitorsNow(this.getVisiblePlayerCount());
 
 
 
@@ -329,8 +347,8 @@ public class RoomEntityManager {
         }
 
         // From this point onwards we send packets for the user to leave
-        this.room.getData().setVisitorsNow(this.room.getEntityManager().getPlayers().size());
-        this.room.send(new LOGOUT(entity.getRoomUser().getInstanceId()));
+        this.room.getData().setVisitorsNow(this.getVisiblePlayerCount());
+        this.room.sendVisible(new LOGOUT(entity.getRoomUser().getInstanceId()), entity);
         this.room.tryDispose();
 
         entity.getRoomUser().reset();

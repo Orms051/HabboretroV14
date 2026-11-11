@@ -1,5 +1,6 @@
 package org.alexdev.kepler.messages.incoming.rooms;
 
+import org.alexdev.kepler.game.entity.Entity;
 import org.alexdev.kepler.game.games.Game;
 import org.alexdev.kepler.game.item.Item;
 import org.alexdev.kepler.game.item.base.ItemBehaviour;
@@ -15,6 +16,7 @@ import org.alexdev.kepler.messages.outgoing.rooms.user.YOUARESPECTATOR;
 import org.alexdev.kepler.messages.types.MessageEvent;
 import org.alexdev.kepler.server.netty.streams.NettyRequest;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class G_STAT implements MessageEvent {
@@ -46,12 +48,23 @@ public class G_STAT implements MessageEvent {
             room.refreshRights(player);
         }
 
-        room.send(new USER_OBJECTS(player), List.of(player));
-        player.send(new USER_OBJECTS(room.getEntities()));
+        // Broadcast this player's arrival, but hide it from ordinary users if invisible.
+        room.sendVisible(new USER_OBJECTS(player), player, List.of(player));
+
+        // Build the list of entities this player is allowed to see (exclude hidden staff).
+        List<Entity> visible = new ArrayList<>();
+
+        for (Entity entity : room.getEntities()) {
+            if (Room.canSeeHidden(player, entity)) {
+                visible.add(entity);
+            }
+        }
+
+        player.send(new USER_OBJECTS(visible));
 
         room.getEntityManager().tryRoomEntry(player);
 
-        player.send(new USER_STATUSES(room.getEntities()));
+        player.send(new USER_STATUSES(visible));
         player.getRoomUser().setNeedsUpdate(true);
 
         for (Item item : room.getItems()) {

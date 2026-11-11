@@ -5,6 +5,7 @@ import org.alexdev.kepler.dao.mysql.RoomDao;
 import org.alexdev.kepler.dao.mysql.RoomVoteDao;
 import org.alexdev.kepler.game.GameScheduler;
 import org.alexdev.kepler.game.entity.Entity;
+import org.alexdev.kepler.game.entity.EntityType;
 import org.alexdev.kepler.game.item.Item;
 import org.alexdev.kepler.game.fuserights.Fuseright;
 import org.alexdev.kepler.game.navigator.NavigatorCategory;
@@ -52,6 +53,11 @@ public class Room {
     private List<Integer> rights;
     private Map<Integer, Integer> votes;
 
+    // Mute « salle » (modération) : échéance en secondes. Tant qu'elle est dans le futur,
+    // seuls les membres du staff (droit ROOM_ALERT) peuvent parler dans la salle.
+    // État volatile (remis à zéro au redémarrage / rechargement de la salle).
+    private long roomMuteUntil;
+
     public Room() {
         this.roomData = new RoomData(this);
         this.roomEntityManager = new RoomEntityManager(this);
@@ -81,8 +87,70 @@ public class Room {
      */
     public void send(MessageComposer composer, List<Player> playerList) {
         for (Player player : this.roomEntityManager.getPlayers()) {
+            if (playerList != null && playerList.contains(player)) {
+                continue;
+            }
+
             player.send(composer);
         }
+    }
+
+    /**
+     * Send a packet concerning a given subject entity, but only to players allowed to
+     * see it. If the subject is a player in invisible (Silent) mode, only staff with the
+     * fuse_enter_invisible right (and the subject themselves) receive it.
+     *
+     * @param composer the message composer packet
+     * @param subject the entity the packet is about
+     */
+    public void sendVisible(MessageComposer composer, Entity subject) {
+        this.sendVisible(composer, subject, null);
+    }
+
+    /**
+     * Visibility-aware send with an additional exclusion list.
+     *
+     * @param composer the message composer packet
+     * @param subject the entity the packet is about
+     * @param excludeList players to never send to (may be null)
+     */
+    public void sendVisible(MessageComposer composer, Entity subject, List<Player> excludeList) {
+        for (Player player : this.roomEntityManager.getPlayers()) {
+            if (excludeList != null && excludeList.contains(player)) {
+                continue;
+            }
+
+            if (!canSeeHidden(player, subject)) {
+                continue;
+            }
+
+            player.send(composer);
+        }
+    }
+
+    /**
+     * Returns whether a viewer is allowed to see a (possibly invisible) subject entity.
+     * Non-players (e.g. pets) and non-invisible players are always visible. An invisible
+     * player is visible only to themselves and to staff holding fuse_enter_invisible.
+     *
+     * @param viewer the player who would receive the packet
+     * @param subject the entity the packet is about
+     * @return true if the viewer may see the subject
+     */
+    public static boolean canSeeHidden(Player viewer, Entity subject) {
+        if (subject == null) {
+            return true;
+        }
+
+        if (subject.getType() != EntityType.PLAYER || !subject.getRoomUser().isInvisible()) {
+            return true;
+        }
+
+        if (viewer == subject) {
+            return true;
+        }
+
+        return viewer.hasFuse(Fuseright.ENTER_INVISIBLE);
     }
 
     /**
@@ -435,6 +503,33 @@ public class Room {
      */
     public int getId() {
         return this.roomData.getId();
+    }
+
+    /**
+     * Indique si la salle est actuellement réduite au silence par la modération.
+     *
+     * @return true si un mute de salle est en cours
+     */
+    public boolean isMuted() {
+        return this.roomMuteUntil > (System.currentTimeMillis() / 1000L);
+    }
+
+    /**
+     * Échéance du mute de salle (secondes), ou 0 si aucun.
+     *
+     * @return l'échéance en secondes
+     */
+    public long getRoomMuteUntil() {
+        return this.roomMuteUntil;
+    }
+
+    /**
+     * Définit l'échéance du mute de salle (secondes ; 0 pour lever le mute).
+     *
+     * @param roomMuteUntil l'échéance en secondes
+     */
+    public void setRoomMuteUntil(long roomMuteUntil) {
+        this.roomMuteUntil = roomMuteUntil;
     }
 
     /**

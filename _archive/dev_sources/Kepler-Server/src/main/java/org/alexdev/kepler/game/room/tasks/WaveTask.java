@@ -23,7 +23,7 @@ public class WaveTask implements Runnable {
         this.entity.getRoomUser().removeStatus(StatusType.WAVE);
 
         if (!this.entity.getRoomUser().isWalking()) {
-            this.entity.getRoomUser().getRoom().send(new USER_STATUSES(List.of(this.entity)));
+            this.entity.getRoomUser().getRoom().sendVisible(new USER_STATUSES(List.of(this.entity)), this.entity);
         }
     }
 }

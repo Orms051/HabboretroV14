@@ -256,6 +256,12 @@ public class RoomTile {
             }
         }
 
+        // Invisible (Silent) staff never block the movement of other players.
+        if (entity.getRoomUser() != null && entity.getRoomUser().isInvisible()) {
+            this.nonBlockingEntities.add(entity);
+            return;
+        }
+
         this.entities.add(entity);
     }
 

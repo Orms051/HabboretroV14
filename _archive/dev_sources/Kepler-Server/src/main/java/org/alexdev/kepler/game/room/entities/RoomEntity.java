@@ -59,6 +59,7 @@ public abstract class RoomEntity {
     private boolean beingKicked;
     private boolean needsUpdate;
     private boolean enableWalkingOnStop;
+    private boolean invisible;
 
     public RoomEntity(Entity entity) {
         this.entity = entity;
@@ -80,6 +81,24 @@ public abstract class RoomEntity {
         this.beingKicked = false;
         this.instanceId = -1;
         this.timerManager.resetRoomTimer();
+    }
+
+    /**
+     * Get if this entity is in invisible (Silent) mode. Only ever set on players.
+     *
+     * @return true, if invisible
+     */
+    public boolean isInvisible() {
+        return this.invisible;
+    }
+
+    /**
+     * Set the invisible (Silent) mode of this entity.
+     *
+     * @param invisible the new invisible state
+     */
+    public void setInvisible(boolean invisible) {
+        this.invisible = invisible;
     }
 
     /**
@@ -283,7 +302,7 @@ public abstract class RoomEntity {
         this.updateNewHeight(this.position);
 
         if (instantUpdate) {
-            this.room.send(new USER_STATUSES(List.of(this.entity)));
+            this.room.sendVisible(new USER_STATUSES(List.of(this.entity)), this.entity);
         } else {
             this.needsUpdate = true;
         }
@@ -590,7 +609,7 @@ public abstract class RoomEntity {
         this.setStatus(StatusType.WAVE, "");
 
         if (!this.entity.getRoomUser().isWalking()) {
-            this.room.send(new USER_STATUSES(List.of(this.entity)));
+            this.room.sendVisible(new USER_STATUSES(List.of(this.entity)), this.entity);
         }
 
         GameScheduler.getInstance().getService().schedule(new WaveTask(this.entity), 2, TimeUnit.SECONDS);
@@ -667,7 +686,7 @@ public abstract class RoomEntity {
                 this.room.send(new USER_OBJECTS(List.of(this.entity)));
             }
 
-            this.room.send(new USER_STATUSES(List.of(this.entity)));
+            this.room.sendVisible(new USER_STATUSES(List.of(this.entity)), this.entity);
 
             if (oldTile != null) {
                 this.invokeItem(oldTile.getPosition(), true);

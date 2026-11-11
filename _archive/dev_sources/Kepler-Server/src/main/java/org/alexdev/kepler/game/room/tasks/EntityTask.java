@@ -2,6 +2,7 @@ package org.alexdev.kepler.game.room.tasks;
 
 import org.alexdev.kepler.game.entity.Entity;
 import org.alexdev.kepler.game.entity.EntityType;
+import org.alexdev.kepler.game.fuserights.Fuseright;
 import org.alexdev.kepler.game.pathfinder.Position;
 import org.alexdev.kepler.game.pathfinder.Rotation;
 import org.alexdev.kepler.game.pets.Pet;
@@ -69,7 +70,33 @@ public class EntityTask implements Runnable {
             }
 
             if (entitiesToUpdate.size() > 0) {
-                this.room.send(new USER_STATUSES(entitiesToUpdate));
+                // If any updated entity is an invisible (Silent) staff member, ordinary
+                // users must not receive its status; only staff with the right do.
+                List<Entity> publicList = new ArrayList<>();
+                boolean hasHidden = false;
+
+                for (Entity updated : entitiesToUpdate) {
+                    if (updated.getType() == EntityType.PLAYER && updated.getRoomUser().isInvisible()) {
+                        hasHidden = true;
+                    } else {
+                        publicList.add(updated);
+                    }
+                }
+
+                if (!hasHidden) {
+                    this.room.send(new USER_STATUSES(entitiesToUpdate));
+                } else {
+                    USER_STATUSES fullUpdate = new USER_STATUSES(entitiesToUpdate);
+                    USER_STATUSES publicUpdate = publicList.isEmpty() ? null : new USER_STATUSES(publicList);
+
+                    for (Player player : this.room.getEntityManager().getPlayers()) {
+                        if (player.hasFuse(Fuseright.ENTER_INVISIBLE)) {
+                            player.send(fullUpdate);
+                        } else if (publicUpdate != null) {
+                            player.send(publicUpdate);
+                        }
+                    }
+                }
             }
         } catch (Exception ex) {
             Log.getErrorLogger().error("EntityTask crashed: ", ex);

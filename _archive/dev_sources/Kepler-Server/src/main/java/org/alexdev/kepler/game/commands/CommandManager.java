@@ -46,6 +46,14 @@ public class CommandManager {
         this.commands.put(new String[] { "setprice" }, new SetItemPriceCommand());
         this.commands.put(new String[] { "setconfig" }, new SetConfigCommand());
         this.commands.put(new String[] { "hotelalert" }, new HotelAlertCommand());
+        this.commands.put(new String[] { "mutesalle", "roommute", "roomshutup" }, new RoomMuteCommand());
+        this.commands.put(new String[] { "alert", "alerte" }, new AlertUserCommand());
+        this.commands.put(new String[] { "kick", "expulser" }, new KickUserCommand());
+        this.commands.put(new String[] { "shutup", "mute" }, new ShutUpCommand());
+        this.commands.put(new String[] { "unmute", "parole" }, new UnmuteCommand());
+        this.commands.put(new String[] { "roomalert", "alertesalle" }, new RoomAlertCommand());
+        this.commands.put(new String[] { "roomkick", "viderpiece", "kickall" }, new RoomKickAllCommand());
+        this.commands.put(new String[] { "invisible", "invis" }, new InvisibleCommand());
         this.commands.put(new String[] { "ufos" }, new UfosCommand());
         this.commands.put(new String[] { "talk" }, new TalkCommand());
         this.commands.put(new String[] { "infobus", "bus" }, new InfobusCommand());
