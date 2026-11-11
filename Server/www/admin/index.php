@@ -5850,34 +5850,36 @@ JS2;
     /* Menu déroulant : colonnes affichées */
     echo '<div class="sm-menu-wrap">'
        . '<button type="button" class="mini ghost sm-menu-btn" data-menu="cols">⊞ Colonnes <span class="sm-ca">▾</span></button>'
-       . '<div class="sm-menu" id="menu-cols">'
-       . '<div class="sm-menu-h">Statuts (lecture seule)</div>'
-       . '<label class="sm-mi"><input type="checkbox" class="sm-statuscol" value="norm" checked><span class="sm-dot" style="background:#5a6b85"></span> Habbo</label>'
-       . '<label class="sm-mi"><input type="checkbox" class="sm-statuscol" value="hc" checked><span class="sm-dot" style="background:#12a85a"></span> HC</label>'
-       . '<label class="sm-mi"><input type="checkbox" class="sm-statuscol" value="vip" checked><span class="sm-dot" style="background:#9b59b6"></span> VIP</label>'
-       . '<div class="sm-menu-h">Grades</div>';
+       . '<div class="sm-menu sm-menu-cols" id="menu-cols">'
+       . '<div class="sm-menu-h">👤 Statuts <span class="sm-sub">· lecture seule</span></div>'
+       . '<div class="sm-grid">'
+       . '<label class="sm-opt"><input type="checkbox" class="sm-statuscol" value="norm" checked><span class="sm-dot" style="background:#5a6b85"></span><span class="sm-nm">Habbo</span><span class="sm-chk">✓</span></label>'
+       . '<label class="sm-opt"><input type="checkbox" class="sm-statuscol" value="hc" checked><span class="sm-dot" style="background:#12a85a"></span><span class="sm-nm">HC</span><span class="sm-chk">✓</span></label>'
+       . '<label class="sm-opt"><input type="checkbox" class="sm-statuscol" value="vip" checked><span class="sm-dot" style="background:#9b59b6"></span><span class="sm-nm">VIP</span><span class="sm-chk">✓</span></label>'
+       . '</div>'
+       . '<div class="sm-menu-h">🎖️ Grades</div>'
+       . '<div class="sm-grid">';
     foreach ($ranks as $rk => $lbl) {
         $gc = $rk >= 7 ? '#ff5b5b' : ($rk >= 6 ? '#ffb033' : ($rk >= 3 ? '#3a7afe' : '#5a6b85'));
-        echo '<label class="sm-mi"><input type="checkbox" class="sm-gradecol" value="' . $rk . '" checked><span class="sm-dot" style="background:' . $gc . '"></span> ' . h($lbl) . '</label>';
+        echo '<label class="sm-opt"><input type="checkbox" class="sm-gradecol" value="' . $rk . '" checked><span class="sm-dot" style="background:' . $gc . '"></span><span class="sm-nm">' . h($lbl) . '</span><span class="sm-chk">✓</span></label>';
     }
-    echo '</div></div>';
+    echo '</div></div></div>';
 
     /* Menu déroulant : actions groupées par grade */
     echo '<div class="sm-menu-wrap">'
        . '<button type="button" class="mini ghost sm-menu-btn" data-menu="ops">⚙ Actions par grade <span class="sm-ca">▾</span></button>'
-       . '<div class="sm-menu sm-menu-wide" id="menu-ops">'
+       . '<div class="sm-menu sm-menu-ops" id="menu-ops">'
        . '<div class="sm-menu-h">Appliquer à un grade</div>'
-       . '<select id="sm-grade" class="sm-inp sm-inp-s sm-full">';
+       . '<select id="sm-grade" class="sm-full">';
     foreach ($ranks as $rk => $lbl) echo '<option value="' . $rk . '">' . h($lbl) . '</option>';
     echo '</select>'
-       . '<div class="sm-menu-grid">'
-       . '<button type="button" class="mini" data-op="all">Tout cocher</button>'
-       . '<button type="button" class="mini" data-op="none">Tout décocher</button>'
-       . '<button type="button" class="mini sm-wide-btn" data-op="defaults">↺ Défauts</button>'
+       . '<div class="sm-btns">'
+       . '<button type="button" class="mini ghost" data-op="all">☑ Tout cocher</button>'
+       . '<button type="button" class="mini ghost" data-op="none">☐ Tout décocher</button>'
+       . '<button type="button" class="mini ghost span2" data-op="defaults">↺ Remettre les défauts</button>'
        . '</div>'
-       . '<div class="sm-menu-sep"></div>'
        . '<div class="sm-menu-h">Copier ce grade vers</div>'
-       . '<div class="sm-menu-row"><select id="sm-copyto" class="sm-inp sm-inp-s">';
+       . '<div class="sm-copy"><select id="sm-copyto">';
     foreach ($ranks as $rk => $lbl) echo '<option value="' . $rk . '">' . h($lbl) . '</option>';
     echo '</select><button type="button" class="mini" data-op="copy">Copier</button></div>'
        . '</div></div>';
@@ -8962,23 +8964,32 @@ button.season:hover{border-color:var(--acc);background:var(--soft)}button.season
 .sm-ca{font-size:10px;opacity:.7}
 .sm-menu-wrap{position:relative;display:inline-flex}
 .sm-menu-btn.on{background:var(--soft);border-color:var(--acc);color:var(--acc)}
-.sm-menu{position:absolute;top:calc(100% + 7px);left:0;z-index:40;min-width:210px;background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:0 14px 34px rgba(20,30,50,.20);padding:9px;display:none;flex-direction:column;gap:5px}
+.sm-menu{position:absolute;top:calc(100% + 7px);left:0;z-index:40;background:var(--panel);border:1px solid var(--line2);border-radius:14px;box-shadow:0 14px 34px rgba(20,30,50,.18);padding:12px;display:none;flex-direction:column}
 .sm-menu.open{display:flex}
-.sm-menu-wide{min-width:250px}
-.sm-menu-h{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);margin:5px 3px 1px}
-.sm-menu .sm-mi{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:9px;padding:6px 9px;border-radius:8px;font-size:13px;font-weight:600;color:var(--txt);cursor:pointer}
-.sm-menu .sm-mi:hover{background:var(--soft)}
-.sm-menu .sm-mi input{margin:0;flex:0 0 auto}
-.sm-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
-.sm-menu .sm-full,.sm-menu select{width:100%}
-.sm-menu .mini{padding:7px 10px;font-size:12.5px;text-align:center}
-.sm-menu-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:2px}
-.sm-menu-grid .mini{width:100%}
-.sm-menu-grid .sm-wide-btn{grid-column:1 / -1}
-.sm-menu-row{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
-.sm-menu-row select{flex:1;min-width:0}
-.sm-menu-row .mini{flex:0 0 auto}
-.sm-menu-sep{height:1px;background:var(--line2);margin:7px 0}
+.sm-menu-cols{width:300px}
+.sm-menu-ops{width:270px}
+.sm-menu-h{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);margin:4px 2px 8px;display:flex;align-items:center;gap:6px}
+.sm-menu-h:not(:first-child){margin-top:14px;padding-top:12px;border-top:1px solid var(--line2)}
+.sm-menu-h .sm-sub{font-weight:600;text-transform:none;letter-spacing:0;color:var(--mut)}
+/* Colonnes : grille de pastilles cochables */
+.sm-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.sm-menu .sm-opt{display:flex;flex-direction:row;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line2);border-radius:10px;font-size:12.5px;font-weight:600;color:var(--txt);cursor:pointer;user-select:none;background:var(--panel);transition:.12s;min-width:0}
+.sm-menu .sm-opt:hover{border-color:var(--acc)}
+.sm-opt .sm-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.sm-opt .sm-nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sm-opt input{position:absolute;opacity:0;width:0;height:0;pointer-events:none}
+.sm-opt .sm-chk{width:16px;height:16px;border:1.5px solid var(--line2);border-radius:5px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:transparent;font-size:11px;font-weight:900;transition:.12s}
+.sm-opt input:checked ~ .sm-chk{background:var(--acc);border-color:var(--acc);color:#fff}
+.sm-opt:has(input:checked){background:var(--soft);border-color:var(--acc)}
+/* Actions : select + boutons */
+.sm-menu .sm-full,.sm-menu select{width:100%;padding:8px 12px;border-radius:9px;border:1px solid var(--line2);background:var(--bg);color:var(--txt);font-size:13px}
+.sm-menu .mini{padding:8px 10px;font-size:12.5px;text-align:center}
+.sm-btns{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}
+.sm-btns .mini{width:100%}
+.sm-btns .span2{grid-column:1 / -1}
+.sm-copy{display:flex;align-items:center;gap:7px}
+.sm-copy select{flex:1;min-width:0}
+.sm-copy .mini{flex:0 0 auto}
 /* Bandeau statistiques */
 .staff-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:6px 0 16px}
 .staff-stats .sstat{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:13px 16px}
