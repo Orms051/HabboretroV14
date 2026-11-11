@@ -5801,23 +5801,26 @@ function page_staff(): void {
     echo '<p class="muted sm">Change le grade d\'un membre, ou rétrograde-le en simple joueur. Le changement s\'applique à sa prochaine connexion au jeu.</p>';
     if (!$staff) echo '<p class="muted">Aucun membre d\'équipe (rang ≥ 2) pour le moment.</p>';
     else {
-        echo '<input type="text" id="staff-team-search" class="sm-inp" placeholder="🔎 Filtrer l\'équipe par pseudo…" style="margin-bottom:8px;width:100%;max-width:320px">';
-        echo '<table class="tbl" id="staff-team"><thead><tr><th>Joueur</th><th>Grade actuel</th><th>Changer</th></tr></thead><tbody>';
+        echo '<input type="text" id="staff-team-search" class="sm-inp" placeholder="🔎 Filtrer l\'équipe par pseudo…" style="margin:4px 0 14px;width:100%;max-width:340px">';
         $me = (int)($_SESSION['admin']['id'] ?? 0);
+        echo '<div class="team-list" id="staff-team">';
         foreach ($staff as $u) {
             $uid = (int)$u['id']; $rk = (int)$u['rank']; $self = ($uid === $me);
-            echo '<tr data-name="' . h(mb_strtolower($u['username'])) . '"><td>' . rank_badge($rk) . ' <b>' . h($u['username']) . '</b></td>';
-            echo '<td>' . h(RANKS[$rk] ?? ('Rang ' . $rk)) . '</td><td>';
-            if ($self) echo '<span class="muted sm">🔒 toi-même</span>';
-            else {
-                echo '<form method="post" class="row js" data-reload style="gap:6px;align-items:center"><input type="hidden" name="action" value="staff_rank">' . csrf_field()
-                   . '<input type="hidden" name="uid" value="' . $uid . '">'
-                   . '<select name="rank">' . rank_options($rk) . '</select>'
-                   . '<button class="mini">💾</button></form>';
-            }
-            echo '</td></tr>';
+            $gc = $rk >= 7 ? '#ff5b5b' : ($rk >= 6 ? '#ffb033' : ($rk >= 3 ? '#3a7afe' : '#5a6b85'));
+            $ini = mb_strtoupper(mb_substr((string)$u['username'], 0, 1));
+            echo '<div class="team-card" data-name="' . h(mb_strtolower($u['username'])) . '" style="--rkc:' . $gc . '">';
+            echo '<div class="tc-ava" style="background:' . $gc . '">' . h($ini) . '</div>';
+            echo '<div class="tc-main"><div class="tc-name">' . h($u['username']) . '</div>'
+               . '<div class="tc-sub">' . rank_badge($rk) . ' <span class="muted sm">#' . $uid . '</span></div></div>';
+            echo '<div class="tc-act">';
+            if ($self) echo '<span class="tc-self">🔒 toi-même</span>';
+            else echo '<form method="post" class="js tc-form" data-reload><input type="hidden" name="action" value="staff_rank">' . csrf_field()
+               . '<input type="hidden" name="uid" value="' . $uid . '">'
+               . '<select name="rank" class="tc-select">' . rank_options($rk) . '</select>'
+               . '<button class="mini tc-save" title="Enregistrer le grade">💾</button></form>';
+            echo '</div></div>';
         }
-        echo '</tbody></table>';
+        echo '</div>';
     }
     echo '<details style="margin-top:10px"><summary class="mini" style="font-weight:700">➕ Promouvoir un joueur dans l\'équipe</summary>'
        . '<form method="post" class="row js" data-reload style="gap:8px;margin-top:8px;align-items:flex-end">'
@@ -5831,7 +5834,7 @@ function page_staff(): void {
     try { foreach (db()->query('SELECT username FROM users ORDER BY username LIMIT 2000') as $r) echo '<option value="' . h($r['username']) . '">'; } catch (Throwable $e) {}
     echo '</datalist>';
     echo <<<'JS2'
-<script>(function(){var ts=document.getElementById('staff-team-search');if(!ts)return;ts.addEventListener('input',function(){var q=this.value.trim().toLowerCase();[].forEach.call(document.querySelectorAll('#staff-team tbody tr'),function(tr){tr.style.display=(!q||(tr.getAttribute('data-name')||'').indexOf(q)>=0)?'':'none';});});})();</script>
+<script>(function(){var ts=document.getElementById('staff-team-search');if(!ts)return;ts.addEventListener('input',function(){var q=this.value.trim().toLowerCase();[].forEach.call(document.querySelectorAll('#staff-team .team-card'),function(c){c.style.display=(!q||(c.getAttribute('data-name')||'').indexOf(q)>=0)?'':'none';});});})();</script>
 JS2;
     }
 
@@ -8609,7 +8612,7 @@ function db_backup(): bool {
 }
 function page_title(string $t, string $sub = ''): void { echo '<div class="pagehead"><h1>' . h($t) . '</h1>' . ($sub ? '<p class="sub">' . h($sub) . '</p>' : '') . '</div>'; }
 function stat_box(string $icon, $val, string $label, string $col = 'blue', string $id = ''): void { echo '<div class="stat ' . $col . '"><div class="ic">' . $icon . '</div><div><div class="num"' . ($id !== '' ? ' id="' . h($id) . '"' : '') . '>' . h((string)$val) . '</div><div class="lbl">' . h($label) . '</div></div></div>'; }
-function rank_badge(int $r): string { $n = [1 => 'Joueur', 2 => 'Community M.', 3 => 'Guide', 4 => 'Hobba', 5 => 'Super Hobba', 6 => 'Modérateur', 7 => 'Admin']; $c = $r >= 7 ? '#ff5b5b' : ($r >= 6 ? '#ffb033' : ($r >= 3 ? '#3a7afe' : '#5a6b85')); return '<span class="rk" style="background:' . $c . '">' . h($n[$r] ?? (string)$r) . '</span>'; }
+function rank_badge(int $r): string { $n = [1 => 'Joueur', 2 => 'Community M.', 3 => 'Habbo X', 4 => 'Hobba', 5 => 'Super Hobba', 6 => 'Modérateur', 7 => 'Admin']; $c = $r >= 7 ? '#ff5b5b' : ($r >= 6 ? '#ffb033' : ($r >= 3 ? '#3a7afe' : '#5a6b85')); return '<span class="rk" style="background:' . $c . '">' . h($n[$r] ?? (string)$r) . '</span>'; }
 function rank_options(int $c): string { $o = ''; foreach (RANKS as $n => $l) $o .= '<option value="' . $n . '"' . ($n === $c ? ' selected' : '') . '>' . h($l) . '</option>'; return $o; }
 function available_casts(): array { $o = []; foreach (glob(DCR_DIR . '/hh_room_*.cct') ?: [] as $f) $o[] = basename($f, '.cct'); return $o; }
 function decor_variants(array $casts, string $base): array {
@@ -8990,6 +8993,20 @@ button.season:hover{border-color:var(--acc);background:var(--soft)}button.season
 .sm-copy{display:flex;align-items:center;gap:7px}
 .sm-copy select{flex:1;min-width:0}
 .sm-copy .mini{flex:0 0 auto}
+/* Onglet Équipe : cartes membres */
+.team-list{display:flex;flex-direction:column;gap:10px;margin-top:2px}
+.team-card{display:flex;align-items:center;gap:14px;padding:12px 15px;background:var(--panel);border:1px solid var(--line2);border-left:4px solid var(--rkc,var(--line2));border-radius:12px;transition:.12s}
+.team-card:hover{box-shadow:0 5px 16px rgba(20,30,50,.09)}
+.tc-ava{width:42px;height:42px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:18px;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.tc-main{flex:1;min-width:0}
+.tc-name{font-weight:700;font-size:15px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-sub{margin-top:5px;display:flex;align-items:center;gap:8px}
+.tc-act{flex:0 0 auto;display:flex;align-items:center}
+.tc-form{display:flex;flex-direction:row;align-items:center;gap:7px}
+.tc-select{padding:8px 10px;border-radius:9px;border:1px solid var(--line2);background:var(--bg);color:var(--txt);font-size:13px}
+.tc-save{padding:8px 11px}
+.tc-self{font-size:13px;color:var(--mut);background:var(--bg);border:1px solid var(--line2);border-radius:9px;padding:8px 12px;white-space:nowrap}
+@media(max-width:720px){.team-card{flex-wrap:wrap}.tc-act,.tc-form{width:100%}.tc-select{flex:1}}
 /* Bandeau statistiques */
 .staff-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:6px 0 16px}
 .staff-stats .sstat{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:13px 16px}
