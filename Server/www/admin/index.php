@@ -16,13 +16,14 @@ define('DB_PORT', (int)(getenv('V14_DB_PORT') ?: 3306));
 define('DB_NAME', getenv('V14_DB_NAME') ?: 'v14');
 define('DB_USER', getenv('V14_DB_USER') ?: 'root');
 define('DB_PASS', getenv('V14_DB_PASS') !== false ? getenv('V14_DB_PASS') : '');
-const MIN_RANK = 5;
+const MIN_RANK = 5;          // rang par défaut des onglets sensibles (modération, technique…)
+const ADMIN_MIN_RANK = 2;    // rang minimum pour ENTRER dans l'admin (CM) ; chaque onglet reste gardé par son propre rang
 const DCR_DIR = __DIR__ . '/../dcr/14.1_b8';
 const BADGE_DIR = __DIR__ . '/../c_images/badges';
-const BAN_PERMANENT = 253402214400000;
+const BAN_PERMANENT = 253402214400; // sentinelle « définitif », en SECONDES (an 9999) — unité lue par l'ému
 const PER_PAGE = 20;
 
-const RANKS = [1 => '1 · Joueur', 2 => '2 · Community Manager', 3 => '3 · Guide', 4 => '4 · Hobba', 5 => '5 · Super Hobba', 6 => '6 · Modérateur', 7 => '7 · Administrateur'];
+const RANKS = [1 => '1 · Joueur', 2 => '2 · Community Manager', 3 => '3 · Habbo X', 4 => '4 · Hobba', 5 => '5 · Super Hobba', 6 => '6 · Modérateur', 7 => '7 · Administrateur'];
 
 const DECOR_LABELS = [
     '' => '🏛️ Normal', 'xmas' => '🎄 Noël', 'halloween' => '🎃 Halloween', 'easter' => '🐣 Pâques',
@@ -159,8 +160,8 @@ if ($p === 'login') {
         $st = db()->prepare('SELECT id,username,password,rank FROM users WHERE username=?'); $st->execute([trim($_POST['username'] ?? '')]);
         $u = $st->fetch();
         if ($u && password_verify((string)($_POST['password'] ?? ''), $u['password'])) {
-            if ((int)$u['rank'] >= MIN_RANK) { throttle_ok('admin'); session_regenerate_id(true); $_SESSION['admin'] = ['id' => $u['id'], 'username' => $u['username'], 'rank' => (int)$u['rank']]; redirect('?p=dashboard'); }
-            $err = "Ce compte n'a pas les droits (rang " . MIN_RANK . "+ requis).";
+            if ((int)$u['rank'] >= ADMIN_MIN_RANK) { throttle_ok('admin'); session_regenerate_id(true); $_SESSION['admin'] = ['id' => $u['id'], 'username' => $u['username'], 'rank' => (int)$u['rank']]; redirect('?p=dashboard'); }
+            $err = "Ce compte n'a pas les droits (rang " . ADMIN_MIN_RANK . "+ requis).";
         } else { throttle_fail('admin'); $err = 'Nom ou mot de passe incorrect.'; }
     }
     render_login($err); exit;
@@ -169,14 +170,14 @@ if ($p === 'login') {
 if (empty($_SESSION['admin']) && !empty($_SESSION['site_user']['id'])) {
     $st = db()->prepare('SELECT id,username,rank FROM users WHERE id=?'); $st->execute([(int)$_SESSION['site_user']['id']]);
     $su = $st->fetch();
-    if ($su && (int)$su['rank'] >= MIN_RANK) $_SESSION['admin'] = ['id' => $su['id'], 'username' => $su['username'], 'rank' => (int)$su['rank']];
+    if ($su && (int)$su['rank'] >= ADMIN_MIN_RANK) $_SESSION['admin'] = ['id' => $su['id'], 'username' => $su['username'], 'rank' => (int)$su['rank']];
 }
 require_login();
 
 /* ---------- Revérifie compte + rang en base à chaque requête (source de vérité) ---------- */
 $rv = db()->prepare('SELECT `rank` FROM users WHERE id=?'); $rv->execute([(int)($_SESSION['admin']['id'] ?? 0)]);
 $curRank = $rv->fetchColumn();
-if ($curRank === false || (int)$curRank < MIN_RANK) { session_destroy(); redirect('/?p=login'); }
+if ($curRank === false || (int)$curRank < ADMIN_MIN_RANK) { session_destroy(); redirect('/?p=login'); }
 $_SESSION['admin']['rank'] = (int)$curRank;
 
 /* ---------- Statut du redémarrage Kepler (AJAX, lecture seule, droit « server ») ---------- */
@@ -628,6 +629,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'rank_badge_remove':
                 db()->prepare('DELETE FROM rank_badges WHERE rank=? AND badge=?')->execute([(int)$_POST['rank'], strtoupper((string)$_POST['badge'])]);
                 $msg = '✅ Badge de rang retiré.'; break;
+            case 'staff_perms_save':
+                // Matrice de permissions (grade × droit). On ne touche QUE les droits
+                // du registre, pour les rangs staff (2-7) : les droits de base du joueur
+                // et les droits hors registre restent intacts.
+                staff_ensure_table();
+                $codes = []; foreach (fuserights_registry() as $grp) foreach ($grp as $r) $codes[] = $r[0];
+                foreach (staff_club_rights() as $cr) $codes[] = $cr[0]; // avantages club offrables par grade
+                $posted = $_POST['perm'] ?? [];
+                $ins = db()->prepare('INSERT IGNORE INTO rank_fuserights (`rank`, fuseright) VALUES (?, ?)');
+                $del = db()->prepare('DELETE FROM rank_fuserights WHERE `rank`=? AND fuseright=?');
+                $nOn = 0;
+                foreach (array_keys(staff_ranks()) as $rk) {
+                    foreach ($codes as $code) {
+                        if (isset($posted[$rk][$code])) { $ins->execute([$rk, $code]); $nOn++; }
+                        else { $del->execute([$rk, $code]); }
+                    }
+                }
+                admin_log('staff_perms_save', $nOn . ' droit(s) actif(s) sur les grades');
+                // Rechargement à chaud : même canal RCON local (127.0.0.1:12309) que kick/alerte.
+                // Fire-and-forget : confirme l'ENVOI à l'ému, pas l'exécution (le protocole RCON n'a pas d'accusé).
+                $reloaded = @rcon_send('reload_fuserights');
+                $msg = $reloaded
+                    ? '✅ Permissions enregistrées. Commande de rechargement envoyée à l\'émulateur.'
+                    : '✅ Permissions enregistrées. ⚠️ Émulateur injoignable (RCON) : tape « :reload fuserights » en jeu, ou redémarre l\'émulateur.';
+                break;
+            case 'staff_rank':
+                $uid = (int)($_POST['uid'] ?? 0); $rk = max(1, min(7, (int)($_POST['rank'] ?? 0)));
+                $uname = trim((string)($_POST['username'] ?? ''));
+                if ($uid <= 0 && $uname !== '') { // formulaire « promouvoir » : résolution par pseudo
+                    $q = db()->prepare('SELECT id FROM users WHERE username=? LIMIT 1'); $q->execute([$uname]);
+                    $uid = (int)$q->fetchColumn();
+                    if ($uid <= 0) { $ok = false; $msg = 'Joueur « ' . h($uname) . ' » introuvable.'; break; }
+                }
+                if ($uid <= 0) { $ok = false; $msg = 'Joueur invalide.'; break; }
+                if ($uid === (int)($_SESSION['admin']['id'] ?? 0)) { $ok = false; $msg = '🔒 Tu ne peux pas changer ton propre grade.'; break; }
+                db()->prepare('UPDATE users SET `rank`=? WHERE id=?')->execute([$rk, $uid]);
+                admin_log('staff_rank', 'uid=' . $uid . ' → rang ' . $rk);
+                $msg = '✅ Grade mis à jour (le joueur doit se reconnecter pour l\'appliquer en jeu).'; break;
+            case 'vip_set':
+                // Statut VIP (invité prestige) : badge VIP + HC offert + entrée salles pleines, aucun pouvoir.
+                $uid = (int)($_POST['id'] ?? 0); $enable = (int)($_POST['enable'] ?? 0) === 1;
+                if ($uid <= 0) { $ok = false; $msg = 'Joueur invalide.'; break; }
+                ensure_users_vip();
+                if ($enable) {
+                    db()->prepare('INSERT IGNORE INTO users_vip (user_id) VALUES (?)')->execute([$uid]);
+                    db()->prepare('DELETE FROM users_badges WHERE user_id=? AND badge=?')->execute([$uid, 'VIP']);
+                    db()->prepare('INSERT INTO users_badges (user_id, badge) VALUES (?, ?)')->execute([$uid, 'VIP']);
+                    $msg = '⭐ Statut VIP accordé (badge VIP + HC offert + entrée dans les salles pleines). Le joueur doit se reconnecter pour l\'appliquer en jeu.';
+                } else {
+                    db()->prepare('DELETE FROM users_vip WHERE user_id=?')->execute([$uid]);
+                    db()->prepare('DELETE FROM users_badges WHERE user_id=? AND badge=?')->execute([$uid, 'VIP']);
+                    $msg = '✖️ Statut VIP retiré (le joueur doit se reconnecter).';
+                }
+                admin_log('vip_set', 'uid=' . $uid . ($enable ? ' → VIP accordé' : ' → VIP retiré')); break;
             case 'bot_update':
                 $nl2pipe = fn($s) => implode('|', array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string)$s)), fn($x) => $x !== ''));
                 db()->prepare('UPDATE rooms_bots SET name=?, mission=?, speech=?, response=?, unrecognised_response=? WHERE id=?')
@@ -741,12 +796,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = '✅ Ordre modifié. Redémarre l\'émulateur pour le voir en jeu.'; break;
             case 'ban_add':
                 $target = trim($_POST['value'] ?? ''); $type = in_array($_POST['type'] ?? '', ['USER_ID', 'IP_ADDRESS', 'MACHINE_ID'], true) ? $_POST['type'] : 'USER_ID';
-                $days = (int)($_POST['days'] ?? 0); $until = $days > 0 ? (int)((time() + $days * 86400) * 1000) : BAN_PERMANENT;
-                if ($type === 'USER_ID') { $st = db()->prepare('SELECT id FROM users WHERE username=?'); $st->execute([$target]); $uid = $st->fetchColumn(); if (!$uid) { $ok = false; $msg = '❌ Joueur "' . $target . '" introuvable.'; break; } $target = (string)$uid; }
-                db()->prepare('INSERT INTO users_bans (ban_type,banned_value,message,banned_until) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE message=VALUES(message), banned_until=VALUES(banned_until), ban_type=VALUES(ban_type)')->execute([$type, $target, trim($_POST['message'] ?? 'Banni'), $until]);
-                $msg = '🚫 Bannissement enregistré.'; break;
+                $reasons = ban_reasons(); $code = isset($reasons[$_POST['reason_code'] ?? '']) ? (string)$_POST['reason_code'] : 'AUTRE';
+                $label = $reasons[$code][0];
+                // Durée : 0 = définitif. Priorité au champ « days » (jours), sinon durée par défaut du motif.
+                $days = isset($_POST['days']) && $_POST['days'] !== '' ? max(0, (int)$_POST['days']) : (int)$reasons[$code][1];
+                $until = $days > 0 ? (time() + $days * 86400) : BAN_PERMANENT;   // ⚠️ SECONDES (unité lue par l'ému)
+                $message = trim($_POST['message'] ?? '') !== '' ? trim($_POST['message']) : $label;
+                $uid = null;
+                if ($type === 'USER_ID') { $st = db()->prepare('SELECT id FROM users WHERE username=?'); $st->execute([$target]); $fid = $st->fetchColumn(); if (!$fid) { $ok = false; $msg = '❌ Joueur "' . $target . '" introuvable.'; break; } $uid = (int)$fid; $target = (string)$uid; }
+                db()->prepare('INSERT INTO users_bans (ban_type,banned_value,message,banned_until) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE message=VALUES(message), banned_until=VALUES(banned_until), ban_type=VALUES(ban_type)')->execute([$type, $target, mb_substr($message, 0, 250), $until]);
+                ban_history_log($uid, $target, $type, $code, $label, mb_substr($message, 0, 250), $days * 24, $until, 'admin');
+                // Ban IP optionnel (coché) : bannit aussi la dernière IP connue du joueur.
+                if ($type === 'USER_ID' && (int)($_POST['ban_ip'] ?? 0) === 1) {
+                    try { $qi = db()->prepare('SELECT ip_address FROM users_ip_logs WHERE user_id=? ORDER BY id DESC LIMIT 1'); $qi->execute([$uid]); $ip = (string)$qi->fetchColumn();
+                        if ($ip !== '') { db()->prepare('INSERT INTO users_bans (ban_type,banned_value,message,banned_until) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE message=VALUES(message), banned_until=VALUES(banned_until), ban_type=VALUES(ban_type)')->execute(['IP_ADDRESS', $ip, mb_substr($message, 0, 250), $until]);
+                            ban_history_log($uid, $ip, 'IP_ADDRESS', $code, $label, mb_substr($message, 0, 250), $days * 24, $until, 'admin'); } } catch (Throwable $e) {}
+                }
+                // Si le joueur est connecté, on le déconnecte tout de suite (RCON). Sinon le ban s'applique à la reconnexion.
+                if ($uid) { try { rcon_send('kick_user', ['userId' => (string)$uid]); } catch (Throwable $e) {} }
+                $rec = $uid ? ban_recidive_count($uid) : 0;
+                $msg = '🚫 Bannissement enregistré (' . ($days > 0 ? $days . ' j' : 'définitif') . ' · ' . h($label) . ')' . ($rec > 1 ? ' — ⚠️ récidive n°' . $rec : '') . '.'; break;
             case 'ban_remove':
-                db()->prepare('DELETE FROM users_bans WHERE banned_value=?')->execute([(string)$_POST['value']]); $msg = '✅ Bannissement levé.'; break;
+                $val = (string)$_POST['value'];
+                db()->prepare('DELETE FROM users_bans WHERE banned_value=?')->execute([$val]);
+                ban_history_lift($val, (string)($_SESSION['admin']['username'] ?? '?'));
+                $msg = '✅ Bannissement levé.'; break;
+            case 'mute_add':
+                $uid = (int)($_POST['id'] ?? 0); if ($uid <= 0) { $ok = false; $msg = 'Joueur invalide.'; break; }
+                $mins = max(1, (int)($_POST['minutes'] ?? 0)); if ($mins > 525600) $mins = 525600; // plafond 1 an
+                $mreasons = mute_reasons(); $mc = isset($mreasons[$_POST['reason_code'] ?? '']) ? (string)$_POST['reason_code'] : 'AUTRE';
+                $mreason = trim($_POST['reason'] ?? '') !== '' ? trim($_POST['reason']) : $mreasons[$mc];
+                $mUntil = time() + $mins * 60;
+                mute_set($uid, $mUntil, mb_substr($mreason, 0, 250));
+                $dur = $mins >= 60 ? (round($mins / 60, 1) . ' h') : ($mins . ' min');
+                user_log($uid, 'mute_add', 'Réduit au silence ' . $dur . ' — ' . mb_substr($mreason, 0, 80));
+                admin_log('mute_add', 'uid=' . $uid . ' ' . $dur . ' — ' . mb_substr($mreason, 0, 120));
+                $msg = '🔇 Joueur réduit au silence pour ' . $dur . ' (effet en jeu sous ~20 s).'; break;
+            case 'mute_remove':
+                $uid = (int)($_POST['id'] ?? 0); if ($uid <= 0) { $ok = false; $msg = 'Joueur invalide.'; break; }
+                mute_clear($uid);
+                user_log($uid, 'mute_remove', 'Parole rendue');
+                admin_log('mute_remove', 'uid=' . $uid);
+                $msg = '🔊 Parole rendue au joueur (effet en jeu sous ~20 s).'; break;
             case 'news_add':
                 ensure_news();
                 $col = in_array($_POST['color'] ?? '', ['blue', 'green', 'purple', 'orange'], true) ? $_POST['color'] : 'blue';
@@ -1751,6 +1842,7 @@ switch ($p) {
     case 'user': page_user(); break;
     case 'badges': page_badges(); break;
     case 'ranks': page_ranks(); break;
+    case 'staff': page_staff(); break;
     case 'games': page_games(); break;
     case 'moderation': page_moderation(); break;
     case 'veille': $_GET['sec'] = 'veille'; page_alerts(); break;
@@ -1774,17 +1866,24 @@ render_footer();
 
 /* ============ ACCÈS AUX ONGLETS PAR RANG ============ */
 function admin_nav(): array {
-    return ['dashboard' => ['🏠', 'Accueil'], 'stats' => ['📈', 'Statistiques'], 'veille' => ['🔎', 'Veille & signalements'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal & diagnostics'], 'wordfilter' => ['🤬', 'Filtre de mots'], 'security' => ['🛡️', 'Sécurité'], 'maintenance' => ['🚧', 'Maintenance']];
+    return ['dashboard' => ['🏠', 'Accueil'], 'stats' => ['📈', 'Statistiques'], 'veille' => ['🔎', 'Veille & signalements'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'staff' => ['👮', 'Gestion du personnel'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal & diagnostics'], 'wordfilter' => ['🤬', 'Filtre de mots'], 'security' => ['🛡️', 'Sécurité'], 'maintenance' => ['🚧', 'Maintenance']];
 }
 function tab_default_rank(string $tab): int {
-    $d = ['mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'homemod' => 6, 'journal' => 7, 'veille' => 6, 'security' => 7, 'maintenance' => 7];
+    $d = [
+        // Communautaire : ouvert au Community Manager (2) et Habbo X (3) — pas de modération
+        'dashboard' => 2, 'news' => 2, 'events' => 2, 'sitemgr' => 2,
+        // Sensible : modération / gestion joueurs (rang par défaut MIN_RANK=5 et plus)
+        'homemod' => 6, 'veille' => 6,
+        // Technique / administration (rang 7)
+        'mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'staff' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'journal' => 7, 'security' => 7, 'maintenance' => 7,
+    ];
     return $d[$tab] ?? MIN_RANK;
 }
 function nav_groups(): array {
     return [
         '' => ['dashboard', 'search', 'stats', 'alerts'],
         'Site & contenus' => ['sitemgr', 'news'],
-        'Joueurs' => ['users', 'badges', 'ranks'],
+        'Joueurs' => ['users', 'badges', 'ranks', 'staff'],
         'Modération & assistance' => ['messages', 'moderation', 'homemod', 'commandes', 'wordfilter', 'audit'],
         'Hôtel & appartements' => ['rooms', 'models', 'gamemaps', 'bots', 'games'],
         'Catalogue & économie' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax', 'recycler', 'vouchers'],
@@ -3583,6 +3682,7 @@ function action_tab(string $a): string {
         // Badges / rangs
         'badge_add' => 'badges', 'badge_remove' => 'badges', 'badge_all' => 'badges',
         'rank_badge_add' => 'ranks', 'rank_badge_remove' => 'ranks',
+        'staff_perms_save' => 'staff', 'staff_rank' => 'staff', 'vip_set' => 'users',
         // Bots / jeux / événements
         'bot_update' => 'bots', 'game_rank_update' => 'games', 'game_points' => 'games',
         'gmap_update' => 'gamemaps', 'event_delete' => 'events',
@@ -3599,7 +3699,7 @@ function action_tab(string $a): string {
         'furni_convert' => 'convert', 'furni_decompile' => 'convert',
         // Communauté / modération
         'news_add' => 'news', 'news_update' => 'news', 'news_delete' => 'news',
-        'ban_add' => 'moderation', 'ban_remove' => 'moderation', 'bus_type' => 'bus',
+        'ban_add' => 'moderation', 'ban_remove' => 'moderation', 'mute_add' => 'users', 'mute_remove' => 'users', 'bus_type' => 'bus',
         'cfh_note' => 'moderation', 'cfh_close' => 'moderation', 'cfh_reopen' => 'moderation', 'cfh_reply' => 'moderation', 'cfh_delete' => 'moderation',
         'kick_user' => 'moderation',
         'cmd_fav_toggle' => 'commandes',
@@ -3645,6 +3745,85 @@ function ensure_admin_log(): void {
 function admin_log(string $action, string $detail = ''): void {
     try { ensure_admin_log(); db()->prepare('INSERT INTO admin_log (author,action,detail) VALUES (?,?,?)')->execute([$_SESSION['admin']['username'] ?? '?', $action, mb_substr($detail, 0, 255)]); } catch (Throwable $e) {}
 }
+/* ---- Statut VIP (invité prestige) : table partagée avec l'ému (VipDao) ---- */
+function ensure_users_vip(): void {
+    static $done = false; if ($done) return; $done = true;
+    db()->exec("CREATE TABLE IF NOT EXISTS users_vip (user_id INT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+function is_vip(int $uid): bool {
+    try { ensure_users_vip(); $q = db()->prepare('SELECT 1 FROM users_vip WHERE user_id=?'); $q->execute([$uid]); return (bool)$q->fetchColumn(); } catch (Throwable $e) { return false; }
+}
+/* ---- Protocole de bannissement : motifs, récidive, auteur, historique ---- */
+/* Motifs prédéfinis : code => [libellé, durée par défaut en JOURS (0 = définitif)]. */
+function ban_reasons(): array {
+    return [
+        'FLOOD'         => ['Flood / spam', 1],
+        'INSULTE'       => ['Insultes / propos haineux', 3],
+        'INAPPROPRIE'   => ['Comportement inapproprié', 2],
+        'TRICHE'        => ['Triche / exploit / bug abusé', 7],
+        'PUB'           => ['Publicité / autre rétro', 7],
+        'MENACE'        => ['Menaces / harcèlement', 0],
+        'CONTOURNEMENT' => ['Contournement de ban (multi-comptes)', 0],
+        'AUTRE'         => ['Autre', 1],
+    ];
+}
+function ensure_ban_history(): void {
+    static $done = false; if ($done) return; $done = true;
+    db()->exec("CREATE TABLE IF NOT EXISTS ban_history (id INT NOT NULL AUTO_INCREMENT, user_id INT NULL, banned_value VARCHAR(250) NOT NULL, ban_type ENUM('USER_ID','IP_ADDRESS','MACHINE_ID') NOT NULL DEFAULT 'USER_ID', reason_code VARCHAR(32) NOT NULL DEFAULT 'AUTRE', reason_label VARCHAR(120) NOT NULL DEFAULT 'Autre', message VARCHAR(250) NOT NULL DEFAULT '', hours INT NOT NULL DEFAULT 0, banned_until BIGINT NOT NULL DEFAULT 0, author_id INT NULL, author_name VARCHAR(64) NOT NULL DEFAULT 'système', source VARCHAR(16) NOT NULL DEFAULT 'admin', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, lifted_at DATETIME NULL, lifted_by VARCHAR(64) NULL, PRIMARY KEY (id), KEY idx_user (user_id), KEY idx_value (banned_value)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+/* Enregistre un ban dans le journal (auteur = admin courant). */
+function ban_history_log(?int $uid, string $value, string $type, string $code, string $label, string $message, int $hours, int $until, string $source = 'admin'): void {
+    try {
+        ensure_ban_history();
+        db()->prepare('INSERT INTO ban_history (user_id,banned_value,ban_type,reason_code,reason_label,message,hours,banned_until,author_name,source) VALUES (?,?,?,?,?,?,?,?,?,?)')
+            ->execute([$uid, mb_substr($value, 0, 250), $type, $code, mb_substr($label, 0, 120), mb_substr($message, 0, 250), $hours, $until, (string)($_SESSION['admin']['username'] ?? '?'), $source]);
+    } catch (Throwable $e) {}
+}
+/* Marque comme « levés » les bans encore en vigueur pour cette valeur. */
+function ban_history_lift(string $value, string $by): void {
+    try { ensure_ban_history(); db()->prepare('UPDATE ban_history SET lifted_at=NOW(), lifted_by=? WHERE banned_value=? AND lifted_at IS NULL')->execute([mb_substr($by, 0, 64), $value]); } catch (Throwable $e) {}
+}
+/* Nombre de bans déjà posés sur ce joueur (celui-ci inclus) = n° de récidive. */
+function ban_recidive_count(int $uid): int {
+    if ($uid <= 0) return 0;
+    try { ensure_ban_history(); $q = db()->prepare("SELECT COUNT(*) FROM ban_history WHERE user_id=? AND ban_type='USER_ID'"); $q->execute([$uid]); return (int)$q->fetchColumn(); } catch (Throwable $e) { return 0; }
+}
+/* Historique des bans d'un joueur (récent d'abord). */
+function ban_history_for(int $uid, int $limit = 20): array {
+    if ($uid <= 0) return [];
+    try { ensure_ban_history(); $q = db()->prepare("SELECT * FROM ban_history WHERE user_id=? ORDER BY id DESC LIMIT " . (int)$limit); $q->execute([$uid]); return $q->fetchAll(); } catch (Throwable $e) { return []; }
+}
+/* Normalise une échéance en secondes (tolère d'éventuelles lignes legacy en millisecondes). */
+function ban_until_sec(int $v): int {
+    if ($v >= 253402214400000) return BAN_PERMANENT;          // perm (ms) -> perm (s)
+    if ($v > 100000000000) return intdiv($v, 1000);           // temp (ms) -> s
+    return $v;
+}
+/* Libellé lisible d'une échéance de ban. */
+function ban_until_label(int $v): string {
+    $s = ban_until_sec($v);
+    return $s >= BAN_PERMANENT ? '♾️ Définitif' : date('d/m/Y H:i', $s);
+}
+/* ---- Mute « staff » (sanction) : table partagée avec l'ému (StaffMuteDao) ---- */
+/* Motifs de mute : code => libellé. */
+function mute_reasons(): array {
+    return ['FLOOD' => 'Flood / spam', 'INSULTE' => 'Insultes', 'INAPPROPRIE' => 'Propos inappropriés', 'AVERT' => 'Avertissement', 'AUTRE' => 'Autre'];
+}
+function ensure_staff_mutes(): void {
+    static $done = false; if ($done) return; $done = true;
+    db()->exec("CREATE TABLE IF NOT EXISTS staff_mutes (user_id INT NOT NULL, muted_until BIGINT NOT NULL DEFAULT 0, reason VARCHAR(250) NOT NULL DEFAULT '', author_id INT NULL, author_name VARCHAR(64) NOT NULL DEFAULT 'système', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+/* Renvoie la ligne de mute active d'un joueur, ou null (muted_until en secondes). */
+function mute_active(int $uid): ?array {
+    try { ensure_staff_mutes(); $q = db()->prepare('SELECT * FROM staff_mutes WHERE user_id=?'); $q->execute([$uid]); $r = $q->fetch(); if ($r && (int)$r['muted_until'] > time()) return $r; } catch (Throwable $e) {}
+    return null;
+}
+function mute_set(int $uid, int $until, string $reason): void {
+    try { ensure_staff_mutes(); db()->prepare('INSERT INTO staff_mutes (user_id,muted_until,reason,author_name) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE muted_until=VALUES(muted_until), reason=VALUES(reason), author_name=VALUES(author_name)')->execute([$uid, $until, $reason, (string)($_SESSION['admin']['username'] ?? '?')]); } catch (Throwable $e) {}
+}
+function mute_clear(int $uid): void {
+    try { ensure_staff_mutes(); db()->prepare('DELETE FROM staff_mutes WHERE user_id=?')->execute([$uid]); } catch (Throwable $e) {}
+}
 /* ---- Historique par joueur (journalise les actions visant un compte) ---- */
 function ensure_user_history(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS user_history (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, author VARCHAR(64) NOT NULL DEFAULT '', action VARCHAR(64) NOT NULL DEFAULT '', detail VARCHAR(255) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX(user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -3668,7 +3847,7 @@ function user_history_maybe(string $action): void {
         case 'user_credits': $cd = (int)($_POST['delta'] ?? 0); $d = 'Crédits ' . ($cd >= 0 ? '+' : '') . $cd; break;
         case 'user_hc': $d = 'Club Habbo ' . (int)($_POST['days'] ?? 0) . ' j'; break;
         case 'user_rank': $d = 'Rang → ' . (int)($_POST['rank'] ?? 0); break;
-        case 'ban_add': $d = 'Banni (' . (int)($_POST['days'] ?? 0) . ' j) — ' . mb_substr(trim((string)($_POST['message'] ?? '')), 0, 80); break;
+        case 'ban_add': $rc = (string)($_POST['reason_code'] ?? 'AUTRE'); $rl = ban_reasons()[$rc][0] ?? 'Autre'; $dd = isset($_POST['days']) && $_POST['days'] !== '' ? (int)$_POST['days'] . ' j' : 'défaut'; $d = 'Banni (' . $dd . ') — ' . $rl; break;
         case 'ban_remove': $d = 'Bannissement levé'; break;
         case 'kick_user': $rk = trim((string)($_POST['reason'] ?? '')); $d = 'Déconnecté (kick)' . ($rk !== '' ? ' — ' . mb_substr($rk, 0, 80) : ''); break;
         case 'clear_hand': $d = 'Inventaire (main) vidé'; break;
@@ -4986,6 +5165,7 @@ function page_user(): void {
     $bs = db()->prepare("SELECT message,banned_until FROM users_bans WHERE ban_type='USER_ID' AND banned_value=?"); $bs->execute([(string)$id]); $ban = $bs->fetch(); $isBan = (bool)$ban;
     $rb = []; foreach (db()->query('SELECT badge FROM rank_badges WHERE rank=' . (int)$u['rank']) as $r) $rb[] = $r['badge'];
     $ob = []; $obs = db()->prepare('SELECT badge FROM users_badges WHERE user_id=?'); $obs->execute([$id]); foreach ($obs as $r) $ob[] = $r['badge'];
+    $isVip = is_vip($id);
 
     $uname = (string)$u['username']; $rankSelf = (int)($_SESSION['admin']['rank'] ?? 0);
     $homeUrl = '/v2/?p=home/' . rawurlencode($uname);
@@ -4994,7 +5174,7 @@ function page_user(): void {
     // ===== Bandeau joueur (gauche: identité · centre: état/mission/activité · droite: actions) =====
     echo '<div class="ubanner">';
     echo '<div class="ub-id"><img class="ub-av" src="/avatar.php?user=' . h(rawurlencode($uname)) . '&size=b&v=2" alt="Avatar de ' . h($uname) . '" width="74" height="128" loading="lazy"><div><div class="ub-name">' . h($uname) . '</div><div class="muted sm">ID #' . $id . '</div></div></div>';
-    echo '<div class="ub-meta">' . rank_badge((int)$u['rank']) . ' ' . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">Compte actif</span>')
+    echo '<div class="ub-meta">' . rank_badge((int)$u['rank']) . ' ' . ($isBan ? '<span class="rk red">🚫 Banni</span>' : '<span class="rk green">Compte actif</span>') . ($isVip ? ' <span class="rk" style="background:#7c3aed;color:#fff">⭐ VIP</span>' : '')
        . '<div class="muted sm" style="margin-top:6px">Mission : <b>' . h($u['motto'] !== '' ? $u['motto'] : '—') . '</b></div>'
        . '<div class="muted sm">Dernière activité : ' . h($seen) . ' · Club : ' . ($hcActive ? h($hc) : 'non membre') . '</div></div>';
     echo '<div class="ub-act"><a class="mini" href="' . h($homeUrl) . '" target="_blank">🏠 Voir sa Home</a>'
@@ -5062,7 +5242,8 @@ function page_user(): void {
         <form method="post" class="js row" style="margin-top:8px" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="user_password"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">
         <label style="flex:1">🔑 Nouveau mot de passe<input name="newpass"></label><button class="ghost">Changer</button></form>
         <div class="row" style="margin-top:8px;gap:6px">' . uquick($id, 'user_credits', 'delta', 1000, '💰 +1 000') . uquick($id, 'user_credits', 'delta', 10000, '💰 +10 000') . uquick($id, 'user_hc', 'days', 30, '⭐ HC 30j') . uquick($id, 'user_hc', 'days', 0, '⭐ Retirer HC') . '</div>
-        <div class="row" style="margin-top:6px;gap:6px;align-items:center"><span class="muted sm">Rang rapide :</span>' . uquick($id, 'user_rank', 'rank', 1, '👤 Joueur') . uquick($id, 'user_rank', 'rank', 6, '🛡️ Modérateur') . uquick($id, 'user_rank', 'rank', 7, '⭐ Admin') . '</div></div>';
+        <div class="row" style="margin-top:6px;gap:6px;align-items:center"><span class="muted sm">Rang rapide :</span>' . uquick($id, 'user_rank', 'rank', 1, '👤 Joueur') . uquick($id, 'user_rank', 'rank', 6, '🛡️ Modérateur') . uquick($id, 'user_rank', 'rank', 7, '⭐ Admin') . '</div>
+        <div class="row" style="margin-top:6px;gap:6px;align-items:center"><span class="muted sm">Statut VIP :</span>' . ($isVip ? uquick($id, 'vip_set', 'enable', 0, '✖️ Retirer le VIP') : uquick($id, 'vip_set', 'enable', 1, '⭐ Donner le statut VIP')) . '<span class="muted sm">badge VIP + HC offert + entrée salles pleines</span></div></div>';
     echo '<div class="panel"><div class="ph"><h3>ℹ️ Détails (modifiables)</h3></div>
         <form method="post" class="js" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="user_details"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">
         <div class="row"><label style="flex:1">E-mail<input name="email" value="' . h($u['email']) . '"></label><label>Naissance<input name="birthday" placeholder="JJ/MM/AAAA" value="' . h(fr_date($u['birthday'])) . '"></label><label>Sexe<select name="sex"><option value="M"' . ($u['sex'] !== 'F' ? ' selected' : '') . '>Garçon</option><option value="F"' . ($u['sex'] === 'F' ? ' selected' : '') . '>Fille</option></select></label></div>
@@ -5198,8 +5379,50 @@ function page_user(): void {
     // Zone sensible : modération + actions irréversibles, isolées du reste de la fiche.
     echo '<div class="panel" style="border-color:#6b2c2c"><div class="ph"><h3 style="color:var(--red)">⚠️ Zone sensible — actions à fort impact</h3></div>';
     echo '<p class="muted sm" style="margin:-4px 0 12px">Modération et actions <b>irréversibles</b>, regroupées ici et séparées du reste de la fiche.</p>';
-    if ($isBan) echo '<p>🚫 Banni : <b>' . h($ban['message']) . '</b> (' . ((int)$ban['banned_until'] >= BAN_PERMANENT ? '♾️ définitif' : 'jusqu\'au ' . date('d/m/Y', (int)($ban['banned_until'] / 1000))) . ') <form method="post" class="js" data-reload style="display:inline"><input type="hidden" name="action" value="ban_remove">' . csrf_field() . '<input type="hidden" name="value" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '"><button class="mini ghost">Lever le ban</button></form></p>';
-    else echo '<form method="post" class="js" data-reload style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;max-width:760px"><input type="hidden" name="action" value="ban_add"><input type="hidden" name="type" value="USER_ID"><input type="hidden" name="value" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<label>Durée (j · 0 = définitif)<input type="number" name="days" value="0" style="width:150px"></label><label style="flex:1;min-width:220px">Motif<input name="message" value="Comportement inapproprié"></label><button style="background:var(--red)">🚫 Bannir</button></form>';
+    // --- Bannissement (protocole : motif + récidive + auteur + historique) ---
+    $recid = ban_recidive_count((int)$id);
+    $recBadge = $recid > 1 ? ' <span class="rk red" title="Nombre de bans déjà posés sur ce compte">récidive n°' . $recid . '</span>' : ($recid === 1 ? ' <span class="muted sm">(1er ban)</span>' : '');
+    if ($isBan) {
+        echo '<p>🚫 <b>Banni</b> : ' . h((string)$ban['message']) . ' <span class="muted sm">(' . ban_until_label((int)$ban['banned_until']) . ')</span>' . $recBadge
+           . ' <form method="post" class="js" data-reload style="display:inline"><input type="hidden" name="action" value="ban_remove">' . csrf_field() . '<input type="hidden" name="value" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '"><button class="mini ghost">Lever le ban</button></form></p>';
+    } else {
+        $ropts = ''; foreach (ban_reasons() as $rc => $r) { $ropts .= '<option value="' . $rc . '">' . h($r[0]) . ' (' . ((int)$r[1] > 0 ? $r[1] . ' j' : 'définitif') . ')</option>'; }
+        echo '<form method="post" class="js" data-reload style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;max-width:860px"><input type="hidden" name="action" value="ban_add"><input type="hidden" name="type" value="USER_ID"><input type="hidden" name="value" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field()
+           . '<label>Motif<select name="reason_code">' . $ropts . '</select></label>'
+           . '<label>Durée (j · vide = défaut · 0 = définitif)<input type="number" name="days" min="0" placeholder="défaut" style="width:150px"></label>'
+           . '<label style="flex:1;min-width:200px">Message au joueur (facultatif)<input name="message" placeholder="laisser vide = libellé du motif"></label>'
+           . '<label style="display:flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" name="ban_ip" value="1" style="width:auto"> bannir aussi l\'IP</label>'
+           . '<button style="background:var(--red)">🚫 Bannir</button></form>'
+           . ($recBadge !== '' ? '<p class="sm" style="margin:6px 0 0">Antécédents :' . $recBadge . '</p>' : '');
+    }
+    // --- Mute « staff » (réduire au silence en salle) ---
+    $muteRow = mute_active((int)$id);
+    echo '<div style="margin-top:14px;border-top:1px solid var(--line2);padding-top:12px">';
+    if ($muteRow) {
+        echo '<p>🔇 <b>Réduit au silence</b> : ' . h((string)($muteRow['reason'] ?: 'sans motif')) . ' <span class="muted sm">(jusqu\'au ' . date('d/m/Y H:i', (int)$muteRow['muted_until']) . ($muteRow['author_name'] ? ' · par ' . h((string)$muteRow['author_name']) : '') . ')</span> '
+           . '<form method="post" class="js" data-reload style="display:inline"><input type="hidden" name="action" value="mute_remove"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button class="mini ghost">🔊 Rendre la parole</button></form></p>';
+    } else {
+        $mopts = ''; foreach (mute_reasons() as $mc => $ml) { $mopts .= '<option value="' . $mc . '">' . h($ml) . '</option>'; }
+        echo '<form method="post" class="js" data-reload style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;max-width:860px"><input type="hidden" name="action" value="mute_add"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field()
+           . '<label>🔇 Mute — durée<select name="minutes"><option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">1 h</option><option value="180">3 h</option><option value="720">12 h</option><option value="1440">1 jour</option></select></label>'
+           . '<label>Motif<select name="reason_code">' . $mopts . '</select></label>'
+           . '<label style="flex:1;min-width:200px">Précision (facultatif)<input name="reason" placeholder="laisser vide = libellé du motif"></label>'
+           . '<button style="background:#c78a2a">🔇 Réduire au silence</button></form>'
+           . '<p class="muted sm" style="margin:6px 0 0">Le joueur ne pourra plus parler ni crier en salle (effet en jeu sous ~20 s, sans reconnexion). Différent de l\'ignorer.</p>';
+    }
+    echo '</div>';
+    // --- Mini-historique des bans de ce compte ---
+    $bh = ban_history_for((int)$id, 8);
+    if ($bh) {
+        echo '<details style="margin-top:12px"><summary class="sm" style="cursor:pointer">📚 Historique des bans de ce compte (' . count($bh) . ')</summary>';
+        echo '<table class="clean" style="margin-top:8px"><tr><th>Date</th><th>Motif</th><th>Durée</th><th>Auteur</th><th>État</th></tr>';
+        foreach ($bh as $r) {
+            $dur = (int)$r['hours'] <= 0 ? '♾️' : ((int)$r['hours'] >= 24 ? round($r['hours'] / 24, 1) . ' j' : (int)$r['hours'] . ' h');
+            $etat = $r['lifted_at'] !== null ? '<span class="muted sm">levé</span>' : '<span class="rk red">actif</span>';
+            echo '<tr><td class="sm muted">' . h(date('d/m/Y H:i', strtotime((string)$r['created_at']))) . '</td><td class="sm">' . h((string)$r['reason_label']) . '</td><td class="sm">' . $dur . '</td><td class="sm">' . h((string)$r['author_name']) . ' <span class="muted">(' . ($r['source'] === 'jeu' ? 'jeu' : 'admin') . ')</span></td><td>' . $etat . '</td></tr>';
+        }
+        echo '</table></details>';
+    }
     echo '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:16px;border-top:1px solid var(--line2);padding-top:14px">';
     echo '<form method="post" class="js" data-reload data-confirm="Déconnecter ' . h($u['username']) . ' du jeu ? (il pourra se reconnecter)" style="margin:0"><input type="hidden" name="action" value="kick_user"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="back" value="' . h($back) . '">' . csrf_field() . '<button style="background:#c78a2a">👢 Déconnecter du jeu</button></form>';
     echo '<form method="post" class="js" data-reload data-confirm="⚠️ SUPPRIMER TOUT l\'inventaire (tous les objets non posés) de ' . h($u['username']) . ' ? Irréversible." style="margin:0">' . csrf_field() . '<input type="hidden" name="action" value="clear_hand"><input type="hidden" name="username" value="' . h($u['username']) . '"><input type="hidden" name="back" value="' . h($back) . '"><button style="background:#c2603a">🧹 Vider TOUT l\'inventaire</button></form>';
@@ -5410,11 +5633,430 @@ function page_games(): void {
     echo '</div>';
 }
 
+/* =====================================================================
+   GESTION DU PERSONNEL (?p=staff)
+   Matrice de permissions configurable grade × droit (table rank_fuserights).
+   L'ému (Kepler) lit cette matrice au démarrage ; sinon il retombe sur l'enum.
+   ===================================================================== */
+
+/** Les grades « staff » éditables dans la matrice (colonnes). Le rang 1 (joueur)
+ *  n'est pas éditable ici : ses droits de base restent seedés automatiquement. */
+function staff_ranks(): array {
+    return [2 => 'Community Manager', 3 => 'Habbo X', 4 => 'Hobba', 5 => 'Super Hobba', 6 => 'Modérateur', 7 => 'Administrateur'];
+}
+
+/** Miroir FIDÈLE de l'enum Fuseright.java (droits non-club → rang minimum).
+ *  Sert UNIQUEMENT à pré-remplir la matrice à l'identique du comportement
+ *  d'origine. Rangs : NORMAL=1 CM=2 GUIDE=3 HOBBA=4 SUPERHOBBA=5 MOD=6 ADMIN=7. */
+function fuse_enum_minranks(): array {
+    return [
+        // Base — tous les joueurs (rang 1)
+        'default' => 1, 'fuse_login' => 1, 'fuse_trade' => 1, 'fuse_buy_credits' => 1,
+        'fuse_buy_credits_fuse_login' => 1, 'fuse_room_queue_default' => 1,
+        // Hobba (4)
+        'fuse_mute' => 4, 'fuse_kick' => 4, 'fuse_receive_calls_for_help' => 4,
+        // Super Hobba (5)
+        'fuse_remove_photos' => 5, 'fuse_remove_stickies' => 5,
+        // Modérateur (6)
+        'fuse_mod' => 6, 'fuse_moderator_access' => 6, 'fuse_chat_log' => 6, 'fuse_room_alert' => 6,
+        'fuse_alert_user' => 6, // Alerte Habbo (séparé de fuse_room_alert = Alerte Salle) — miroir du défaut MODERATOR
+        'fuse_room_kick' => 6, 'fuse_ignore_room_owner' => 6, 'fuse_enter_full_rooms' => 6,
+        'fuse_enter_invisible' => 6, 'fuse_see_invisible' => 6, // Mode invisible : utiliser / voir (indépendants)
+        'fuse_enter_locked_rooms' => 6, 'fuse_see_all_roomowners' => 6, 'fuse_search_users' => 6,
+        'fuse_ban' => 6, 'fuse_see_chat_log_link' => 6, 'fuse_cancel_roomevent' => 6,
+        // Administrateur (7)
+        'fuse_administrator_access' => 7, 'fuse_any_room_controller' => 7, 'fuse_pick_up_any_furni' => 7,
+        'fuse_see_flat_ids' => 7, 'fuse_credits' => 7,
+        // Housekeeping (outils internes — gardés pour fidélité, non affichés dans la matrice)
+        'housekeeping_intra' => 4, 'housekeeping_kick' => 7, 'fuse_housekeeping_alert' => 5,
+        'housekeeping_discussion' => 3, 'housekeeping_discussion_admin' => 5, 'housekeeping_admin' => 7,
+        'housekeeping_admin_credits' => 7, 'housekeeping_admin_user_data' => 7, 'housekeeping_admin_payments' => 7,
+        'housekeeping_campaign' => 2, 'housekeeping_campaign_ads' => 2, 'housekeeping_george' => 6,
+        'housekeeping_admin_catalog' => 7, 'housekeeping_hobba' => 3, 'housekeeping_hobba_newbietools' => 3,
+        'housekeeping_hobba_moderatortools' => 4, 'housekeeping_hobba_hobbatools' => 4,
+        'housekeeping_hobba_admintools' => 7, 'housekeeping_hobba_supertools' => 5,
+        'housekeeping_ban' => 6, 'housekeeping_megaban' => 7, 'housekeeping_superban' => 7,
+    ];
+}
+
+/** Droits affichés et éditables dans la matrice, groupés par thème (libellés FR).
+ *  On n'expose QUE les droits qui ont un sens côté staff (les droits de base du
+ *  joueur et le bruit « housekeeping » restent seedés mais hors matrice).
+ *  Le 3e champ = true si le droit pilote un bouton visible dans le client (fuse_*). */
+function fuserights_registry(): array {
+    return [
+        'MOD Tool — boutons « L\'Outil » en jeu' => [
+            ['fuse_mod', 'Ouvrir le MOD Tool (« L\'Outil »)', true],
+            ['fuse_kick', 'Expulser Habbo', true],
+            ['fuse_alert_user', 'Alerte Habbo', true],
+            ['fuse_ban', 'Bannir Habbo', true],
+            ['fuse_room_alert', 'Alerte Salle', true],
+            ['fuse_room_kick', 'Expulser Salle', true],
+        ],
+        'Modération — salle & assistance' => [
+            ['fuse_receive_calls_for_help', 'Recevoir les appels à l\'aide', true],
+            ['fuse_remove_photos', 'Retirer des photos', true],
+            ['fuse_remove_stickies', 'Retirer des post-its / stickers', true],
+            ['fuse_moderator_access', 'Accès à l\'interface modérateur', true],
+            ['fuse_chat_log', 'Lire les journaux de discussion', true],
+            ['fuse_search_users', 'Rechercher des joueurs', true],
+            ['fuse_cancel_roomevent', 'Annuler un événement de salle', true],
+            ['fuse_mute', 'Muter un joueur (couper le chat)¹', true],
+        ],
+        'Déplacements & accès' => [
+            ['fuse_enter_full_rooms', 'Entrer dans les salles pleines', true],
+            ['fuse_enter_locked_rooms', 'Entrer dans les salles fermées', true],
+            ['fuse_ignore_room_owner', 'Ignorer les droits du propriétaire', true],
+        ],
+        'Mode invisible (Silent)' => [
+            ['fuse_enter_invisible', 'Utiliser le mode invisible (:invisible / :invis)', false],
+            ['fuse_see_invisible', 'Voir les membres invisibles', false],
+        ],
+        'Administration' => [
+            ['fuse_administrator_access', 'Accès administrateur', true],
+            ['fuse_any_room_controller', 'Contrôle total des salles', true],
+            ['fuse_pick_up_any_furni', 'Ramasser n\'importe quel meuble', true],
+            ['fuse_see_flat_ids', 'Voir les identifiants de salles', true],
+            ['fuse_credits', 'Gérer les crédits', true],
+        ],
+    ];
+}
+
+/** Avantages Habbo Club / VIP désormais offrables AUSSI par grade via la matrice
+ *  (en plus de l'abonnement HC). Codes = droits « club » de l'enum Fuseright. */
+function staff_club_rights(): array {
+    return [
+        ['fuse_use_club_outfits', 'Tenues & vêtements du Club'],
+        ['fuse_use_club_badge', 'Badge Habbo Club'],
+        ['fuse_use_club_dance', 'Danses du Club'],
+        ['fuse_room_queue_club', 'File d\'attente prioritaire (Club)'],
+    ];
+}
+
+/** Crée la table matrice si besoin (schéma rang × droit). Idempotent. */
+function staff_ensure_table(): void {
+    static $done = false; if ($done) return; $done = true;
+    db()->exec("CREATE TABLE IF NOT EXISTS rank_fuserights (`rank` INT NOT NULL, fuseright VARCHAR(64) NOT NULL, PRIMARY KEY (`rank`, fuseright)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
+/** Pré-remplit la matrice depuis l'enum (cumulatif : un droit de rang N → N..7)
+ *  SI elle est vide. Reproduit à l'identique le comportement d'origine. */
+function staff_seed_if_empty(): void {
+    staff_ensure_table();
+    try {
+        if ((int)db()->query('SELECT COUNT(*) FROM rank_fuserights')->fetchColumn() > 0) return;
+        $ins = db()->prepare('INSERT IGNORE INTO rank_fuserights (`rank`, fuseright) VALUES (?, ?)');
+        foreach (fuse_enum_minranks() as $code => $min) {
+            for ($r = $min; $r <= 7; $r++) $ins->execute([$r, $code]);
+        }
+    } catch (Throwable $e) {}
+}
+
+/** État courant de la matrice : set['<rank>|<code>'] = true. */
+function staff_matrix_set(): array {
+    $set = [];
+    try { foreach (db()->query('SELECT `rank`, fuseright FROM rank_fuserights') as $r) $set[$r['rank'] . '|' . $r['fuseright']] = true; } catch (Throwable $e) {}
+    return $set;
+}
+
+function page_staff(): void {
+    staff_ensure_table(); staff_seed_if_empty();
+    $sec = preg_replace('/[^a-z]/', '', (string)($_GET['sec'] ?? 'equipe'));
+    if (!in_array($sec, ['equipe', 'droits', 'journal'], true)) $sec = 'equipe';
+    page_title('👮 Gestion du personnel', 'Grades de l\'équipe, droits de modération et mode invisible — pilotables sans toucher au code');
+
+    $ranks    = staff_ranks();
+    $registry = fuserights_registry();
+    $set      = staff_matrix_set();
+    $allCodes = [];
+    foreach ($registry as $grp) foreach ($grp as $r) $allCodes[] = $r[0];
+    $defs = array_intersect_key(fuse_enum_minranks(), array_flip($allCodes));
+    $sensitive = ['fuse_administrator_access', 'fuse_mod', 'fuse_ban', 'fuse_any_room_controller', 'fuse_credits', 'fuse_moderator_access'];
+
+    $staff = [];
+    try { foreach (db()->query('SELECT id, username, `rank` FROM users WHERE `rank` >= 2 ORDER BY `rank` DESC, username') as $r) $staff[] = $r; } catch (Throwable $e) {}
+    $nStaff = count($staff);
+    $nJrn = 0;
+    try { $nJrn = (int) db()->query("SELECT COUNT(*) FROM admin_log WHERE action IN ('staff_perms_save','staff_rank','vip_set')")->fetchColumn(); } catch (Throwable $e) {}
+
+    /* ---- Onglets ---- */
+    $tabs = ['equipe' => '👥 Équipe (' . $nStaff . ')', 'droits' => '🧰 Qui a le droit de quoi', 'journal' => '🕓 Journal (' . $nJrn . ')'];
+    echo '<div class="subtabs">';
+    foreach ($tabs as $k => $lbl) echo '<a href="?p=staff&sec=' . $k . '" class="' . ($k === $sec ? 'on' : '') . '">' . $lbl . '</a>';
+    echo '</div>';
+
+    /* ======================= ONGLET ÉQUIPE ======================= */
+    if ($sec === 'equipe') {
+    echo '<div class="panel"><div class="ph"><h3>👥 L\'équipe</h3><span class="muted" style="margin-left:auto">' . count($staff) . ' membre(s)</span></div>';
+    echo '<p class="muted sm">Change le grade d\'un membre, ou rétrograde-le en simple joueur. Le changement s\'applique à sa prochaine connexion au jeu.</p>';
+    if (!$staff) echo '<p class="muted">Aucun membre d\'équipe (rang ≥ 2) pour le moment.</p>';
+    else {
+        echo '<input type="text" id="staff-team-search" class="sm-inp" placeholder="🔎 Filtrer l\'équipe par pseudo…" style="margin-bottom:8px;width:100%;max-width:320px">';
+        echo '<table class="tbl" id="staff-team"><thead><tr><th>Joueur</th><th>Grade actuel</th><th>Changer</th></tr></thead><tbody>';
+        $me = (int)($_SESSION['admin']['id'] ?? 0);
+        foreach ($staff as $u) {
+            $uid = (int)$u['id']; $rk = (int)$u['rank']; $self = ($uid === $me);
+            echo '<tr data-name="' . h(mb_strtolower($u['username'])) . '"><td>' . rank_badge($rk) . ' <b>' . h($u['username']) . '</b></td>';
+            echo '<td>' . h(RANKS[$rk] ?? ('Rang ' . $rk)) . '</td><td>';
+            if ($self) echo '<span class="muted sm">🔒 toi-même</span>';
+            else {
+                echo '<form method="post" class="row js" data-reload style="gap:6px;align-items:center"><input type="hidden" name="action" value="staff_rank">' . csrf_field()
+                   . '<input type="hidden" name="uid" value="' . $uid . '">'
+                   . '<select name="rank">' . rank_options($rk) . '</select>'
+                   . '<button class="mini">💾</button></form>';
+            }
+            echo '</td></tr>';
+        }
+        echo '</tbody></table>';
+    }
+    echo '<details style="margin-top:10px"><summary class="mini" style="font-weight:700">➕ Promouvoir un joueur dans l\'équipe</summary>'
+       . '<form method="post" class="row js" data-reload style="gap:8px;margin-top:8px;align-items:flex-end">'
+       . '<input type="hidden" name="action" value="staff_rank">' . csrf_field()
+       . '<label style="flex:1">Pseudo du joueur<input name="username" list="dl_pseudos" autocomplete="off" placeholder="Pseudo…" required></label>'
+       . '<label>Grade<select name="rank">' . rank_options(4) . '</select></label>'
+       . '<button>Promouvoir</button></form></details>';
+    echo '</div>';
+    /* Autocomplétion des pseudos (onglet Équipe) */
+    echo '<datalist id="dl_pseudos">';
+    try { foreach (db()->query('SELECT username FROM users ORDER BY username LIMIT 2000') as $r) echo '<option value="' . h($r['username']) . '">'; } catch (Throwable $e) {}
+    echo '</datalist>';
+    echo <<<'JS2'
+<script>(function(){var ts=document.getElementById('staff-team-search');if(!ts)return;ts.addEventListener('input',function(){var q=this.value.trim().toLowerCase();[].forEach.call(document.querySelectorAll('#staff-team tbody tr'),function(tr){tr.style.display=(!q||(tr.getAttribute('data-name')||'').indexOf(q)>=0)?'':'none';});});})();</script>
+JS2;
+    }
+
+    /* ======================= ONGLET DROITS ======================= */
+    elseif ($sec === 'droits') {
+    echo '<form method="post" class="js" data-reload id="staff-perms-form"><input type="hidden" name="action" value="staff_perms_save">' . csrf_field();
+    echo '<div class="panel"><div class="ph"><h3>🧰 Qui a le droit de faire quoi</h3>'
+       . '<span id="sm-dirty" class="sm-dirty" style="margin-left:auto">Aucune modification</span>'
+       . '<button type="submit" id="sm-save" class="sm-save" disabled>💾 Enregistrer</button></div>';
+    echo '<div class="info">Coche une case pour <b>autoriser</b> ce droit à ce grade. Côté serveur, une action non autorisée est <b>refusée</b> même si le bouton reste visible en jeu (le client Shockwave n\'est pas modifié). Après enregistrement, un <b>rechargement</b> est envoyé automatiquement à l\'émulateur : le staff connecté est mis à jour sans reconnexion.</div>';
+
+    /* Barre d'outils : recherche + plier/déplier */
+    echo '<div class="sm-toolbar">'
+       . '<input type="text" id="sm-search" class="sm-inp" placeholder="🔎 Rechercher un droit (nom ou identifiant)…">'
+       . '<button type="button" class="mini ghost" id="sm-expand">⊕ Tout déplier</button>'
+       . '<button type="button" class="mini ghost" id="sm-collapse">⊖ Tout replier</button>'
+       . '</div>';
+
+    /* Filtre des colonnes (grades affichés) */
+    echo '<div class="sm-filters"><span class="sm-lbl">Grades affichés :</span>';
+    foreach ($ranks as $rk => $lbl) echo '<label class="sm-pill"><input type="checkbox" class="sm-gradecol" value="' . $rk . '" checked>' . h($lbl) . '</label>';
+    echo '</div>';
+
+    /* Opérations groupées par grade */
+    echo '<div class="sm-colops"><span class="sm-lbl">Agir sur le grade :</span>';
+    echo '<select id="sm-grade" class="sm-inp sm-inp-s">';
+    foreach ($ranks as $rk => $lbl) echo '<option value="' . $rk . '">' . h($lbl) . '</option>';
+    echo '</select>';
+    echo '<button type="button" class="mini" data-op="all">Tout cocher</button>';
+    echo '<button type="button" class="mini" data-op="none">Tout décocher</button>';
+    echo '<button type="button" class="mini" data-op="defaults">↺ Défauts</button>';
+    echo '<span class="sm-sep"></span><span class="sm-lbl">Copier vers :</span>';
+    echo '<select id="sm-copyto" class="sm-inp sm-inp-s">';
+    foreach ($ranks as $rk => $lbl) echo '<option value="' . $rk . '">' . h($lbl) . '</option>';
+    echo '</select>';
+    echo '<button type="button" class="mini" data-op="copy">Copier</button></div>';
+
+    /* Statuts (lecture seule) : valeurs issues du code serveur Kepler (Player.refreshFuserights / hasFuse).
+       Habbo normal = rang 1 (aucun droit mod/club) · HC = droits club · VIP = HC offert + salles pleines. */
+    $clubCodes = ['fuse_use_club_outfits', 'fuse_use_club_badge', 'fuse_use_club_dance', 'fuse_room_queue_club'];
+    $yes = '<span class="sm-ro" style="color:var(--green)" title="Oui">✓</span>';
+    $no  = '<span class="sm-ro" title="Non">·</span>';
+    $statusCells = function (string $code) use ($clubCodes, $yes, $no) {
+        $isClub = in_array($code, $clubCodes, true);
+        $norm = false;                                           // joueur sans abonnement : rien
+        $hc   = $isClub;                                         // abonné HC : droits club
+        $vip  = $isClub || $code === 'fuse_enter_full_rooms';   // VIP : HC offert + salles pleines
+        return '<td class="col-status">' . ($norm ? $yes : $no) . '</td>'
+             . '<td class="col-status">' . ($hc ? $yes : $no) . '</td>'
+             . '<td class="col-status">' . ($vip ? $yes : $no) . '</td>';
+    };
+    $ncol = count($ranks) + 4;
+
+    /* Matrice */
+    echo '<div style="overflow-x:auto"><table class="tbl staff-matrix" id="sm-table"><thead><tr><th style="text-align:left">Droit</th>';
+    echo '<th class="col-status" title="Joueur sans abonnement"><span class="sm-grade-chip" style="background:#5a6b85">Habbo normal</span></th>';
+    echo '<th class="col-status" title="Abonné Habbo Club"><span class="sm-grade-chip" style="background:#12a85a">HC</span></th>';
+    echo '<th class="col-status" title="Statut VIP : HC offert + salles pleines"><span class="sm-grade-chip" style="background:#9b59b6">VIP</span></th>';
+    $first = true;
+    foreach ($ranks as $rk => $lbl) {
+        $gc = $rk >= 7 ? '#ff5b5b' : ($rk >= 6 ? '#ffb033' : ($rk >= 3 ? '#3a7afe' : '#5a6b85'));
+        echo '<th class="col-r' . $rk . ($first ? ' col-sep' : '') . '" data-rank="' . $rk . '" title="' . h($lbl) . '"><span class="sm-grade-chip" style="background:' . $gc . '">' . h($lbl) . '</span></th>';
+        $first = false;
+    }
+    echo '</tr></thead><tbody>';
+    $gi = 0;
+    foreach ($registry as $groupe => $rights) {
+        $gi++;
+        echo '<tr class="grp" data-grp="' . $gi . '"><td colspan="' . $ncol . '"><span class="sm-caret">▾</span> ' . h($groupe) . ' <span class="muted sm">(' . count($rights) . ')</span></td></tr>';
+        foreach ($rights as $r) {
+            [$code, $label, $vis] = $r;
+            $sens = in_array($code, $sensitive, true);
+            $tag = $vis
+                ? '<span class="sm-tag sm-cli" title="Pilote un bouton visible dans le client">client</span>'
+                : '<span class="sm-tag sm-srv" title="Appliqué uniquement côté serveur">serveur</span>';
+            echo '<tr class="sm-row" data-grp="' . $gi . '" data-code="' . h($code) . '" data-label="' . h(mb_strtolower($label . ' ' . $code)) . '"' . ($sens ? ' data-sensitive="1"' : '') . '>';
+            echo '<td>' . $tag . '<span class="sm-rowlabel">' . h($label) . '</span> <span class="sm-code">' . h($code) . '</span></td>';
+            echo $statusCells($code);
+            $first = true;
+            foreach ($ranks as $rk => $lbl) {
+                $on = isset($set[$rk . '|' . $code]);
+                echo '<td class="col-r' . $rk . ($first ? ' col-sep' : '') . '" data-rank="' . $rk . '"><input type="checkbox" class="sm-cb" data-rank="' . $rk . '" data-code="' . h($code) . '" data-initial="' . ($on ? '1' : '0') . '" name="perm[' . $rk . '][' . h($code) . ']"' . ($on ? ' checked' : '') . '></td>';
+                $first = false;
+            }
+            echo '</tr>';
+        }
+    }
+    /* Groupe LECTURE SEULE : avantages Habbo Club / VIP (non éditables par grade — gérés côté serveur). */
+    $gi++;
+    $clubRows = staff_club_rights();
+    echo '<tr class="grp grp-info" data-grp="' . $gi . '"><td colspan="' . $ncol . '"><span class="sm-caret">▾</span> 🧡 Habbo Club &amp; VIP — avantages <span class="muted sm">(' . count($clubRows) . ' · donnés d\'office aux HC/VIP · cochables par grade)</span></td></tr>';
+    foreach ($clubRows as $cr) {
+        [$code, $label] = $cr;
+        echo '<tr class="sm-row" data-grp="' . $gi . '" data-code="' . h($code) . '" data-label="' . h(mb_strtolower($label . ' ' . $code)) . '">';
+        echo '<td><span class="sm-tag sm-club" title="Avantage Habbo Club / VIP (offrable par grade)">club</span><span class="sm-rowlabel">' . h($label) . '</span> <span class="sm-code">' . h($code) . '</span></td>';
+        echo $statusCells($code);
+        $first = true;
+        foreach ($ranks as $rk => $lbl) {
+            $on = isset($set[$rk . '|' . $code]);
+            echo '<td class="col-r' . $rk . ($first ? ' col-sep' : '') . '" data-rank="' . $rk . '"><input type="checkbox" class="sm-cb" data-rank="' . $rk . '" data-code="' . h($code) . '" data-initial="' . ($on ? '1' : '0') . '" name="perm[' . $rk . '][' . h($code) . ']"' . ($on ? ' checked' : '') . '></td>';
+            $first = false;
+        }
+        echo '</tr>';
+    }
+    echo '</tbody></table></div>';
+
+    echo '<div class="sm-legend"><span class="sm-tag sm-cli">client</span> bouton visible en jeu · <span class="sm-tag sm-srv">serveur</span> serveur seul · <span class="sm-tag sm-club">club</span> avantage Club/VIP · <span class="sm-dot-sens"></span> droit sensible · <span class="sm-ro" style="color:var(--green)">✓</span>/<span class="sm-ro">·</span> les colonnes <b>Habbo normal / HC / VIP</b> sont en <b>lecture seule</b> (gérées côté serveur, pas par grade)</div>';
+    echo '<p class="muted sm" style="margin-top:8px"><b>Habbo normal</b> (rang 1) : aucun droit de modération ni de club. <b>HC</b> (abonnement) : droits Club (tenues, badge, danses, file prioritaire). <b>VIP</b> : HC offert <b>+ entrée dans les salles pleines</b> — aucun pouvoir de modération. Pour <b>donner/retirer</b> le HC ou le VIP à un joueur, c\'est sur la <b>fiche du joueur</b>.<br>💡 Les colonnes <b>Habbo normal / HC / VIP</b> restent indicatives (gérées côté serveur), mais tu peux maintenant <b>offrir un avantage Club à un grade</b> en cochant sa case (ex. badge HC offert aux Modérateurs).</p>';
+    echo '<p class="muted sm" style="margin-top:8px">Les 5 actions du MOD Tool sont <b>indépendantes</b> : « Alerte Habbo » (<code>fuse_alert_user</code>) et « Alerte Salle » (<code>fuse_room_alert</code>) sont deux droits distincts. La commande de chat <code>:alert</code> reste liée à <code>fuse_room_alert</code>. <b>¹ Le mute staff n\'est pas encore implémenté.</b></p>';
+    echo '<p class="muted sm">Les droits de base du joueur (connexion, échange, achat de crédits) et les outils internes « housekeeping » ne sont pas listés : ils restent gérés automatiquement et ne sont jamais retirés.</p>';
+    echo '</div></form>';
+
+    /* Données + logique front (recherche, filtres, copie, défauts, indicateur de modifs, confirmation) */
+    $J = fn($v) => json_encode($v, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    echo '<script>var SM_DEFAULTS=' . $J($defs) . ';</script>';
+    echo <<<'JS'
+<script>(function(){
+  var table=document.getElementById('sm-table'); if(!table) return;
+  var form=document.getElementById('staff-perms-form');
+  var saveBtn=document.getElementById('sm-save');
+  var dirtyEl=document.getElementById('sm-dirty');
+  var cbs=[].slice.call(table.querySelectorAll('input.sm-cb'));
+  var SENS={};
+  [].forEach.call(table.querySelectorAll('tr.sm-row[data-sensitive]'),function(tr){SENS[tr.getAttribute('data-code')]=1;});
+  function colCbs(rk){rk=String(rk);return cbs.filter(function(cb){return cb.getAttribute('data-rank')===rk;});}
+  function recount(){
+    var n=0,sens=[];
+    cbs.forEach(function(cb){
+      if(cb.checked!==(cb.getAttribute('data-initial')==='1')){
+        n++;var c=cb.getAttribute('data-code');
+        if(SENS[c]&&sens.indexOf(c)<0)sens.push(c);
+      }
+    });
+    if(dirtyEl){
+      if(n===0){dirtyEl.textContent='Aucune modification';dirtyEl.classList.remove('on');}
+      else{dirtyEl.textContent=n+' changement'+(n>1?'s':'')+' non enregistre'+(n>1?'s':'');dirtyEl.classList.add('on');}
+    }
+    if(saveBtn){saveBtn.disabled=(n===0);saveBtn.setAttribute('data-sens',sens.join(', '));}
+  }
+  table.addEventListener('change',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('sm-cb'))recount();});
+
+  var search=document.getElementById('sm-search');
+  if(search){
+    search.addEventListener('keydown',function(e){if(e.key==='Enter')e.preventDefault();});
+    search.addEventListener('input',function(){
+      var q=this.value.trim().toLowerCase(),vis={};
+      [].forEach.call(table.querySelectorAll('tr.sm-row'),function(tr){
+        var hit=!q||tr.getAttribute('data-label').indexOf(q)>=0;
+        tr.setAttribute('data-match',hit?'1':'0');
+        tr.style.display=(hit&&!tr.getAttribute('data-collapsed'))?'':'none';
+        if(hit)vis[tr.getAttribute('data-grp')]=1;
+      });
+      [].forEach.call(table.querySelectorAll('tr.grp'),function(tr){
+        tr.style.display=(q&&!vis[tr.getAttribute('data-grp')])?'none':'';
+      });
+    });
+  }
+
+  function setGroup(hdr,collapsed){
+    var g=hdr.getAttribute('data-grp');
+    hdr.classList.toggle('collapsed',collapsed);
+    [].forEach.call(table.querySelectorAll('tr.sm-row[data-grp="'+g+'"]'),function(tr){
+      if(collapsed){tr.setAttribute('data-collapsed','1');tr.style.display='none';}
+      else{tr.removeAttribute('data-collapsed');if(tr.getAttribute('data-match')!=='0')tr.style.display='';}
+    });
+  }
+  [].forEach.call(table.querySelectorAll('tr.grp'),function(hdr){
+    hdr.addEventListener('click',function(){setGroup(hdr,!hdr.classList.contains('collapsed'));});
+  });
+  var exp=document.getElementById('sm-expand'),col=document.getElementById('sm-collapse');
+  if(exp)exp.addEventListener('click',function(){[].forEach.call(table.querySelectorAll('tr.grp'),function(h){setGroup(h,false);});});
+  if(col)col.addEventListener('click',function(){[].forEach.call(table.querySelectorAll('tr.grp'),function(h){setGroup(h,true);});});
+
+  [].forEach.call(document.querySelectorAll('input.sm-gradecol'),function(chk){
+    chk.addEventListener('change',function(){
+      var show=chk.checked;
+      [].forEach.call(table.querySelectorAll('.col-r'+chk.value),function(c){c.style.display=show?'':'none';});
+    });
+  });
+
+  var ops=document.querySelector('.sm-colops');
+  if(ops)[].forEach.call(ops.querySelectorAll('[data-op]'),function(btn){
+    btn.addEventListener('click',function(){
+      var op=btn.getAttribute('data-op'),g=document.getElementById('sm-grade').value;
+      if(op==='all')colCbs(g).forEach(function(cb){cb.checked=true;});
+      else if(op==='none')colCbs(g).forEach(function(cb){cb.checked=false;});
+      else if(op==='defaults'){var rk=parseInt(g,10);colCbs(g).forEach(function(cb){var m=SM_DEFAULTS[cb.getAttribute('data-code')];cb.checked=(m!=null&&rk>=m);});}
+      else if(op==='copy'){var to=document.getElementById('sm-copyto').value;if(to===g){alert('Choisis un grade de destination different du grade source.');return;}var src={};colCbs(g).forEach(function(cb){src[cb.getAttribute('data-code')]=cb.checked;});colCbs(to).forEach(function(cb){var v=src[cb.getAttribute('data-code')];if(v!=null)cb.checked=v;});}
+      recount();
+    });
+  });
+
+  if(form)form.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target&&e.target.tagName!=='BUTTON'&&e.target.tagName!=='TEXTAREA')e.preventDefault();});
+  if(saveBtn)saveBtn.addEventListener('click',function(e){
+    var s=saveBtn.getAttribute('data-sens')||'';
+    if(s){if(!confirm('Attention : tu modifies des droits sensibles ('+s+'). Confirmer l\'enregistrement ?')){e.preventDefault();e.stopImmediatePropagation();}}
+  },true);
+
+  var ts=document.getElementById('staff-team-search');
+  if(ts)ts.addEventListener('input',function(){
+    var q=this.value.trim().toLowerCase();
+    [].forEach.call(document.querySelectorAll('#staff-team tbody tr'),function(tr){
+      tr.style.display=(!q||(tr.getAttribute('data-name')||'').indexOf(q)>=0)?'':'none';
+    });
+  });
+
+  recount();
+})();</script>
+JS;
+    }
+
+    /* ======================= ONGLET JOURNAL ======================= */
+    else {
+        $jrn = [];
+        try { foreach (db()->query("SELECT author, action, detail, created_at FROM admin_log WHERE action IN ('staff_perms_save','staff_rank','vip_set') ORDER BY id DESC LIMIT 100") as $r) $jrn[] = $r; } catch (Throwable $e) {}
+        echo '<div class="panel"><div class="ph"><h3>🕓 Journal des modifications du personnel</h3><span class="muted" style="margin-left:auto">' . count($jrn) . ' entrée(s)</span></div>';
+        echo '<p class="muted sm">Qui a modifié un grade, une permission ou un statut VIP — et quand. Source : journal d\'administration.</p>';
+        if (!$jrn) echo '<p class="muted">Aucune modification enregistrée pour le moment.</p>';
+        else {
+            $jl = ['staff_perms_save' => '🧰 Permissions', 'staff_rank' => '🎖️ Grade', 'vip_set' => '⭐ VIP'];
+            echo '<table class="tbl"><thead><tr><th>Date</th><th>Admin</th><th>Action</th><th>Détail</th></tr></thead><tbody>';
+            foreach ($jrn as $e) echo '<tr><td class="muted sm">' . h((string)$e['created_at']) . '</td><td><b>' . h((string)$e['author']) . '</b></td><td>' . h($jl[$e['action']] ?? $e['action']) . '</td><td class="sm">' . h((string)$e['detail']) . '</td></tr>';
+            echo '</tbody></table>';
+        }
+        echo '</div>';
+    }
+}
+
 function page_ranks(): void {
     page_title('Rangs & permissions', 'Ce que débloque chaque rang dans Kepler');
     echo '<div class="warn">Rangs <b>1 à 7</b> (5 = Super Hobba, 6 = Modérateur, 7 = Administrateur, le maximum — comme l\'onglet « Accès admin »). Il n\'existe pas de rang « HabboX » séparé dans cet émulateur.</div>';
+    echo '<div class="info">✏️ Vue en <b>lecture seule</b>. Pour <b>activer/désactiver</b> un droit par grade, va dans <a href="?p=staff">👮 Gestion du personnel</a>.</div>';
+    staff_ensure_table(); staff_seed_if_empty();
     $fr = [];
-    foreach (db()->query('SELECT DISTINCT min_rank,fuseright FROM rank_fuserights ORDER BY min_rank') as $r) $fr[(int)$r['min_rank']][] = $r['fuseright'];
+    try { foreach (db()->query('SELECT fuseright, MIN(`rank`) min_rank FROM rank_fuserights GROUP BY fuseright ORDER BY min_rank, fuseright') as $r) $fr[(int)$r['min_rank']][] = $r['fuseright']; } catch (Throwable $e) {}
     $counts = [];
     foreach (db()->query('SELECT rank,COUNT(*) c FROM users GROUP BY rank') as $r) $counts[(int)$r['rank']] = (int)$r['c'];
     foreach (RANKS as $n => $lbl) {
@@ -6048,41 +6690,61 @@ function page_moderation(): void {
     $sec = (string)($_GET['sec'] ?? 'bans');
     if (!in_array($sec, ['bans', 'watch', 'logs', 'journal', 'tools'], true)) $sec = 'bans';
     if (trim((string)($_GET['ban'] ?? '')) !== '') $sec = 'bans'; // lien « Bannir » depuis un appel CFH
-    $nowMs = time() * 1000;
-    $nBans = 0; try { $s = db()->prepare('SELECT COUNT(*) FROM users_bans WHERE banned_until > ?'); $s->execute([$nowMs]); $nBans = (int)$s->fetchColumn(); } catch (Throwable $e) {}
+    if (!in_array($sec, ['bans', 'history', 'watch', 'logs', 'journal', 'tools'], true)) $sec = 'bans';
+    $nowSec = time();
+    $nBans = 0; try { $s = db()->prepare('SELECT COUNT(*) FROM users_bans WHERE banned_until > ?'); $s->execute([$nowSec]); $nBans = (int)$s->fetchColumn(); } catch (Throwable $e) {}
     $nAlts = 0; try { $nAlts = (int)db()->query('SELECT COUNT(*) FROM (SELECT ip_address FROM users_ip_logs GROUP BY ip_address HAVING COUNT(DISTINCT user_id) > 1) t')->fetchColumn(); } catch (Throwable $e) {}
 
     echo '<style>' . mod_css() . '</style>';
-    $tabs = ['bans' => ['🚫', 'Bannissements', $nBans], 'watch' => ['🕵️', 'Multi-comptes', $nAlts], 'logs' => ['💬', 'Logs de chat', 0], 'journal' => ['📜', 'Journaux', 0], 'tools' => ['🧰', 'Outils', 0]];
+    $tabs = ['bans' => ['🚫', 'Bannissements', $nBans], 'history' => ['📚', 'Historique', 0], 'watch' => ['🕵️', 'Multi-comptes', $nAlts], 'logs' => ['💬', 'Logs de chat', 0], 'journal' => ['📜', 'Journaux', 0], 'tools' => ['🧰', 'Outils', 0]];
     echo '<div class="atabs">';
     foreach ($tabs as $k => $t) {
         $b = ((int)$t[2] > 0) ? '<span class="atab-badge">' . (int)$t[2] . '</span>' : '';
         echo '<a class="atab' . ($sec === $k ? ' on' : '') . '" href="?p=moderation&sec=' . $k . '"><span class="atab-ic">' . $t[0] . '</span>' . h($t[1]) . $b . '</a>';
     }
     echo '</div>';
-    if ($sec === 'watch') mod_sec_watch();
+    if ($sec === 'history') mod_sec_history();
+    elseif ($sec === 'watch') mod_sec_watch();
     elseif ($sec === 'logs') mod_sec_logs();
     elseif ($sec === 'journal') mod_sec_journal();
     elseif ($sec === 'tools') mod_sec_tools();
     else mod_sec_bans();
 }
+/* Historique complet des bannissements (tous joueurs), posés et levés. */
+function mod_sec_history(): void {
+    echo '<div class="panel"><div class="ph"><h3>📚 Historique des bannissements</h3><span class="muted sm" style="margin-left:auto">auteur · motif · récidive</span></div>';
+    $rows = []; try { ensure_ban_history(); $rows = db()->query("SELECT h.*, u.username FROM ban_history h LEFT JOIN users u ON u.id=h.user_id ORDER BY h.id DESC LIMIT 200")->fetchAll(); } catch (Throwable $e) {}
+    if (!$rows) { echo '<div class="empty">Aucun bannissement enregistré pour l\'instant.</div></div>'; return; }
+    echo '<table class="clean"><tr><th>Date</th><th>Cible</th><th>Motif</th><th>Durée</th><th>Auteur</th><th>Source</th><th>État</th></tr>';
+    foreach ($rows as $r) {
+        $cible = $r['username'] !== null ? '<a href="?p=user&id=' . (int)$r['user_id'] . '"><b>' . h((string)$r['username']) . '</b></a>' : '<span class="mod-ipbadge">' . h((string)$r['banned_value']) . '</span>';
+        $dur = (int)$r['hours'] <= 0 ? '♾️ définitif' : ((int)$r['hours'] >= 24 ? round($r['hours'] / 24, 1) . ' j' : (int)$r['hours'] . ' h');
+        $etat = $r['lifted_at'] !== null ? '<span class="muted sm">levé ' . date('d/m/Y', strtotime((string)$r['lifted_at'])) . ($r['lifted_by'] ? ' par ' . h((string)$r['lifted_by']) : '') . '</span>' : '<span class="rk red">actif</span>';
+        $src = $r['source'] === 'jeu' ? '🎮 jeu' : '🖥️ admin';
+        echo '<tr><td class="sm">' . date('d/m/Y H:i', strtotime((string)$r['created_at'])) . '</td><td>' . $cible . '</td><td class="muted sm">' . h((string)$r['reason_label']) . '</td><td class="sm">' . $dur . '</td><td class="sm">' . h((string)$r['author_name']) . '</td><td class="sm muted">' . $src . '</td><td>' . $etat . '</td></tr>';
+    }
+    echo '</table></div>';
+}
 function mod_sec_bans(): void {
     $prefill = trim($_GET['ban'] ?? '');
+    $ropts = ''; foreach (ban_reasons() as $rc => $r) { $ropts .= '<option value="' . $rc . '" data-days="' . (int)$r[1] . '">' . h($r[0]) . ' (' . ((int)$r[1] > 0 ? $r[1] . ' j' : 'définitif') . ')</option>'; }
     echo '<div class="panel"><div class="ph"><h3>🚫 Nouveau bannissement</h3></div><form method="post" class="js row" data-reload>' . csrf_field() . '<input type="hidden" name="action" value="ban_add">
         <label>Type<select name="type"><option value="USER_ID">Joueur (nom)</option><option value="IP_ADDRESS">Adresse IP</option><option value="MACHINE_ID">Machine ID</option></select></label>
         <label style="flex:1">Cible (nom ou IP)<input name="value" list="dl_pseudos" autocomplete="off" value="' . h($prefill) . '" required></label>
-        <label>Durée (jours · 0 = définitif)<input type="number" name="days" value="0" style="width:120px"></label>
-        <label style="flex:1">Motif<input name="message" value="Comportement inapproprié"></label><button>🚫 Bannir</button></form></div>';
+        <label>Motif<select name="reason_code">' . $ropts . '</select></label>
+        <label>Durée (jours · vide = défaut du motif · 0 = définitif)<input type="number" name="days" min="0" placeholder="défaut" style="width:120px"></label>
+        <label style="flex:1">Message au joueur (facultatif)<input name="message" placeholder="laisser vide = libellé du motif"></label>
+        <button>🚫 Bannir</button></form></div>';
 
     echo '<div class="panel"><div class="ph"><h3>Bannissements actifs</h3><span class="muted sm" style="margin-left:auto">échéance future uniquement</span></div>';
-    $nowMs = time() * 1000;
+    $nowSec = time();
     $st = db()->prepare('SELECT b.ban_type,b.banned_value,b.message,b.banned_until,u.id AS uid,u.username FROM users_bans b LEFT JOIN users u ON (b.ban_type=\'USER_ID\' AND u.id=b.banned_value) WHERE b.banned_until > ? ORDER BY b.banned_until DESC');
-    $st->execute([$nowMs]); $rows = $st->fetchAll();
+    $st->execute([$nowSec]); $rows = $st->fetchAll();
     if (!$rows) echo '<div class="empty">Aucun bannissement actif 🎉</div>';
     else {
         echo '<table class="clean"><tr><th>Cible</th><th>Type</th><th>Motif</th><th>Jusqu\'à</th><th></th></tr>';
         foreach ($rows as $b) {
-            $until = (int)$b['banned_until'] >= BAN_PERMANENT ? '♾️ Définitif' : date('d/m/Y H:i', (int)($b['banned_until'] / 1000));
+            $until = ban_until_label((int)$b['banned_until']);
             if ($b['ban_type'] === 'USER_ID') {
                 $nm = $b['username'] ?? ('#' . $b['banned_value']);
                 $av = $b['username'] !== null ? '<img class="mod-av" src="/avatar.php?user=' . h(rawurlencode((string)$b['username'])) . '&size=s&direction=2&v=2" alt="" loading="lazy">' : '';
@@ -6094,6 +6756,21 @@ function mod_sec_bans(): void {
                 $type = $b['ban_type'] === 'IP_ADDRESS' ? '🌐 IP' : '💻 Machine';
             }
             echo '<tr><td>' . $cible . '</td><td class="sm muted">' . $type . '</td><td class="muted">' . h((string)$b['message']) . '</td><td class="sm">' . $until . '</td><td><form method="post" class="js" data-reload data-confirm="Lever ce bannissement ?"><input type="hidden" name="action" value="ban_remove">' . csrf_field() . '<input type="hidden" name="value" value="' . h((string)$b['banned_value']) . '"><button class="mini ghost">Lever</button></form></td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '</div>';
+
+    // Réduits au silence (mutes staff) actifs
+    $mutes = []; try { ensure_staff_mutes(); $q = db()->prepare('SELECT m.*, u.username FROM staff_mutes m LEFT JOIN users u ON u.id=m.user_id WHERE m.muted_until > ? ORDER BY m.muted_until DESC'); $q->execute([time()]); $mutes = $q->fetchAll(); } catch (Throwable $e) {}
+    echo '<div class="panel"><div class="ph"><h3>🔇 Réduits au silence</h3><span class="muted sm" style="margin-left:auto">mutes de modération actifs</span></div>';
+    if (!$mutes) echo '<div class="empty">Personne n\'est réduit au silence.</div>';
+    else {
+        echo '<table class="clean"><tr><th>Joueur</th><th>Motif</th><th>Jusqu\'à</th><th>Par</th><th></th></tr>';
+        foreach ($mutes as $m) {
+            $nm = $m['username'] ?? ('#' . $m['user_id']);
+            $link = $m['username'] !== null ? '<a href="?p=user&id=' . (int)$m['user_id'] . '"><b>' . h((string)$nm) . '</b></a>' : '<b>' . h((string)$nm) . '</b>';
+            echo '<tr><td>' . $link . '</td><td class="muted sm">' . h((string)($m['reason'] ?: '—')) . '</td><td class="sm">' . date('d/m/Y H:i', (int)$m['muted_until']) . '</td><td class="sm muted">' . h((string)$m['author_name']) . '</td><td><form method="post" class="js" data-reload><input type="hidden" name="action" value="mute_remove"><input type="hidden" name="id" value="' . (int)$m['user_id'] . '"><input type="hidden" name="back" value="?p=moderation&sec=bans">' . csrf_field() . '<button class="mini ghost">🔊 Rendre la parole</button></form></td></tr>';
         }
         echo '</table>';
     }
@@ -7891,10 +8568,12 @@ function fuse_label(string $f): string {
     static $m = [
         'default' => 'Accès de base', 'fuse_buy_credits' => 'Acheter des crédits', 'fuse_login' => 'Se connecter',
         'fuse_room_queue_default' => "File d'attente standard", 'fuse_trade' => 'Échanger',
-        'fuse_enter_full_rooms' => 'Entrer dans les salles pleines', 'fuse_room_alert' => 'Alerter dans sa salle',
-        'fuse_enter_locked_rooms' => 'Entrer dans les salles verrouillées', 'fuse_kick' => 'Expulser (kick)',
-        'fuse_mute' => 'Rendre muet', 'fuse_ban' => 'Bannir', 'fuse_receive_calls_for_help' => "Recevoir les appels à l'aide",
-        'fuse_remove_stickies' => 'Retirer les post-its', 'fuse_room_kick' => "Expulser d'une salle", 'fuse_room_mute' => 'Rendre muet dans une salle',
+        'fuse_enter_full_rooms' => 'Entrer dans les salles pleines', 'fuse_room_alert' => 'Alerte Salle',
+        'fuse_alert_user' => 'Alerte Habbo',
+        'fuse_enter_locked_rooms' => 'Entrer dans les salles verrouillées', 'fuse_kick' => 'Expulser Habbo',
+        'fuse_mute' => 'Rendre muet', 'fuse_ban' => 'Bannir Habbo', 'fuse_receive_calls_for_help' => "Recevoir les appels à l'aide",
+        'fuse_remove_stickies' => 'Retirer les post-its', 'fuse_room_kick' => 'Expulser Salle', 'fuse_room_mute' => 'Rendre muet dans une salle',
+        'fuse_enter_invisible' => 'Utiliser le mode invisible', 'fuse_see_invisible' => 'Voir les membres invisibles',
         'fuse_any_room_controller' => "Contrôler n'importe quelle salle", 'fuse_credits' => 'Gérer les crédits',
         'fuse_ignore_room_owner' => 'Ignorer les droits du proprio', 'fuse_mod' => 'Modération', 'fuse_moderator_access' => 'Accès outils modérateur',
         'fuse_pick_up_any_furni' => "Ramasser n'importe quel meuble", 'fuse_superban' => 'Superban',
@@ -8187,6 +8866,47 @@ input.filt{padding:8px 12px;border-radius:9px}
 button.season{background:var(--panel2);border:1px solid var(--line2);color:var(--txt);padding:11px 16px;border-radius:11px;font-weight:700}
 button.season:hover{border-color:var(--acc);background:var(--soft)}button.season.active{background:var(--acc);color:#fff;border-color:var(--acc);cursor:default}
 .warn{background:var(--soft);border:1px solid var(--line2);color:var(--txt);padding:12px 16px;border-radius:12px;margin:12px 0}
+.info{background:var(--bg);border:1px solid var(--line2);color:var(--txt);padding:10px 14px;border-radius:10px;margin:10px 0;font-size:13px}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th,.tbl td{padding:8px 10px;border-top:1px solid var(--line2);text-align:left;vertical-align:middle}
+.tbl thead th{border-top:0;color:var(--mut);font-weight:700;font-size:12px}
+.staff-matrix{table-layout:fixed;width:100%;min-width:1180px;border-collapse:collapse}
+.staff-matrix th,.staff-matrix td{text-align:center;overflow:hidden;border-left:1px solid var(--line2)}
+.staff-matrix th:first-child,.staff-matrix td:first-child{text-align:left;width:300px;border-left:0;padding-left:12px}
+.staff-matrix th:not(:first-child),.staff-matrix td:not(:first-child){width:auto}
+.staff-matrix td.col-status{background:var(--soft)}
+.staff-matrix th.col-status{background:color-mix(in srgb,var(--acc) 7%,var(--panel))}
+.staff-matrix td.col-sep,.staff-matrix th.col-sep{border-left:2px solid var(--line)}
+.sm-ro{color:var(--mut);font-size:15px;line-height:1}
+.staff-matrix thead th{vertical-align:bottom;line-height:1.2;padding:8px 6px;position:sticky;top:0;background:var(--panel);z-index:2}
+.sm-grade-chip{display:inline-block;color:#fff;font-size:11px;font-weight:800;border-radius:7px;padding:4px 7px;line-height:1.2;max-width:96px;white-space:normal;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.staff-matrix tr.grp td{background:var(--soft);font-size:12.5px;padding:9px 12px;font-weight:800;text-align:left;cursor:pointer;user-select:none;border-left:0}
+.staff-matrix tr.grp .sm-caret{display:inline-block;transition:transform .15s;font-size:11px;color:var(--mut)}
+.staff-matrix tr.grp.collapsed .sm-caret{transform:rotate(-90deg)}
+.staff-matrix tbody tr.sm-row td{border-top:1px solid var(--line2)}
+.staff-matrix tbody tr.sm-row:hover td{background:var(--soft)}
+.staff-matrix tbody tr.sm-row[data-sensitive] td:first-child{box-shadow:inset 3px 0 0 #e0792b}
+.staff-matrix input[type=checkbox]{width:18px;height:18px;cursor:pointer;margin:0;accent-color:var(--acc)}
+.sm-rowlabel{font-size:13px}
+.sm-code{color:var(--mut);font-size:11px}
+.sm-tag{display:inline-block;font-size:9.5px;font-weight:700;border-radius:5px;padding:1px 6px;vertical-align:middle;margin-right:7px;letter-spacing:.3px;text-transform:uppercase}
+.sm-tag.sm-cli{background:#22406a;border:1px solid #2f5da0;color:#cfe0ff}
+.sm-tag.sm-srv{background:#3d2a55;border:1px solid #5b3f80;color:#e2d2f6}
+.sm-tag.sm-club{background:#5a3410;border:1px solid #8a5216;color:#ffd9a8}
+.staff-matrix tr.grp-info td{background:color-mix(in srgb,#e0792b 10%,var(--panel))}
+.sm-toolbar,.sm-filters,.sm-colops{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}
+.sm-inp{padding:8px 12px;border-radius:9px;border:1px solid var(--line2);background:var(--bg);color:var(--txt);font-size:13px}
+#sm-search{flex:1;min-width:220px}
+.sm-inp-s{padding:6px 8px}
+.sm-sep{width:1px;align-self:stretch;background:var(--line2);margin:0 4px}
+.sm-lbl{font-size:12px;color:var(--mut);font-weight:700}
+.sm-pill{display:inline-flex;align-items:center;gap:5px;background:var(--bg);border:1px solid var(--line2);border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer;user-select:none}
+.sm-pill input{margin:0}
+.sm-dirty{font-size:12px;color:var(--mut)}.sm-dirty.on{color:#e0792b;font-weight:700}
+.sm-save:disabled{opacity:.5;cursor:not-allowed}
+.sm-legend{font-size:12px;color:var(--mut);margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.sm-legend .sm-tag{margin-right:3px}
+.sm-dot-sens{display:inline-block;width:9px;height:9px;border-radius:50%;background:#e0792b}
 .empty{color:var(--mut);text-align:center;padding:22px}
 details.panel summary{cursor:pointer;font-size:15px;font-weight:700}details[open].panel summary{margin-bottom:10px}
 .setting{border-top:1px solid var(--line);padding:9px 0}.setting:first-of-type{border-top:0}
