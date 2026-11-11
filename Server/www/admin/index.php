@@ -5842,6 +5842,10 @@ JS2;
 
     /* Filtre des colonnes (grades affichés) */
     echo '<div class="sm-filters"><span class="sm-lbl">Grades affichés :</span>';
+    echo '<label class="sm-pill"><input type="checkbox" class="sm-statuscol" value="norm" checked>Habbo</label>';
+    echo '<label class="sm-pill"><input type="checkbox" class="sm-statuscol" value="hc" checked>HC</label>';
+    echo '<label class="sm-pill"><input type="checkbox" class="sm-statuscol" value="vip" checked>VIP</label>';
+    echo '<span class="sm-sep"></span>';
     foreach ($ranks as $rk => $lbl) echo '<label class="sm-pill"><input type="checkbox" class="sm-gradecol" value="' . $rk . '" checked>' . h($lbl) . '</label>';
     echo '</div>';
 
@@ -5860,7 +5864,7 @@ JS2;
     echo '<button type="button" class="mini" data-op="copy">Copier</button></div>';
 
     /* Statuts (lecture seule) : valeurs issues du code serveur Kepler (Player.refreshFuserights / hasFuse).
-       Habbo normal = rang 1 (aucun droit mod/club) · HC = droits club · VIP = HC offert + salles pleines. */
+       Habbo = joueur de base (aucun droit mod/club) · HC = droits club · VIP = HC offert + salles pleines. */
     $clubCodes = ['fuse_use_club_outfits', 'fuse_use_club_badge', 'fuse_use_club_dance', 'fuse_room_queue_club'];
     $yes = '<span class="sm-ro" style="color:var(--green)" title="Oui">✓</span>';
     $no  = '<span class="sm-ro" title="Non">·</span>';
@@ -5869,17 +5873,17 @@ JS2;
         $norm = false;                                           // joueur sans abonnement : rien
         $hc   = $isClub;                                         // abonné HC : droits club
         $vip  = $isClub || $code === 'fuse_enter_full_rooms';   // VIP : HC offert + salles pleines
-        return '<td class="col-status">' . ($norm ? $yes : $no) . '</td>'
-             . '<td class="col-status">' . ($hc ? $yes : $no) . '</td>'
-             . '<td class="col-status">' . ($vip ? $yes : $no) . '</td>';
+        return '<td class="col-status col-norm">' . ($norm ? $yes : $no) . '</td>'
+             . '<td class="col-status col-hc">' . ($hc ? $yes : $no) . '</td>'
+             . '<td class="col-status col-vip">' . ($vip ? $yes : $no) . '</td>';
     };
     $ncol = count($ranks) + 4;
 
     /* Matrice */
     echo '<div style="overflow-x:auto"><table class="tbl staff-matrix" id="sm-table"><thead><tr><th style="text-align:left">Droit</th>';
-    echo '<th class="col-status" title="Joueur sans abonnement"><span class="sm-grade-chip" style="background:#5a6b85">Habbo normal</span></th>';
-    echo '<th class="col-status" title="Abonné Habbo Club"><span class="sm-grade-chip" style="background:#12a85a">HC</span></th>';
-    echo '<th class="col-status" title="Statut VIP : HC offert + salles pleines"><span class="sm-grade-chip" style="background:#9b59b6">VIP</span></th>';
+    echo '<th class="col-status col-norm" title="Joueur sans abonnement"><span class="sm-grade-chip" style="background:#5a6b85">Habbo</span></th>';
+    echo '<th class="col-status col-hc" title="Abonné Habbo Club"><span class="sm-grade-chip" style="background:#12a85a">HC</span></th>';
+    echo '<th class="col-status col-vip" title="Statut VIP : HC offert + salles pleines"><span class="sm-grade-chip" style="background:#9b59b6">VIP</span></th>';
     $first = true;
     foreach ($ranks as $rk => $lbl) {
         $gc = $rk >= 7 ? '#ff5b5b' : ($rk >= 6 ? '#ffb033' : ($rk >= 3 ? '#3a7afe' : '#5a6b85'));
@@ -5928,8 +5932,8 @@ JS2;
     }
     echo '</tbody></table></div>';
 
-    echo '<div class="sm-legend"><span class="sm-tag sm-cli">client</span> bouton visible en jeu · <span class="sm-tag sm-srv">serveur</span> serveur seul · <span class="sm-tag sm-club">club</span> avantage Club/VIP · <span class="sm-dot-sens"></span> droit sensible · <span class="sm-ro" style="color:var(--green)">✓</span>/<span class="sm-ro">·</span> les colonnes <b>Habbo normal / HC / VIP</b> sont en <b>lecture seule</b> (gérées côté serveur, pas par grade)</div>';
-    echo '<p class="muted sm" style="margin-top:8px"><b>Habbo normal</b> (rang 1) : aucun droit de modération ni de club. <b>HC</b> (abonnement) : droits Club (tenues, badge, danses, file prioritaire). <b>VIP</b> : HC offert <b>+ entrée dans les salles pleines</b> — aucun pouvoir de modération. Pour <b>donner/retirer</b> le HC ou le VIP à un joueur, c\'est sur la <b>fiche du joueur</b>.<br>💡 Les colonnes <b>Habbo normal / HC / VIP</b> restent indicatives (gérées côté serveur), mais tu peux maintenant <b>offrir un avantage Club à un grade</b> en cochant sa case (ex. badge HC offert aux Modérateurs).</p>';
+    echo '<div class="sm-legend"><span class="sm-tag sm-cli">client</span> bouton visible en jeu · <span class="sm-tag sm-srv">serveur</span> serveur seul · <span class="sm-tag sm-club">club</span> avantage Club/VIP · <span class="sm-dot-sens"></span> droit sensible · <span class="sm-ro" style="color:var(--green)">✓</span>/<span class="sm-ro">·</span> les colonnes <b>Habbo / HC / VIP</b> sont en <b>lecture seule</b> (gérées côté serveur, pas par grade)</div>';
+    echo '<p class="muted sm" style="margin-top:8px"><b>Habbo</b> (joueur de base) : aucun droit de modération ni de club. <b>HC</b> (abonnement) : droits Club (tenues, badge, danses, file prioritaire). <b>VIP</b> : HC offert <b>+ entrée dans les salles pleines</b> — aucun pouvoir de modération. Pour <b>donner/retirer</b> le HC ou le VIP à un joueur, c\'est sur la <b>fiche du joueur</b>.<br>💡 Les colonnes <b>Habbo / HC / VIP</b> restent indicatives (gérées côté serveur), mais tu peux maintenant <b>offrir un avantage Club à un grade</b> en cochant sa case (ex. badge HC offert aux Modérateurs).</p>';
     echo '<p class="muted sm" style="margin-top:8px">Les 5 actions du MOD Tool sont <b>indépendantes</b> : « Alerte Habbo » (<code>fuse_alert_user</code>) et « Alerte Salle » (<code>fuse_room_alert</code>) sont deux droits distincts. La commande de chat <code>:alert</code> reste liée à <code>fuse_room_alert</code>. <b>¹ Le mute staff n\'est pas encore implémenté.</b></p>';
     echo '<p class="muted sm">Les droits de base du joueur (connexion, échange, achat de crédits) et les outils internes « housekeeping » ne sont pas listés : ils restent gérés automatiquement et ne sont jamais retirés.</p>';
     echo '</div></form>';
@@ -5999,6 +6003,13 @@ JS2;
     chk.addEventListener('change',function(){
       var show=chk.checked;
       [].forEach.call(table.querySelectorAll('.col-r'+chk.value),function(c){c.style.display=show?'':'none';});
+    });
+  });
+
+  [].forEach.call(document.querySelectorAll('input.sm-statuscol'),function(chk){
+    chk.addEventListener('change',function(){
+      var show=chk.checked;
+      [].forEach.call(table.querySelectorAll('.col-'+chk.value),function(c){c.style.display=show?'':'none';});
     });
   });
 
