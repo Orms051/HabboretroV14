@@ -5785,6 +5785,16 @@ function page_staff(): void {
     foreach ($tabs as $k => $lbl) echo '<a href="?p=staff&sec=' . $k . '" class="' . ($k === $sec ? 'on' : '') . '">' . $lbl . '</a>';
     echo '</div>';
 
+    /* ---- Bandeau statistiques (visible sur tous les onglets) ---- */
+    $nPil    = count($allCodes) + count(staff_club_rights());
+    $nAttrib = count($set);
+    echo '<div class="staff-stats">'
+       . '<div class="sstat"><span class="si">👥</span><div><div class="sv">' . $nStaff . '</div><div class="sl">Membres d\'équipe</div></div></div>'
+       . '<div class="sstat"><span class="si">🎖️</span><div><div class="sv">' . count($ranks) . '</div><div class="sl">Grades pilotables</div></div></div>'
+       . '<div class="sstat"><span class="si">🧰</span><div><div class="sv">' . $nPil . '</div><div class="sl">Droits configurables</div></div></div>'
+       . '<div class="sstat"><span class="si">✅</span><div><div class="sv">' . $nAttrib . '</div><div class="sl">Droits attribués</div></div></div>'
+       . '</div>';
+
     /* ======================= ONGLET ÉQUIPE ======================= */
     if ($sec === 'equipe') {
     echo '<div class="panel"><div class="ph"><h3>👥 L\'équipe</h3><span class="muted" style="margin-left:auto">' . count($staff) . ' membre(s)</span></div>';
@@ -5833,35 +5843,49 @@ JS2;
        . '<button type="submit" id="sm-save" class="sm-save" disabled>💾 Enregistrer</button></div>';
     echo '<div class="info">Coche une case pour <b>autoriser</b> ce droit à ce grade. Côté serveur, une action non autorisée est <b>refusée</b> même si le bouton reste visible en jeu (le client Shockwave n\'est pas modifié). Après enregistrement, un <b>rechargement</b> est envoyé automatiquement à l\'émulateur : le staff connecté est mis à jour sans reconnexion.</div>';
 
-    /* Barre d'outils : recherche + plier/déplier */
-    echo '<div class="sm-toolbar">'
-       . '<input type="text" id="sm-search" class="sm-inp" placeholder="🔎 Rechercher un droit (nom ou identifiant)…">'
-       . '<button type="button" class="mini ghost" id="sm-expand">⊕ Tout déplier</button>'
-       . '<button type="button" class="mini ghost" id="sm-collapse">⊖ Tout replier</button>'
-       . '</div>';
+    /* Barre d'outils unifiée : recherche + menu Colonnes + menu Actions par grade + plier/déplier */
+    echo '<div class="sm-bar">';
+    echo '<input type="text" id="sm-search" class="sm-inp sm-grow" placeholder="🔎 Rechercher un droit (nom ou identifiant)…">';
 
-    /* Filtre des colonnes (grades affichés) */
-    echo '<div class="sm-filters"><span class="sm-lbl">Grades affichés :</span>';
-    echo '<label class="sm-pill"><input type="checkbox" class="sm-statuscol" value="norm" checked>Habbo</label>';
-    echo '<label class="sm-pill"><input type="checkbox" class="sm-statuscol" value="hc" checked>HC</label>';
-    echo '<label class="sm-pill"><input type="checkbox" class="sm-statuscol" value="vip" checked>VIP</label>';
-    echo '<span class="sm-sep"></span>';
-    foreach ($ranks as $rk => $lbl) echo '<label class="sm-pill"><input type="checkbox" class="sm-gradecol" value="' . $rk . '" checked>' . h($lbl) . '</label>';
+    /* Menu déroulant : colonnes affichées */
+    echo '<div class="sm-menu-wrap">'
+       . '<button type="button" class="mini ghost sm-menu-btn" data-menu="cols">⊞ Colonnes <span class="sm-ca">▾</span></button>'
+       . '<div class="sm-menu" id="menu-cols">'
+       . '<div class="sm-menu-h">Statuts (lecture seule)</div>'
+       . '<label class="sm-mi"><input type="checkbox" class="sm-statuscol" value="norm" checked><span class="sm-dot" style="background:#5a6b85"></span> Habbo</label>'
+       . '<label class="sm-mi"><input type="checkbox" class="sm-statuscol" value="hc" checked><span class="sm-dot" style="background:#12a85a"></span> HC</label>'
+       . '<label class="sm-mi"><input type="checkbox" class="sm-statuscol" value="vip" checked><span class="sm-dot" style="background:#9b59b6"></span> VIP</label>'
+       . '<div class="sm-menu-h">Grades</div>';
+    foreach ($ranks as $rk => $lbl) {
+        $gc = $rk >= 7 ? '#ff5b5b' : ($rk >= 6 ? '#ffb033' : ($rk >= 3 ? '#3a7afe' : '#5a6b85'));
+        echo '<label class="sm-mi"><input type="checkbox" class="sm-gradecol" value="' . $rk . '" checked><span class="sm-dot" style="background:' . $gc . '"></span> ' . h($lbl) . '</label>';
+    }
+    echo '</div></div>';
+
+    /* Menu déroulant : actions groupées par grade */
+    echo '<div class="sm-menu-wrap">'
+       . '<button type="button" class="mini ghost sm-menu-btn" data-menu="ops">⚙ Actions par grade <span class="sm-ca">▾</span></button>'
+       . '<div class="sm-menu sm-menu-wide" id="menu-ops">'
+       . '<div class="sm-menu-h">Appliquer à un grade</div>'
+       . '<select id="sm-grade" class="sm-inp sm-inp-s" style="width:100%">';
+    foreach ($ranks as $rk => $lbl) echo '<option value="' . $rk . '">' . h($lbl) . '</option>';
+    echo '</select>'
+       . '<div class="sm-menu-row">'
+       . '<button type="button" class="mini" data-op="all">Tout cocher</button>'
+       . '<button type="button" class="mini" data-op="none">Tout décocher</button>'
+       . '<button type="button" class="mini" data-op="defaults">↺ Défauts</button>'
+       . '</div>'
+       . '<div class="sm-menu-sep"></div>'
+       . '<div class="sm-menu-h">Copier ce grade vers</div>'
+       . '<div class="sm-menu-row"><select id="sm-copyto" class="sm-inp sm-inp-s" style="flex:1">';
+    foreach ($ranks as $rk => $lbl) echo '<option value="' . $rk . '">' . h($lbl) . '</option>';
+    echo '</select><button type="button" class="mini" data-op="copy">Copier</button></div>'
+       . '</div></div>';
+
+    echo '<span class="sm-spacer"></span>';
+    echo '<button type="button" class="mini ghost" id="sm-expand">⊕ Tout déplier</button>';
+    echo '<button type="button" class="mini ghost" id="sm-collapse">⊖ Tout replier</button>';
     echo '</div>';
-
-    /* Opérations groupées par grade */
-    echo '<div class="sm-colops"><span class="sm-lbl">Agir sur le grade :</span>';
-    echo '<select id="sm-grade" class="sm-inp sm-inp-s">';
-    foreach ($ranks as $rk => $lbl) echo '<option value="' . $rk . '">' . h($lbl) . '</option>';
-    echo '</select>';
-    echo '<button type="button" class="mini" data-op="all">Tout cocher</button>';
-    echo '<button type="button" class="mini" data-op="none">Tout décocher</button>';
-    echo '<button type="button" class="mini" data-op="defaults">↺ Défauts</button>';
-    echo '<span class="sm-sep"></span><span class="sm-lbl">Copier vers :</span>';
-    echo '<select id="sm-copyto" class="sm-inp sm-inp-s">';
-    foreach ($ranks as $rk => $lbl) echo '<option value="' . $rk . '">' . h($lbl) . '</option>';
-    echo '</select>';
-    echo '<button type="button" class="mini" data-op="copy">Copier</button></div>';
 
     /* Statuts (lecture seule) : valeurs issues du code serveur Kepler (Player.refreshFuserights / hasFuse).
        Habbo = joueur de base (aucun droit mod/club) · HC = droits club · VIP = HC offert + salles pleines. */
@@ -6013,7 +6037,25 @@ JS2;
     });
   });
 
-  var ops=document.querySelector('.sm-colops');
+  /* Menus déroulants (Colonnes / Actions par grade) */
+  [].forEach.call(document.querySelectorAll('.sm-menu-btn'),function(btn){
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      var m=document.getElementById('menu-'+btn.getAttribute('data-menu'));if(!m)return;
+      var wasOpen=m.classList.contains('open');
+      [].forEach.call(document.querySelectorAll('.sm-menu'),function(x){x.classList.remove('open');});
+      [].forEach.call(document.querySelectorAll('.sm-menu-btn'),function(b){b.classList.remove('on');});
+      if(!wasOpen){m.classList.add('open');btn.classList.add('on');}
+    });
+  });
+  document.addEventListener('click',function(e){
+    if(!(e.target.closest&&e.target.closest('.sm-menu-wrap'))){
+      [].forEach.call(document.querySelectorAll('.sm-menu.open'),function(x){x.classList.remove('open');});
+      [].forEach.call(document.querySelectorAll('.sm-menu-btn.on'),function(b){b.classList.remove('on');});
+    }
+  });
+
+  var ops=document.getElementById('menu-ops');
   if(ops)[].forEach.call(ops.querySelectorAll('[data-op]'),function(btn){
     btn.addEventListener('click',function(){
       var op=btn.getAttribute('data-op'),g=document.getElementById('sm-grade').value;
@@ -8913,6 +8955,30 @@ button.season:hover{border-color:var(--acc);background:var(--soft)}button.season
 .sm-lbl{font-size:12px;color:var(--mut);font-weight:700}
 .sm-pill{display:inline-flex;align-items:center;gap:5px;background:var(--bg);border:1px solid var(--line2);border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer;user-select:none}
 .sm-pill input{margin:0}
+/* Barre d'outils unifiée (une ligne) */
+.sm-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0;padding:10px;background:var(--bg);border:1px solid var(--line2);border-radius:12px}
+.sm-bar .sm-grow{flex:1;min-width:200px}
+.sm-spacer{flex:1}
+.sm-ca{font-size:10px;opacity:.7}
+.sm-menu-wrap{position:relative;display:inline-flex}
+.sm-menu-btn.on{background:var(--soft);border-color:var(--acc);color:var(--acc)}
+.sm-menu{position:absolute;top:calc(100% + 7px);left:0;z-index:40;min-width:210px;background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:0 14px 34px rgba(20,30,50,.20);padding:9px;display:none;flex-direction:column;gap:5px}
+.sm-menu.open{display:flex}
+.sm-menu-wide{min-width:250px}
+.sm-menu-h{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);margin:5px 3px 1px}
+.sm-mi{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:8px;font-size:13px;cursor:pointer}
+.sm-mi:hover{background:var(--soft)}
+.sm-mi input{margin:0}
+.sm-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.sm-menu-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.sm-menu-sep{height:1px;background:var(--line2);margin:6px 0}
+/* Bandeau statistiques */
+.staff-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:6px 0 16px}
+.staff-stats .sstat{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:13px 16px}
+.staff-stats .si{font-size:22px;line-height:1}
+.staff-stats .sv{font-size:24px;font-weight:800;color:var(--txt);line-height:1}
+.staff-stats .sl{font-size:12px;color:var(--mut);margin-top:5px;font-weight:600}
+@media(max-width:860px){.staff-stats{grid-template-columns:repeat(2,1fr)}}
 .sm-dirty{font-size:12px;color:var(--mut)}.sm-dirty.on{color:#e0792b;font-weight:700}
 .sm-save:disabled{opacity:.5;cursor:not-allowed}
 .sm-legend{font-size:12px;color:var(--mut);margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
