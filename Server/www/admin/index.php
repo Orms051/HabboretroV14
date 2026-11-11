@@ -5867,17 +5867,17 @@ JS2;
        . '<button type="button" class="mini ghost sm-menu-btn" data-menu="ops">⚙ Actions par grade <span class="sm-ca">▾</span></button>'
        . '<div class="sm-menu sm-menu-wide" id="menu-ops">'
        . '<div class="sm-menu-h">Appliquer à un grade</div>'
-       . '<select id="sm-grade" class="sm-inp sm-inp-s" style="width:100%">';
+       . '<select id="sm-grade" class="sm-inp sm-inp-s sm-full">';
     foreach ($ranks as $rk => $lbl) echo '<option value="' . $rk . '">' . h($lbl) . '</option>';
     echo '</select>'
-       . '<div class="sm-menu-row">'
+       . '<div class="sm-menu-grid">'
        . '<button type="button" class="mini" data-op="all">Tout cocher</button>'
        . '<button type="button" class="mini" data-op="none">Tout décocher</button>'
-       . '<button type="button" class="mini" data-op="defaults">↺ Défauts</button>'
+       . '<button type="button" class="mini sm-wide-btn" data-op="defaults">↺ Défauts</button>'
        . '</div>'
        . '<div class="sm-menu-sep"></div>'
        . '<div class="sm-menu-h">Copier ce grade vers</div>'
-       . '<div class="sm-menu-row"><select id="sm-copyto" class="sm-inp sm-inp-s" style="flex:1">';
+       . '<div class="sm-menu-row"><select id="sm-copyto" class="sm-inp sm-inp-s">';
     foreach ($ranks as $rk => $lbl) echo '<option value="' . $rk . '">' . h($lbl) . '</option>';
     echo '</select><button type="button" class="mini" data-op="copy">Copier</button></div>'
        . '</div></div>';
@@ -8966,12 +8966,19 @@ button.season:hover{border-color:var(--acc);background:var(--soft)}button.season
 .sm-menu.open{display:flex}
 .sm-menu-wide{min-width:250px}
 .sm-menu-h{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);margin:5px 3px 1px}
-.sm-mi{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:8px;font-size:13px;cursor:pointer}
-.sm-mi:hover{background:var(--soft)}
-.sm-mi input{margin:0}
+.sm-menu .sm-mi{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:9px;padding:6px 9px;border-radius:8px;font-size:13px;font-weight:600;color:var(--txt);cursor:pointer}
+.sm-menu .sm-mi:hover{background:var(--soft)}
+.sm-menu .sm-mi input{margin:0;flex:0 0 auto}
 .sm-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
-.sm-menu-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.sm-menu-sep{height:1px;background:var(--line2);margin:6px 0}
+.sm-menu .sm-full,.sm-menu select{width:100%}
+.sm-menu .mini{padding:7px 10px;font-size:12.5px;text-align:center}
+.sm-menu-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:2px}
+.sm-menu-grid .mini{width:100%}
+.sm-menu-grid .sm-wide-btn{grid-column:1 / -1}
+.sm-menu-row{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
+.sm-menu-row select{flex:1;min-width:0}
+.sm-menu-row .mini{flex:0 0 auto}
+.sm-menu-sep{height:1px;background:var(--line2);margin:7px 0}
 /* Bandeau statistiques */
 .staff-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:6px 0 16px}
 .staff-stats .sstat{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:13px 16px}
