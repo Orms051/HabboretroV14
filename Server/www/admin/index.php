@@ -5810,8 +5810,9 @@ function page_staff(): void {
             $ini = mb_strtoupper(mb_substr((string)$u['username'], 0, 1));
             echo '<div class="team-card" data-name="' . h(mb_strtolower($u['username'])) . '" style="--rkc:' . $gc . '">';
             echo '<div class="tc-ava" style="background:' . $gc . '">' . h($ini) . '</div>';
-            echo '<div class="tc-main"><div class="tc-name">' . h($u['username']) . '</div>'
-               . '<div class="tc-sub">' . rank_badge($rk) . ' <span class="muted sm">#' . $uid . '</span></div></div>';
+            echo '<span class="tc-name">' . h($u['username']) . '</span>';
+            echo rank_badge($rk);
+            echo '<span class="tc-id muted sm">#' . $uid . '</span>';
             echo '<div class="tc-act">';
             if ($self) echo '<span class="tc-self">🔒 toi-même</span>';
             else echo '<form method="post" class="js tc-form" data-reload><input type="hidden" name="action" value="staff_rank">' . csrf_field()
@@ -8993,20 +8994,19 @@ button.season:hover{border-color:var(--acc);background:var(--soft)}button.season
 .sm-copy{display:flex;align-items:center;gap:7px}
 .sm-copy select{flex:1;min-width:0}
 .sm-copy .mini{flex:0 0 auto}
-/* Onglet Équipe : cartes membres */
-.team-list{display:flex;flex-direction:column;gap:10px;margin-top:2px}
-.team-card{display:flex;align-items:center;gap:14px;padding:12px 15px;background:var(--panel);border:1px solid var(--line2);border-left:4px solid var(--rkc,var(--line2));border-radius:12px;transition:.12s}
-.team-card:hover{box-shadow:0 5px 16px rgba(20,30,50,.09)}
-.tc-ava{width:42px;height:42px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:18px;box-shadow:0 1px 3px rgba(0,0,0,.25)}
-.tc-main{flex:1;min-width:0}
-.tc-name{font-weight:700;font-size:15px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tc-sub{margin-top:5px;display:flex;align-items:center;gap:8px}
-.tc-act{flex:0 0 auto;display:flex;align-items:center}
-.tc-form{display:flex;flex-direction:row;align-items:center;gap:7px}
-.tc-select{padding:8px 10px;border-radius:9px;border:1px solid var(--line2);background:var(--bg);color:var(--txt);font-size:13px}
-.tc-save{padding:8px 11px}
-.tc-self{font-size:13px;color:var(--mut);background:var(--bg);border:1px solid var(--line2);border-radius:9px;padding:8px 12px;white-space:nowrap}
-@media(max-width:720px){.team-card{flex-wrap:wrap}.tc-act,.tc-form{width:100%}.tc-select{flex:1}}
+/* Onglet Équipe : lignes membres compactes */
+.team-list{display:flex;flex-direction:column;gap:6px;margin-top:2px}
+.team-card{display:flex;align-items:center;gap:10px;padding:7px 12px;background:var(--panel);border:1px solid var(--line2);border-left:3px solid var(--rkc,var(--line2));border-radius:10px}
+.team-card:hover{background:var(--soft)}
+.tc-ava{width:28px;height:28px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px}
+.tc-name{font-weight:700;font-size:14px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}
+.tc-id{flex:0 0 auto}
+.tc-act{margin-left:auto;flex:0 0 auto;display:flex;align-items:center}
+.tc-form{display:flex;flex-direction:row;align-items:center;gap:6px}
+.tc-select{padding:6px 9px;border-radius:8px;border:1px solid var(--line2);background:var(--bg);color:var(--txt);font-size:13px}
+.tc-save{padding:6px 10px}
+.tc-self{font-size:12.5px;color:var(--mut);background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:6px 11px;white-space:nowrap}
+@media(max-width:720px){.tc-name{max-width:130px}}
 /* Bandeau statistiques */
 .staff-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:6px 0 16px}
 .staff-stats .sstat{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:13px 16px}
