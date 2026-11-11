@@ -5774,7 +5774,7 @@ function page_staff(): void {
     $sensitive = ['fuse_administrator_access', 'fuse_mod', 'fuse_ban', 'fuse_any_room_controller', 'fuse_credits', 'fuse_moderator_access'];
 
     $staff = [];
-    try { foreach (db()->query('SELECT id, username, `rank` FROM users WHERE `rank` >= 2 ORDER BY `rank` DESC, username') as $r) $staff[] = $r; } catch (Throwable $e) {}
+    try { foreach (db()->query('SELECT id, username, `rank`, last_online, motto FROM users WHERE `rank` >= 2 ORDER BY `rank` DESC, username') as $r) $staff[] = $r; } catch (Throwable $e) {}
     $nStaff = count($staff);
     $nJrn = 0;
     try { $nJrn = (int) db()->query("SELECT COUNT(*) FROM admin_log WHERE action IN ('staff_perms_save','staff_rank','vip_set')")->fetchColumn(); } catch (Throwable $e) {}
@@ -5801,24 +5801,40 @@ function page_staff(): void {
     echo '<p class="muted sm">Change le grade d\'un membre, ou rétrograde-le en simple joueur. Le changement s\'applique à sa prochaine connexion au jeu.</p>';
     if (!$staff) echo '<p class="muted">Aucun membre d\'équipe (rang ≥ 2) pour le moment.</p>';
     else {
-        echo '<input type="text" id="staff-team-search" class="sm-inp" placeholder="🔎 Filtrer l\'équipe par pseudo…" style="margin:4px 0 14px;width:100%;max-width:340px">';
+        echo '<div class="team-bar">'
+           . '<input type="text" id="staff-team-search" class="team-search" placeholder="🔎 Filtrer l\'équipe par pseudo…">'
+           . '<button type="button" class="mini ghost" id="staff-team-sort" data-dir="desc" title="Trier par grade">⤵ Trier par grade</button>'
+           . '</div>';
+        echo '<div class="team-head"><div></div><div>Membre</div><div>Grade</div><div>Activité</div><div class="r">Changer le grade</div></div>';
         $me = (int)($_SESSION['admin']['id'] ?? 0);
+        $now = time();
         echo '<div class="team-list" id="staff-team">';
         foreach ($staff as $u) {
             $uid = (int)$u['id']; $rk = (int)$u['rank']; $self = ($uid === $me);
             $gc = $rk >= 7 ? '#ff5b5b' : ($rk >= 6 ? '#ffb033' : ($rk >= 3 ? '#3a7afe' : '#5a6b85'));
             $ini = mb_strtoupper(mb_substr((string)$u['username'], 0, 1));
-            echo '<div class="team-card" data-name="' . h(mb_strtolower($u['username'])) . '" style="--rkc:' . $gc . '">';
-            echo '<div class="tc-ava" style="background:' . $gc . '">' . h($ini) . '</div>';
-            echo '<span class="tc-name">' . h($u['username']) . '</span>';
-            echo '<span class="tc-grade">' . rank_badge($rk) . '</span>';
-            echo '<span class="tc-id muted sm">#' . $uid . '</span>';
+            $gname = preg_replace('/^\d+\s*·\s*/u', '', RANKS[$rk] ?? ('Rang ' . $rk));
+            $av = '/avatar.php?user=' . h(rawurlencode((string)$u['username'])) . '&head=1&size=b&direction=2&v=2';
+            // Activité (dernière connexion)
+            $lo = (int)($u['last_online'] ?? 0); $isOn = $lo > ($now - 300);
+            if ($isOn) { $seenCls = ' on'; $seenTxt = 'En ligne'; }
+            elseif ($lo > 0) { $d = $now - $lo; $seenTxt = $d < 3600 ? ('il y a ' . max(1, intdiv($d, 60)) . ' min') : ($d < 86400 ? ('il y a ' . intdiv($d, 3600) . ' h') : ($d < 172800 ? 'hier' : date('d/m/Y', $lo))); $seenCls = ''; }
+            else { $seenCls = ''; $seenTxt = 'jamais connecté'; }
+            $motto = trim((string)($u['motto'] ?? ''));
+
+            echo '<div class="team-card" data-name="' . h(mb_strtolower($u['username'])) . '" data-rank="' . $rk . '" style="--rkc:' . $gc . '">';
+            echo '<div class="tc-ava" style="background:' . $gc . '">' . h($ini) . '<img src="' . $av . '" alt="" loading="lazy" onerror="this.remove()"></div>';
+            echo '<div class="tc-who"><span class="tc-name">' . h($u['username']) . '</span>'
+               . '<span class="tc-mt">' . ($motto !== '' ? '« ' . h($motto) . ' »' : '—') . '</span></div>';
+            echo '<div><span class="rk-chip" style="background:' . $gc . '"><span class="d"></span>' . h($gname) . '</span></div>';
+            echo '<div class="tc-seen' . $seenCls . '"><span class="dot"></span>' . h($seenTxt) . '</div>';
             echo '<div class="tc-act">';
+            echo '<a class="iconbtn" href="?p=user&id=' . $uid . '" title="Voir la fiche de ' . h($u['username']) . '">👁️</a>';
             if ($self) echo '<span class="tc-self">🔒 toi-même</span>';
             else echo '<form method="post" class="js tc-form" data-reload><input type="hidden" name="action" value="staff_rank">' . csrf_field()
                . '<input type="hidden" name="uid" value="' . $uid . '">'
                . '<select name="rank" class="tc-select">' . rank_options($rk) . '</select>'
-               . '<button class="mini tc-save" title="Enregistrer le grade">💾</button></form>';
+               . '<button class="iconbtn save" title="Enregistrer le grade">💾</button></form>';
             echo '</div></div>';
         }
         echo '</div>';
@@ -5835,7 +5851,7 @@ function page_staff(): void {
     try { foreach (db()->query('SELECT username FROM users ORDER BY username LIMIT 2000') as $r) echo '<option value="' . h($r['username']) . '">'; } catch (Throwable $e) {}
     echo '</datalist>';
     echo <<<'JS2'
-<script>(function(){var ts=document.getElementById('staff-team-search');if(!ts)return;ts.addEventListener('input',function(){var q=this.value.trim().toLowerCase();[].forEach.call(document.querySelectorAll('#staff-team .team-card'),function(c){c.style.display=(!q||(c.getAttribute('data-name')||'').indexOf(q)>=0)?'':'none';});});})();</script>
+<script>(function(){var list=document.getElementById('staff-team');if(!list)return;var ts=document.getElementById('staff-team-search');if(ts)ts.addEventListener('input',function(){var q=this.value.trim().toLowerCase();[].forEach.call(list.querySelectorAll('.team-card'),function(c){c.style.display=(!q||(c.getAttribute('data-name')||'').indexOf(q)>=0)?'':'none';});});var sb=document.getElementById('staff-team-sort');if(sb)sb.addEventListener('click',function(){var dir=sb.getAttribute('data-dir')==='desc'?'asc':'desc';sb.setAttribute('data-dir',dir);sb.textContent=(dir==='desc'?'⤵':'⤴')+' Trier par grade';var cards=[].slice.call(list.querySelectorAll('.team-card'));cards.sort(function(a,b){var ra=+a.getAttribute('data-rank'),rb=+b.getAttribute('data-rank');return dir==='desc'?rb-ra:ra-rb;});cards.forEach(function(c){list.appendChild(c);});});})();</script>
 JS2;
     }
 
@@ -8994,21 +9010,34 @@ button.season:hover{border-color:var(--acc);background:var(--soft)}button.season
 .sm-copy{display:flex;align-items:center;gap:7px}
 .sm-copy select{flex:1;min-width:0}
 .sm-copy .mini{flex:0 0 auto}
-/* Onglet Équipe : lignes membres (grille à colonnes alignées) */
-.team-list{display:flex;flex-direction:column;gap:7px;margin-top:2px}
-.team-card{display:grid;grid-template-columns:32px minmax(130px,1.1fr) minmax(150px,1fr) 64px minmax(230px,320px);align-items:center;gap:16px;padding:9px 16px;background:var(--panel);border:1px solid var(--line2);border-left:3px solid var(--rkc,var(--line2));border-radius:10px}
-.team-card:hover{background:var(--soft)}
-.tc-ava{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:14px}
-.tc-name{font-weight:700;font-size:14px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tc-grade{justify-self:start}
-.tc-id{color:var(--mut);justify-self:start}
-.tc-act{justify-self:end;display:flex;align-items:center}
-.tc-form{display:flex;flex-direction:row;align-items:center;gap:8px}
-.tc-select{padding:7px 10px;border-radius:8px;border:1px solid var(--line2);background:var(--bg);color:var(--txt);font-size:13px}
-.tc-select{min-width:170px}
-.tc-save{padding:7px 11px}
-.tc-self{font-size:12.5px;color:var(--mut);background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:7px 12px;white-space:nowrap}
-@media(max-width:820px){.team-card{grid-template-columns:32px 1fr auto;grid-row-gap:8px}.tc-grade{grid-column:2}.tc-id{grid-column:3;justify-self:end}.tc-act{grid-column:1 / -1;justify-self:stretch}.tc-form{width:100%}.tc-select{flex:1}}
+/* Onglet Équipe : tableau membres (avatar + activité + actions) */
+.team-bar{display:flex;gap:10px;align-items:center;margin:4px 0 14px;flex-wrap:wrap}
+.team-search{flex:1;min-width:220px;max-width:360px;padding:9px 13px;border-radius:10px;border:1px solid var(--line2);background:var(--bg);color:var(--txt);font-size:13px}
+.team-head,.team-card{display:grid;grid-template-columns:48px minmax(150px,1.6fr) minmax(140px,190px) minmax(130px,180px) minmax(220px,280px);align-items:center;gap:16px}
+.team-head{padding:0 15px 9px;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--mut)}
+.team-head .r{justify-self:end}
+.team-list{display:flex;flex-direction:column;gap:8px}
+.team-card{padding:8px 15px;background:var(--panel);border:1px solid var(--line2);border-left:3px solid var(--rkc,var(--line2));border-radius:12px;transition:.12s}
+.team-card:hover{border-color:var(--acc);box-shadow:0 3px 12px rgba(20,30,50,.06)}
+.tc-ava{position:relative;width:44px;height:44px;border-radius:11px;overflow:hidden;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:17px;flex:0 0 auto}
+.tc-ava img{position:absolute;left:50%;top:5px;transform:translateX(-50%);height:52px;width:auto;image-rendering:-webkit-optimize-contrast}
+.tc-who{min-width:0;display:flex;flex-direction:column;gap:2px}
+.tc-name{font-weight:700;font-size:14.5px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-mt{font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rk-chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:#fff;border-radius:8px;padding:5px 10px;line-height:1;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.rk-chip .d{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.8)}
+.tc-seen{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--mut)}
+.tc-seen .dot{width:8px;height:8px;border-radius:50%;background:var(--line2);flex:0 0 auto}
+.tc-seen.on{color:var(--green);font-weight:600}
+.tc-seen.on .dot{background:var(--green);box-shadow:0 0 0 3px rgba(18,168,90,.18)}
+.tc-act{justify-self:end;display:flex;align-items:center;gap:7px}
+.tc-form{display:flex;flex-direction:row;align-items:center;gap:7px}
+.tc-select{padding:7px 10px;border-radius:9px;border:1px solid var(--line2);background:var(--bg);color:var(--txt);font-size:13px;min-width:150px}
+.iconbtn{width:34px;height:34px;border-radius:9px;border:1px solid var(--line2);background:var(--panel);color:var(--txt);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:15px;text-decoration:none;flex:0 0 auto}
+.iconbtn:hover{border-color:var(--acc)}
+.iconbtn.save{background:var(--acc);border-color:var(--acc)}
+.tc-self{font-size:12.5px;color:var(--mut);background:var(--bg);border:1px dashed var(--line2);border-radius:9px;padding:7px 12px;white-space:nowrap}
+@media(max-width:860px){.team-head{display:none}.team-card{grid-template-columns:44px 1fr auto;grid-row-gap:8px}.tc-who{grid-column:2}.tc-seen{grid-column:1 / 3}.tc-act{grid-column:1 / -1;justify-self:stretch}.tc-form{flex:1}.tc-select{flex:1}}
 /* Bandeau statistiques */
 .staff-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:6px 0 16px}
 .staff-stats .sstat{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:13px 16px}
