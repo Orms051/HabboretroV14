@@ -5811,7 +5811,7 @@ function page_staff(): void {
             echo '<div class="team-card" data-name="' . h(mb_strtolower($u['username'])) . '" style="--rkc:' . $gc . '">';
             echo '<div class="tc-ava" style="background:' . $gc . '">' . h($ini) . '</div>';
             echo '<span class="tc-name">' . h($u['username']) . '</span>';
-            echo rank_badge($rk);
+            echo '<span class="tc-grade">' . rank_badge($rk) . '</span>';
             echo '<span class="tc-id muted sm">#' . $uid . '</span>';
             echo '<div class="tc-act">';
             if ($self) echo '<span class="tc-self">🔒 toi-même</span>';
@@ -8994,19 +8994,21 @@ button.season:hover{border-color:var(--acc);background:var(--soft)}button.season
 .sm-copy{display:flex;align-items:center;gap:7px}
 .sm-copy select{flex:1;min-width:0}
 .sm-copy .mini{flex:0 0 auto}
-/* Onglet Équipe : lignes membres compactes */
-.team-list{display:flex;flex-direction:column;gap:6px;margin-top:2px}
-.team-card{display:flex;align-items:center;gap:10px;padding:7px 12px;background:var(--panel);border:1px solid var(--line2);border-left:3px solid var(--rkc,var(--line2));border-radius:10px}
+/* Onglet Équipe : lignes membres (grille à colonnes alignées) */
+.team-list{display:flex;flex-direction:column;gap:7px;margin-top:2px}
+.team-card{display:grid;grid-template-columns:32px minmax(130px,1.1fr) minmax(150px,1fr) 64px minmax(230px,320px);align-items:center;gap:16px;padding:9px 16px;background:var(--panel);border:1px solid var(--line2);border-left:3px solid var(--rkc,var(--line2));border-radius:10px}
 .team-card:hover{background:var(--soft)}
-.tc-ava{width:28px;height:28px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px}
-.tc-name{font-weight:700;font-size:14px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}
-.tc-id{flex:0 0 auto}
-.tc-act{margin-left:auto;flex:0 0 auto;display:flex;align-items:center}
-.tc-form{display:flex;flex-direction:row;align-items:center;gap:6px}
-.tc-select{padding:6px 9px;border-radius:8px;border:1px solid var(--line2);background:var(--bg);color:var(--txt);font-size:13px}
-.tc-save{padding:6px 10px}
-.tc-self{font-size:12.5px;color:var(--mut);background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:6px 11px;white-space:nowrap}
-@media(max-width:720px){.tc-name{max-width:130px}}
+.tc-ava{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:14px}
+.tc-name{font-weight:700;font-size:14px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-grade{justify-self:start}
+.tc-id{color:var(--mut);justify-self:start}
+.tc-act{justify-self:end;display:flex;align-items:center}
+.tc-form{display:flex;flex-direction:row;align-items:center;gap:8px}
+.tc-select{padding:7px 10px;border-radius:8px;border:1px solid var(--line2);background:var(--bg);color:var(--txt);font-size:13px}
+.tc-select{min-width:170px}
+.tc-save{padding:7px 11px}
+.tc-self{font-size:12.5px;color:var(--mut);background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:7px 12px;white-space:nowrap}
+@media(max-width:820px){.team-card{grid-template-columns:32px 1fr auto;grid-row-gap:8px}.tc-grade{grid-column:2}.tc-id{grid-column:3;justify-self:end}.tc-act{grid-column:1 / -1;justify-self:stretch}.tc-form{width:100%}.tc-select{flex:1}}
 /* Bandeau statistiques */
 .staff-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:6px 0 16px}
 .staff-stats .sstat{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:13px 16px}
