@@ -1,22 +1,24 @@
 -- ============================================================================
--- Sakura (exe_plant, def #736) — correctif « inventaire bloqué + erreur ».
+-- Sakura (exe_plant, def #736) — « bloqué dans l'inventaire / erreur ».
 --
--- Cause RÉELLE : la définition est un meuble À ÉTATS
--- ('solid,custom_data_numeric_state,requires_rights_for_interaction' — clic =
--- basculer l'aspect de la plante, 2 états, exactement comme exe_artlamp). Cette
--- définition est CORRECTE et d'origine, on n'y touche pas.
--- Le bug venait de l'EXEMPLAIRE dans l'inventaire : son items.custom_data était
--- VIDE. Un meuble à états avec un custom_data vide fait planter le client au
--- chargement de l'inventaire (→ inventaire bloqué + erreur à la pose).
+-- Diagnostic (comparaison complète items_definitions + HabboAssets build 376) :
+-- la SEULE vraie différence avec une plante qui fonctionne (plant_yukka #75)
+-- était le flag 'custom_data_numeric_state' (meuble à états) + top_height 0.
+-- HabboAssets confirme : exe_plant a "clientScript":null = plante SIMPLE,
+-- PAS un meuble scripté à états. Le flag numeric_state faisait traiter l'item
+-- comme un meuble à données d'état que le client rev401 ne sait pas gérer ici
+-- → item bloqué dans l'inventaire.
 --
--- Fix : donner l'état initial '0' (valide, jamais vide) à tout exemplaire de
--- Sakura dont le custom_data est vide.
+-- Correction : aligner exe_plant EXACTEMENT sur plant_yukka (plante décorative).
+--   behaviour  = 'solid,requires_rights_for_interaction'
+--   top_height = 1
 --
--- NB : aucune définition modifiée ici → une simple RECONNEXION du joueur suffit
---      (l'ému relit l'inventaire au login). Pas besoin de redémarrer l'ému.
+-- ⚠️ Redémarrer l'émulateur après (définitions chargées au boot).
+-- Les exemplaires existants : custom_data devient inutile (ignoré) ; en local
+-- il a été vidé pour coller aux yukka. Aucun autre mobi ni inventaire touché.
 -- ============================================================================
 
-UPDATE items
-   SET custom_data = '0'
- WHERE definition_id = (SELECT id FROM items_definitions WHERE sprite = 'exe_plant')
-   AND (custom_data = '' OR custom_data IS NULL);
+UPDATE items_definitions
+   SET behaviour  = 'solid,requires_rights_for_interaction',
+       top_height = 1
+ WHERE sprite = 'exe_plant';
