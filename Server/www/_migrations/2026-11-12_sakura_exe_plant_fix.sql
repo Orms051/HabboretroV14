@@ -1,24 +1,22 @@
 -- ============================================================================
--- Sakura (exe_plant, def #736) — retirer le flag « custom_data_numeric_state »
--- parasite qui faisait PLANTER le client (inventaire bloqué + erreur à la pose).
+-- Sakura (exe_plant, def #736) — correctif « inventaire bloqué + erreur ».
 --
--- Diagnostic : toutes les autres plantes décoratives (plant_yukka, plant_bonsai,
--- plant_rose, plant_sunflower, plant_pineapple) ont le behaviour
--- 'solid,requires_rights_for_interaction'. Seul exe_plant avait en plus
--- 'custom_data_numeric_state', qui le fait traiter comme un meuble « à données
--- d'état » : le client attend un custom_data numérique et plante s'il est vide.
--- Le meta.json officiel (habboassets, build 376) confirme : exe_plant a
--- "clientScript":null = plante SIMPLE à 2 états, pas un meuble scripté.
+-- Cause RÉELLE : la définition est un meuble À ÉTATS
+-- ('solid,custom_data_numeric_state,requires_rights_for_interaction' — clic =
+-- basculer l'aspect de la plante, 2 états, exactement comme exe_artlamp). Cette
+-- définition est CORRECTE et d'origine, on n'y touche pas.
+-- Le bug venait de l'EXEMPLAIRE dans l'inventaire : son items.custom_data était
+-- VIDE. Un meuble à états avec un custom_data vide fait planter le client au
+-- chargement de l'inventaire (→ inventaire bloqué + erreur à la pose).
 --
--- On aligne donc exe_plant sur les autres plantes.
+-- Fix : donner l'état initial '0' (valide, jamais vide) à tout exemplaire de
+-- Sakura dont le custom_data est vide.
 --
--- ⚠️ Redémarrer l'émulateur après (les définitions sont chargées au boot).
--- NB : côté LOCAL, l'exemplaire cassé d'Orms a été supprimé puis recréé propre
---      (custom_data vide). En prod, après cette migration + redémarrage ému,
---      les exemplaires existants fonctionneront aussi (le custom_data est
---      simplement ignoré une fois le flag numeric_state retiré).
+-- NB : aucune définition modifiée ici → une simple RECONNEXION du joueur suffit
+--      (l'ému relit l'inventaire au login). Pas besoin de redémarrer l'ému.
 -- ============================================================================
 
-UPDATE items_definitions
-   SET behaviour = 'solid,requires_rights_for_interaction'
- WHERE sprite = 'exe_plant';
+UPDATE items
+   SET custom_data = '0'
+ WHERE definition_id = (SELECT id FROM items_definitions WHERE sprite = 'exe_plant')
+   AND (custom_data = '' OR custom_data IS NULL);
