@@ -1817,6 +1817,9 @@ if ($p === 'journal' && isset($_GET['tail'])) { journal_ajax(); exit; }
 /* ---------- Visionneuse de logs : lecture d'un log (AJAX) ---------- */
 if ($p === 'journal' && isset($_GET['logview'])) { diag_logview(); exit; }
 
+/* ---- Moteur Apparence (étape 1, lecture seule) : inventaire vêtements/couleurs ---- */
+require_once __DIR__ . '/inc/looks_engine.php';
+
 /* ---------- Rendu ---------- */
 render_header($p);
 switch ($p) {
@@ -1831,6 +1834,7 @@ switch ($p) {
     case 'vouchers': page_vouchers(); break;
     case 'rooms': page_rooms(); break;
     case 'catalogue': page_catalogue(); break;
+    case 'looks': require __DIR__ . '/inc/looks.php'; break;
     case 'navcats': page_navcats(); break;
     case 'convert': page_convert(); break;
     case 'bots': page_bots(); break;
@@ -1866,7 +1870,7 @@ render_footer();
 
 /* ============ ACCÈS AUX ONGLETS PAR RANG ============ */
 function admin_nav(): array {
-    return ['dashboard' => ['🏠', 'Accueil'], 'stats' => ['📈', 'Statistiques'], 'veille' => ['🔎', 'Veille & signalements'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'staff' => ['👮', 'Gestion du personnel'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal & diagnostics'], 'wordfilter' => ['🤬', 'Filtre de mots'], 'security' => ['🛡️', 'Sécurité'], 'maintenance' => ['🚧', 'Maintenance']];
+    return ['dashboard' => ['🏠', 'Accueil'], 'stats' => ['📈', 'Statistiques'], 'veille' => ['🔎', 'Veille & signalements'], 'search' => ['🔍', 'Recherche'], 'news' => ['📰', 'Actualités'], 'sitemgr' => ['🌐', 'Gestion du Site'], 'rooms' => ['🏛️', 'Salles & décors'], 'models' => ['🏗️', 'Modèles de salles'], 'navcats' => ['🧭', 'Catégories navigateur'], 'catalogue' => ['🛋️', 'Catalogue'], 'packages' => ['📦', 'Packs catalogue'], 'furni' => ['🪑', 'Meubles (défs)'], 'convert' => ['🔧', 'Convertir furni'], 'bots' => ['🤖', 'Bots'], 'looks' => ['🧥', 'Apparence'], 'trax' => ['🎵', 'Trax'], 'users' => ['👥', 'Joueurs'], 'messages' => ['💬', 'Messagerie'], 'alerts' => ['📢', 'Alertes & annonces'], 'badges' => ['📛', 'Badges'], 'ranks' => ['🎖️', 'Rangs'], 'staff' => ['👮', 'Gestion du personnel'], 'games' => ['🎮', 'Jeux'], 'gamemaps' => ['🗺️', 'Cartes de jeux'], 'events' => ['🎉', 'Événements'], 'recycler' => ['♻️', 'Recycleur'], 'vouchers' => ['🎁', 'Codes promo'], 'moderation' => ['🚫', 'Modération'], 'homemod' => ['🏠', 'Modération des Homes'], 'bus' => ['🚌', 'Bus (Infobus)'], 'commandes' => ['⌨️', 'Commandes en jeu'], 'textes' => ['💬', 'Textes du jeu'], 'settings' => ['⚙️', 'Réglages'], 'access' => ['🔒', 'Accès admin'], 'audit' => ['📜', 'Journal admin'], 'mysql' => ['🗄️', 'Base MySQL'], 'server' => ['🖥️', 'Serveur'], 'journal' => ['📡', 'Journal & diagnostics'], 'wordfilter' => ['🤬', 'Filtre de mots'], 'security' => ['🛡️', 'Sécurité'], 'maintenance' => ['🚧', 'Maintenance']];
 }
 function tab_default_rank(string $tab): int {
     $d = [
@@ -1875,7 +1879,7 @@ function tab_default_rank(string $tab): int {
         // Sensible : modération / gestion joueurs (rang par défaut MIN_RANK=5 et plus)
         'homemod' => 6, 'veille' => 6,
         // Technique / administration (rang 7)
-        'mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'staff' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'journal' => 7, 'security' => 7, 'maintenance' => 7,
+        'mysql' => 7, 'server' => 7, 'settings' => 7, 'ranks' => 7, 'staff' => 7, 'textes' => 7, 'access' => 7, 'audit' => 7, 'convert' => 7, 'journal' => 7, 'security' => 7, 'maintenance' => 7, 'looks' => 7,
     ];
     return $d[$tab] ?? MIN_RANK;
 }
@@ -1885,7 +1889,7 @@ function nav_groups(): array {
         'Site & contenus' => ['sitemgr', 'news'],
         'Joueurs' => ['users', 'badges', 'ranks', 'staff'],
         'Modération & assistance' => ['messages', 'moderation', 'homemod', 'commandes', 'wordfilter', 'audit'],
-        'Hôtel & appartements' => ['rooms', 'models', 'gamemaps', 'bots', 'games'],
+        'Hôtel & appartements' => ['rooms', 'models', 'gamemaps', 'bots', 'games', 'looks'],
         'Catalogue & économie' => ['catalogue', 'navcats', 'packages', 'furni', 'convert', 'trax', 'recycler', 'vouchers'],
         'Animations' => ['events', 'bus'],
         'Technique' => ['settings', 'security', 'maintenance', 'textes', 'access', 'mysql', 'server', 'journal'],
