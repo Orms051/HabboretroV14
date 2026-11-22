@@ -1,0 +1,11 @@
+-- Apparence (vêtements & accès) — étape 3 : droits HC en BROUILLON.
+-- Ajoute la colonne hc_data au brouillon de l'étape 2. Elle stocke, en JSON,
+-- une COPIE DE TRAVAIL des deux listes de droits HC :
+--     {"default":"<csv ids libres>","club":"<csv ids HC = sur-ensemble>"}
+-- sur laquelle on applique libre / HC / inactif AVANT publication. Les deux
+-- réglages `settings` (users.figure.parts.default / .club) LIVE ne sont JAMAIS
+-- écrits à ce stade (publication = étape 4).
+--
+-- Additif, aucun impact sur les tables de jeu. Également ajoutée à la volée par
+-- looks_ensure_draft_table() (SHOW COLUMNS ... LIKE puis ALTER si absente).
+ALTER TABLE looks_drafts ADD COLUMN hc_data LONGTEXT NULL AFTER data;
