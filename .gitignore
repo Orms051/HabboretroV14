@@ -61,3 +61,12 @@ Server/www/v2/tools/.admin_test_login.txt
 /Server/php/
 /Server/www/maintenance.json
 
+
+# --- Durcissement sauvegarde locale (ne jamais versionner) ---
+/BasiliskPortable[[]Browser[]]/
+/Document Officiel/
+Server/www/kepler.jar.*
+/_crossfade_prep/
+/_sakura_fix/
+*.mini_bak
+*.bak-*
